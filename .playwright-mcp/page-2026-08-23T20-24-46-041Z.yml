@@ -1,0 +1,95 @@
+- generic [active] [ref=f29e1]:
+  - main [ref=f29e4]:
+    - generic [ref=f29e7]:
+      - link [ref=f29e8] [cursor=pointer]:
+        - /url: /tickets
+      - generic [ref=f29e12]: Operativo
+      - button "NG Nacho Gaute Administrador" [ref=f29e14] [cursor=pointer]:
+        - generic [ref=f29e15]: NG
+        - generic [ref=f29e17]:
+          - generic [ref=f29e18]: Nacho Gaute
+          - generic [ref=f29e19]: Administrador
+    - main [ref=f29e24]:
+      - generic [ref=f29e25]:
+        - button "Ayuda" [ref=f29e27] [cursor=pointer]
+        - generic [ref=f29e31]:
+          - navigation [ref=f29e32]:
+            - generic [ref=f29e33]: Estacionamiento
+            - generic [ref=f29e34]: /
+            - generic [ref=f29e35]: Operación
+            - generic [ref=f29e36]: /
+            - generic [ref=f29e37]: Ingreso
+          - generic [ref=f29e38]:
+            - heading "Ingreso de vehículos" [level=1] [ref=f29e40]
+            - generic [ref=f29e41]: Turno activo · 23/08/2026
+        - generic [ref=f29e44]:
+          - generic [ref=f29e45]:
+            - generic [ref=f29e46]:
+              - button "Registrar entrada Por patente" [ref=f29e47] [cursor=pointer]:
+                - generic [ref=f29e52]:
+                  - generic [ref=f29e53]: Registrar entrada
+                  - generic [ref=f29e54]: Por patente
+              - button "Buscar y cerrar ticket Patente o código" [ref=f29e55] [cursor=pointer]:
+                - generic [ref=f29e60]:
+                  - generic [ref=f29e61]: Buscar y cerrar ticket
+                  - generic [ref=f29e62]: Patente o código
+            - generic [ref=f29e64]:
+              - generic [ref=f29e68]:
+                - generic [ref=f29e69]:
+                  - generic [ref=f29e70]:
+                    - generic [ref=f29e71]: INGRESO REGISTRADO
+                    - generic [ref=f29e76]: "#GM-B8D3"
+                  - heading "Estacionamiento" [level=2] [ref=f29e78]
+                - generic [ref=f29e79]:
+                  - generic [ref=f29e80]:
+                    - generic [ref=f29e81]: ENTRADA
+                    - paragraph [ref=f29e84]: 23/08/2026
+                  - generic [ref=f29e85]:
+                    - generic [ref=f29e86]: HORARIO
+                    - paragraph [ref=f29e90]: 17:18:49
+                - generic [ref=f29e97]:
+                  - paragraph [ref=f29e98]: Registro por patente para vehículo tipo AUTO
+                  - paragraph [ref=f29e99]: Camioneta
+                - paragraph [ref=f29e100]: "Avisó que se queda: Hasta 1hora"
+                - generic [ref=f29e101]:
+                  - generic [ref=f29e103]: ENTRADA
+                  - text: registrada correctamente
+              - generic [ref=f29e104]:
+                - generic [ref=f29e107]:
+                  - paragraph [ref=f29e108]: Patente
+                  - paragraph [ref=f29e109]: TE005TG
+                - generic [ref=f29e110]: Registrado
+          - generic [ref=f29e113]:
+            - generic [ref=f29e114]:
+              - generic [ref=f29e115]:
+                - generic [ref=f29e116]:
+                  - heading "Vehículos activos" [level=3] [ref=f29e117]
+                  - generic [ref=f29e118]: "2"
+                - generic [ref=f29e119]: en vivo
+              - generic [ref=f29e121]:
+                - button "A232NTM En horario hace 28 min · Auto · 16:56" [ref=f29e122] [cursor=pointer]:
+                  - generic [ref=f29e129]:
+                    - generic [ref=f29e130]:
+                      - generic [ref=f29e131]: A232NTM
+                      - generic [ref=f29e132]: En horario
+                    - generic [ref=f29e133]:
+                      - generic [ref=f29e137]: hace 28 min
+                      - generic [ref=f29e138]: ·
+                      - generic [ref=f29e139]: Auto
+                      - generic [ref=f29e140]: ·
+                      - generic [ref=f29e141]: 16:56
+                - button "TE005TG En horario hace 5 min · Auto · 17:18" [ref=f29e144] [cursor=pointer]:
+                  - generic [ref=f29e151]:
+                    - generic [ref=f29e152]:
+                      - generic [ref=f29e153]: TE005TG
+                      - generic [ref=f29e154]: En horario
+                    - generic [ref=f29e155]:
+                      - generic [ref=f29e159]: hace 5 min
+                      - generic [ref=f29e160]: ·
+                      - generic [ref=f29e161]: Auto
+                      - generic [ref=f29e162]: ·
+                      - generic [ref=f29e163]: 17:18
+            - generic [ref=f29e166]: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list

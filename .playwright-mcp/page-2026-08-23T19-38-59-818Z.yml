@@ -1,0 +1,77 @@
+- generic [active] [ref=f12e1]:
+  - main [ref=f12e4]:
+    - generic [ref=f12e7]:
+      - link [ref=f12e8] [cursor=pointer]:
+        - /url: /tickets
+      - generic [ref=f12e12]: Operativo
+      - button "NG Nacho Gaute Administrador" [ref=f12e14] [cursor=pointer]:
+        - generic [ref=f12e15]: NG
+        - generic [ref=f12e17]:
+          - generic [ref=f12e18]: Nacho Gaute
+          - generic [ref=f12e19]: Administrador
+    - main [ref=f12e24]:
+      - generic [ref=f12e25]:
+        - button "Ayuda" [ref=f12e27] [cursor=pointer]
+        - generic [ref=f12e31]:
+          - navigation [ref=f12e32]:
+            - generic [ref=f12e33]: Estacionamiento
+            - generic [ref=f12e34]: /
+            - generic [ref=f12e35]: Operación
+            - generic [ref=f12e36]: /
+            - generic [ref=f12e37]: Ingreso
+          - generic [ref=f12e38]:
+            - heading "Ingreso de vehículos" [level=1] [ref=f12e40]
+            - generic [ref=f12e41]: Turno activo · 23/08/2026
+        - generic [ref=f12e44]:
+          - generic [ref=f12e45]:
+            - generic [ref=f12e46]:
+              - button "Registrar entrada Por patente" [ref=f12e47] [cursor=pointer]:
+                - generic [ref=f12e52]:
+                  - generic [ref=f12e53]: Registrar entrada
+                  - generic [ref=f12e54]: Por patente
+              - button "Buscar y cerrar ticket Patente o código" [ref=f12e55] [cursor=pointer]:
+                - generic [ref=f12e60]:
+                  - generic [ref=f12e61]: Buscar y cerrar ticket
+                  - generic [ref=f12e62]: Patente o código
+            - generic [ref=f12e64]:
+              - generic [ref=f12e68]:
+                - generic [ref=f12e69]:
+                  - generic [ref=f12e70]:
+                    - generic [ref=f12e71]: SALIDA REGISTRADA
+                    - generic [ref=f12e76]: "#GM-8837"
+                  - heading "Estacionamiento" [level=2] [ref=f12e78]
+                - generic [ref=f12e79]:
+                  - generic [ref=f12e80]:
+                    - generic [ref=f12e81]: SALIDA
+                    - paragraph [ref=f12e84]: 23/08/2026
+                  - generic [ref=f12e85]:
+                    - generic [ref=f12e86]: PRECIO
+                    - paragraph [ref=f12e90]: $1000
+                    - paragraph [ref=f12e91]: "Tarifa: hasta 1min"
+                - generic [ref=f12e98]:
+                  - generic [ref=f12e99]:
+                    - paragraph [ref=f12e100]: Entrada
+                    - paragraph [ref=f12e101]: 16:36:52
+                  - generic [ref=f12e103]:
+                    - paragraph [ref=f12e104]: Salida
+                    - paragraph [ref=f12e105]: 16:37:41
+                - generic [ref=f12e106]:
+                  - generic [ref=f12e108]: SALIDA
+                  - text: registrada correctamente
+              - generic [ref=f12e109]:
+                - generic [ref=f12e112]:
+                  - paragraph [ref=f12e113]: Patente
+                  - paragraph [ref=f12e114]: TE002TD
+                - generic [ref=f12e115]: Registrado
+          - generic [ref=f12e118]:
+            - generic [ref=f12e119]:
+              - generic [ref=f12e120]:
+                - generic [ref=f12e121]:
+                  - heading "Vehículos activos" [level=3] [ref=f12e122]
+                  - generic [ref=f12e123]: "0"
+                - generic [ref=f12e124]: en vivo
+              - generic [ref=f12e126]: No hay vehículos activos.
+            - generic [ref=f12e127]: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list

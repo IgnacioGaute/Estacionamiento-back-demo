@@ -1,0 +1,93 @@
+- generic [active] [ref=f17e1]:
+  - main [ref=f17e4]:
+    - generic [ref=f17e7]:
+      - button "Toggle Sidebar" [ref=f17e8] [cursor=pointer]
+      - link [ref=f17e10] [cursor=pointer]:
+        - /url: /tickets
+      - button "NG" [ref=f17e13] [cursor=pointer]
+    - main [ref=f17e17]:
+      - generic [ref=f17e18]:
+        - generic [ref=f17e19]:
+          - generic [ref=f17e20]:
+            - navigation "breadcrumb" [ref=f17e21]:
+              - generic [ref=f17e22]:
+                - text: Estacionamiento
+                - generic [ref=f17e23]: /
+              - generic [ref=f17e24]:
+                - text: Administración
+                - generic [ref=f17e25]: /
+              - generic [ref=f17e26]: Usuarios
+            - heading "Usuarios del sistema" [level=1] [ref=f17e27]
+            - paragraph [ref=f17e28]: 4 cuentas activas — operadores y administradores.
+          - button "Ayuda" [ref=f17e30] [cursor=pointer]
+        - generic [ref=f17e34]:
+          - generic [ref=f17e35]:
+            - textbox "Filtrar por email..." [ref=f17e40]
+            - button "Nuevo usuario" [ref=f17e42] [cursor=pointer]
+          - table [ref=f17e46]:
+            - rowgroup [ref=f17e47]:
+              - row [ref=f17e48]:
+                - columnheader [ref=f17e49]:
+                  - button "Usuario" [ref=f17e51] [cursor=pointer]
+                - columnheader [ref=f17e52]:
+                  - button "Email" [ref=f17e54] [cursor=pointer]
+                - columnheader [ref=f17e55]:
+                  - button "Rol" [ref=f17e57] [cursor=pointer]
+                - columnheader [ref=f17e58]
+            - rowgroup [ref=f17e59]:
+              - row [ref=f17e60]:
+                - cell "PD Playwright Demo @operador1787260937643" [ref=f17e61]:
+                  - generic [ref=f17e62]:
+                    - generic [ref=f17e63]: PD
+                    - generic [ref=f17e64]:
+                      - generic [ref=f17e65]: Playwright Demo
+                      - generic [ref=f17e66]: "@operador1787260937643"
+                - cell "operador1787260937643@garagemitre.local" [ref=f17e67]
+                - cell "Operador" [ref=f17e69]
+                - cell [ref=f17e74]:
+                  - button "Abrir acciones" [ref=f17e75] [cursor=pointer]
+              - row [ref=f17e77]:
+                - cell "PD Playwright Demo @operador1787258404551" [ref=f17e78]:
+                  - generic [ref=f17e79]:
+                    - generic [ref=f17e80]: PD
+                    - generic [ref=f17e81]:
+                      - generic [ref=f17e82]: Playwright Demo
+                      - generic [ref=f17e83]: "@operador1787258404551"
+                - cell "operador1787258404551@garagemitre.local" [ref=f17e84]
+                - cell "Operador" [ref=f17e86]
+                - cell [ref=f17e91]:
+                  - button "Abrir acciones" [ref=f17e92] [cursor=pointer]
+              - row [ref=f17e94]:
+                - cell "DP Demo Playwright @demoplaywright" [ref=f17e95]:
+                  - generic [ref=f17e96]:
+                    - generic [ref=f17e97]: DP
+                    - generic [ref=f17e98]:
+                      - generic [ref=f17e99]: Demo Playwright
+                      - generic [ref=f17e100]: "@demoplaywright"
+                - cell "demo.playwright@garagemitre.local" [ref=f17e101]
+                - cell "Admin" [ref=f17e103]
+                - cell [ref=f17e105]:
+                  - button "Abrir acciones" [ref=f17e106] [cursor=pointer]
+              - row [ref=f17e108]:
+                - cell "NG Nacho Gaute @nachogaute02" [ref=f17e109]:
+                  - generic [ref=f17e110]:
+                    - generic [ref=f17e111]: NG
+                    - generic [ref=f17e112]:
+                      - generic [ref=f17e113]: Nacho Gaute
+                      - generic [ref=f17e114]: "@nachogaute02"
+                - cell "nachogaute02@gmail.com" [ref=f17e115]
+                - cell "Admin" [ref=f17e117]
+                - cell [ref=f17e119]:
+                  - button "Abrir acciones" [ref=f17e120] [cursor=pointer]
+          - generic [ref=f17e122]:
+            - generic [ref=f17e123]:
+              - generic [ref=f17e124]: Filas
+              - combobox [ref=f17e125] [cursor=pointer]
+              - combobox [ref=f17e128]
+            - generic [ref=f17e129]:
+              - generic [ref=f17e130]: 1/1
+              - button "Ir a la página anterior" [disabled]
+              - button "Ir a la página siguiente" [disabled]
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list

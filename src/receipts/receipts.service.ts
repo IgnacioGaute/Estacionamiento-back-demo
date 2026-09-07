@@ -5,6 +5,7 @@ import { BoxListsService } from 'src/box-lists/box-lists.service';
 import { BoxList } from 'src/box-lists/entities/box-list.entity';
 import { addMonths, startOfMonth } from 'date-fns';
 import { Customer, CustomerType } from 'src/customers/entities/customer.entity';
+import { RenterParkingType } from 'src/parking/entities/renter-parking-type.entity';
 import { Receipt } from './entities/receipt.entity';
 import { UpdateReceiptDto } from './dto/update-receipt.dto';
 
@@ -15,6 +16,7 @@ import isBetween from 'dayjs/plugin/isBetween';
 import { LessThan } from "typeorm";
 import { ReceiptPayment } from './entities/receipt-payment.entity';
 import { PaymentHistoryOnAccount } from './entities/payment-history-on-account.entity';
+import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -33,6 +35,8 @@ export class ReceiptsService {
         private readonly receiptPaymentRepository: Repository<ReceiptPayment>,
         @InjectRepository(PaymentHistoryOnAccount)
         private readonly paymentHistoryOnAccountRepository: Repository<PaymentHistoryOnAccount>,
+        @InjectRepository(Movimiento)
+        private readonly movimientoRepository: Repository<Movimiento>,
         private readonly boxListsService: BoxListsService,
         private readonly dataSource: DataSource,
     ) {}
@@ -42,7 +46,7 @@ async createReceipt(customerId: string, manager: EntityManager, price?: number, 
 
     const customer = await manager.findOne(Customer, {
       where: { id: customerId },
-      relations: ['vehicles', 'vehicleRenters', 'receipts'],
+      relations: ['parkingOwners', 'parkingRenters', 'receipts'],
     });
 
     if (!customer) {
@@ -71,11 +75,13 @@ async createReceipt(customerId: string, manager: EntityManager, price?: number, 
   });
     // TIPO DE RECIBO
     let receiptTypeKey = 'OWNER';
-    const manualRenters = lastReceiptForTypeKey ? lastReceiptForTypeKey.receiptTypeKey : ['JOSE_RICARDO_AZNAR', 'CARLOS_ALBERTO_AZNAR', 'NIDIA_ROSA_MARIA_FONTELA', 'ALDO_RAUL_FONTELA'];
+    const manualOwnerNames = lastReceiptForTypeKey
+      ? [lastReceiptForTypeKey.receiptTypeKey]
+      : (await manager.find(RenterParkingType)).map((t) => t.name);
 
     if (customer.customerType === 'RENTER') {
-      const matchedOwner = customer.vehicleRenters.find(renter =>
-        manualRenters.includes(renter.owner)
+      const matchedOwner = customer.parkingRenters.find(renter =>
+        manualOwnerNames.includes(renter.owner)
       );
 
       receiptTypeKey = matchedOwner ? matchedOwner.owner : 'GARAGE_MITRE';
@@ -365,13 +371,13 @@ async updateReceipt(
         where: { id: receipt.id },
         relations: [
           "customer",
-          "customer.vehicleRenters",
-          "customer.vehicleRenters.vehicle",
-          "customer.vehicleRenters.vehicle.customer",
+          "customer.parkingRenters",
+          "customer.parkingRenters.parkingOwner",
+          "customer.parkingRenters.parkingOwner.customer",
         ],
       });
 
-      const owner = receiptWithRelations?.customer?.vehicleRenters?.[0]?.vehicle?.customer;
+      const owner = receiptWithRelations?.customer?.parkingRenters?.[0]?.parkingOwner?.customer;
       ownerToLink = owner ?? null;
 
       logPrivate(customer, "Owner relacionado detectado", {
@@ -762,28 +768,28 @@ async cancelReceipt(receiptId: string, customerId: string) {
       where: { id: customerId },
       relations: [
         "receipts",
-        "vehicleRenters",
-        "vehicleRenters.vehicle",
-        "vehicleRenters.vehicle.customer",
-        "vehicleRenters.vehicle.customer.receipts",
-        "vehicleRenters.vehicle.customer.receipts.payments",
-        "vehicles",
-        "vehicles.vehicleRenters",
+        "parkingRenters",
+        "parkingRenters.parkingOwner",
+        "parkingRenters.parkingOwner.customer",
+        "parkingRenters.parkingOwner.customer.receipts",
+        "parkingRenters.parkingOwner.customer.receipts.payments",
+        "parkingOwners",
+        "parkingOwners.parkingRenters",
       ],
     });
 
     if (!customer) throw new NotFoundException("Customer not found");
 
-    
+
     const lastPaidReceipt = await queryRunner.manager.findOne(Receipt, {
       where: { id: receiptId },
       relations: ["payments", "paymentHistoryOnAccount"],
     });
-    
+
     // ✅ Regla: OWNER no puede cancelar si tiene inquilino relacionado
     if (customer.customerType === "OWNER") {
-      const hasRenterRelated = (customer.vehicles ?? []).some((v) => {
-        return (v.vehicleRenters ?? []).length > 0;
+      const hasRenterRelated = (customer.parkingOwners ?? []).some((v) => {
+        return (v.parkingRenters ?? []).length > 0;
       });
 
       if (hasRenterRelated && lastPaidReceipt.paymentType === 'MIX') {
@@ -871,7 +877,7 @@ async cancelReceipt(receiptId: string, customerId: string) {
     //    - Si se pagaron 2 recibos del owner ese día, se cancelan los 2.
     // =========================================================
     if (customer.customerType === "PRIVATE") {
-      const owner = customer.vehicleRenters?.[0]?.vehicle?.customer;
+      const owner = customer.parkingRenters?.[0]?.parkingOwner?.customer;
 
       if (owner) {
         const ownerPaymentsSameDate = await receiptPaymentRepo.find({
@@ -943,7 +949,7 @@ async createReceiptMan(dateNowFront: string, customerType: CustomerType): Promis
 
     const customers = await qr.manager.find(Customer, {
       where: { customerType: customerType },
-      relations: ['receipts', 'vehicles', 'vehicleRenters'],
+      relations: ['receipts', 'parkingOwners', 'parkingRenters'],
     });
 
     for (const customer of customers) {
@@ -959,12 +965,12 @@ async createReceiptMan(dateNowFront: string, customerType: CustomerType): Promis
 
       const totalVehicleAmount =
         customer.customerType === 'OWNER'
-          ? customer.vehicles.reduce((acc, v) => acc + (v.amount || 0), 0)
-          : customer.vehicleRenters.reduce((acc, vr) => acc + (vr.amount || 0), 0);
+          ? customer.parkingOwners.reduce((acc, v) => acc + (v.amount || 0), 0)
+          : customer.parkingRenters.reduce((acc, vr) => acc + (vr.amount || 0), 0);
 
       let shouldCreateReceipt = true;
       if (customer.customerType !== 'OWNER') {
-        shouldCreateReceipt = customer.vehicleRenters?.every(vr => vr.owner !== '');
+        shouldCreateReceipt = customer.parkingRenters?.every(vr => vr.owner !== '');
       }
 
       if (shouldCreateReceipt) {
@@ -1091,13 +1097,86 @@ async createReceiptMan(dateNowFront: string, customerType: CustomerType): Promis
 
     async findReceipts(){
       try{
-        const receipts = await this.receiptRepository.find({relations: ['payments', 'customer','customer.vehicleRenters', 'customer.vehicleRenters.vehicle', 'customer.vehicleRenters.vehicle.customer']})
+        const receipts = await this.receiptRepository.find({relations: ['payments', 'customer','customer.parkingRenters', 'customer.parkingRenters.parkingOwner', 'customer.parkingRenters.parkingOwner.customer']})
 
         return receipts;
       } catch (error: any) {
         if (!(error instanceof NotFoundException)) {
           this.logger.error(error.message, error.stack);
         }
+        throw error;
+      }
+    }
+
+    async getReceiptsSummary(from?: string, to?: string) {
+      try {
+        const argentinaNow = dayjs().tz('America/Argentina/Buenos_Aires');
+        const rangeFrom = from ?? argentinaNow.startOf('month').format('YYYY-MM-DD');
+        const rangeTo = to ?? argentinaNow.format('YYYY-MM-DD');
+
+        const byStatusRows = await this.receiptRepository
+          .createQueryBuilder('receipt')
+          .select('receipt.status', 'status')
+          .addSelect('COUNT(*)', 'count')
+          .addSelect('SUM(receipt.price)', 'total')
+          .where('receipt.dateNow BETWEEN :from AND :to', { from: rangeFrom, to: rangeTo })
+          .groupBy('receipt.status')
+          .getRawMany();
+
+        // La forma de pago real vive en ReceiptPayment (un recibo puede tener varios
+        // pagos parciales con distinto medio) — Receipt.paymentType casi nunca se completa.
+        const byPaymentTypeRows = await this.receiptPaymentRepository
+          .createQueryBuilder('rp')
+          .select('rp.paymentType', 'paymentType')
+          .addSelect('COUNT(*)', 'count')
+          .addSelect('SUM(rp.price)', 'total')
+          .where('rp.paymentDate BETWEEN :from AND :to', { from: rangeFrom, to: rangeTo })
+          .andWhere('rp.paymentType IS NOT NULL')
+          .groupBy('rp.paymentType')
+          .getRawMany();
+
+        // Los cobros de tickets (por código de barras o por patente, anticipo o saldo) no pasan
+        // por Receipt/ReceiptPayment — quedan en Movimiento. Sin esto, "tipos de pago más
+        // usados" solo reflejaba recibos y ocultaba todo el efectivo/transferencia de la caja
+        // diaria de tickets. metodo usa los mismos valores CASH/TRANSFER que ReceiptPayment, así
+        // que se puede sumar directo a los mismos buckets.
+        const byMovimientoRows = await this.movimientoRepository
+          .createQueryBuilder('m')
+          .select('m.metodo', 'paymentType')
+          .addSelect('COUNT(*)', 'count')
+          .addSelect('SUM(m.monto)', 'total')
+          .where(
+            `(m."fechaHora" AT TIME ZONE 'America/Argentina/Buenos_Aires')::date BETWEEN :from AND :to`,
+            { from: rangeFrom, to: rangeTo },
+          )
+          .groupBy('m.metodo')
+          .getRawMany();
+
+        const byPaymentTypeMap = new Map<string, { count: number; total: number }>();
+        for (const r of byPaymentTypeRows) {
+          byPaymentTypeMap.set(r.paymentType as string, { count: Number(r.count), total: Number(r.total) });
+        }
+        for (const r of byMovimientoRows) {
+          const key = r.paymentType as string;
+          const existing = byPaymentTypeMap.get(key) ?? { count: 0, total: 0 };
+          byPaymentTypeMap.set(key, {
+            count: existing.count + Number(r.count),
+            total: existing.total + Number(r.total),
+          });
+        }
+
+        return {
+          from: rangeFrom,
+          to: rangeTo,
+          byStatus: byStatusRows.map((r) => ({ status: r.status as string, count: Number(r.count), total: Number(r.total) })),
+          byPaymentType: Array.from(byPaymentTypeMap.entries()).map(([paymentType, v]) => ({
+            paymentType,
+            count: v.count,
+            total: v.total,
+          })),
+        };
+      } catch (error: any) {
+        this.logger.error(error.message, error.stack);
         throw error;
       }
     }

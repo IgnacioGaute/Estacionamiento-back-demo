@@ -23,4 +23,8 @@ export class CreateTicketPriceDto {
     @IsEnum(TICKET_TIME_TYPE)
     @IsOptional()
     ticketTimeType: TicketTimeType;
+
+    @IsNumber()
+    @IsOptional()
+    intervalMinutes: number;
 }

@@ -1,0 +1,106 @@
+- generic [ref=f28e1]:
+  - main [ref=f28e24]:
+    - generic [ref=f28e27]:
+      - link [ref=f28e28] [cursor=pointer]:
+        - /url: /tickets
+      - generic [ref=f28e32]: Operativo
+      - button "NG Nacho Gaute Administrador" [ref=f28e34] [cursor=pointer]:
+        - generic [ref=f28e35]: NG
+        - generic [ref=f28e37]:
+          - generic [ref=f28e38]: Nacho Gaute
+          - generic [ref=f28e39]: Administrador
+    - main [ref=f28e44]:
+      - generic [ref=f28e45]:
+        - button "Ayuda" [ref=f28e47] [cursor=pointer]
+        - generic [ref=f28e51]:
+          - navigation [ref=f28e52]:
+            - generic [ref=f28e53]: Estacionamiento
+            - generic [ref=f28e54]: /
+            - generic [ref=f28e55]: Operación
+            - generic [ref=f28e56]: /
+            - generic [ref=f28e57]: Ingreso
+          - generic [ref=f28e58]:
+            - heading "Ingreso de vehículos" [level=1] [ref=f28e60]
+            - generic [ref=f28e61]: Turno activo · 23/08/2026
+        - generic [ref=f28e64]:
+          - generic [ref=f28e65]:
+            - generic [ref=f28e66]:
+              - button "Registrar entrada Por patente" [ref=f28e67] [cursor=pointer]:
+                - generic [ref=f28e72]:
+                  - generic [ref=f28e73]: Registrar entrada
+                  - generic [ref=f28e74]: Por patente
+              - button "Buscar y cerrar ticket Patente o código" [ref=f28e75] [cursor=pointer]:
+                - generic [ref=f28e80]:
+                  - generic [ref=f28e81]: Buscar y cerrar ticket
+                  - generic [ref=f28e82]: Patente o código
+            - generic [ref=f28e83]:
+              - button "Ver último registro" [ref=f28e84] [cursor=pointer]
+              - generic [ref=f28e87]:
+                - generic [ref=f28e91]:
+                  - generic [ref=f28e92]:
+                    - generic [ref=f28e93]: EN HORARIO
+                    - generic [ref=f28e94]: "#GM-B8D3"
+                  - heading "Estacionamiento" [level=2] [ref=f28e95]
+                  - generic [ref=f28e96]:
+                    - generic [ref=f28e97]:
+                      - generic [ref=f28e98]: ENTRADA
+                      - paragraph [ref=f28e101]: 17:18:49
+                      - paragraph [ref=f28e102]: 23/08/2026
+                    - generic [ref=f28e103]:
+                      - generic [ref=f28e104]: TRANSCURRIDO
+                      - paragraph [ref=f28e108]: 4 min
+                    - generic [ref=f28e109]:
+                      - generic [ref=f28e110]: TIPO
+                      - paragraph [ref=f28e115]: Auto
+                  - generic [ref=f28e116]:
+                    - generic [ref=f28e117]:
+                      - paragraph [ref=f28e118]: Monto a cobrar
+                      - paragraph [ref=f28e119]: "Tarifa: hasta 15min"
+                    - paragraph [ref=f28e120]: $1000
+                  - generic [ref=f28e121]:
+                    - button "Cobrar salida" [ref=f28e122] [cursor=pointer]
+                    - button "Anticipo / avisar duración" [ref=f28e123] [cursor=pointer]
+                - generic [ref=f28e124]:
+                  - generic [ref=f28e130]:
+                    - paragraph [ref=f28e131]: Patente
+                    - paragraph [ref=f28e132]: TE005TG
+                  - generic [ref=f28e133]: Registrado
+          - generic [ref=f28e136]:
+            - generic [ref=f28e137]:
+              - generic [ref=f28e138]:
+                - generic [ref=f28e139]:
+                  - heading "Vehículos activos" [level=3] [ref=f28e140]
+                  - generic [ref=f28e141]: "2"
+                - generic [ref=f28e142]: en vivo
+              - generic [ref=f28e144]:
+                - button "A232NTM En horario hace 26 min · Auto · 16:56" [ref=f28e145] [cursor=pointer]:
+                  - generic [ref=f28e152]:
+                    - generic [ref=f28e153]:
+                      - generic [ref=f28e154]: A232NTM
+                      - generic [ref=f28e155]: En horario
+                    - generic [ref=f28e156]:
+                      - generic [ref=f28e160]: hace 26 min
+                      - generic [ref=f28e161]: ·
+                      - generic [ref=f28e162]: Auto
+                      - generic [ref=f28e163]: ·
+                      - generic [ref=f28e164]: 16:56
+                - button "TE005TG En horario hace 4 min · Auto · 17:18" [active] [ref=f28e167] [cursor=pointer]:
+                  - generic [ref=f28e174]:
+                    - generic [ref=f28e175]:
+                      - generic [ref=f28e176]: TE005TG
+                      - generic [ref=f28e177]: En horario
+                    - generic [ref=f28e178]:
+                      - generic [ref=f28e182]: hace 4 min
+                      - generic [ref=f28e183]: ·
+                      - generic [ref=f28e184]: Auto
+                      - generic [ref=f28e185]: ·
+                      - generic [ref=f28e186]: 17:18
+            - generic [ref=f28e189]: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list
+  - status [ref=f28e192]:
+    - generic [ref=f28e197]:
+      - text: Static route
+      - button "Hide static indicator" [ref=f28e198] [cursor=pointer]
+  - alert [ref=f28e21]

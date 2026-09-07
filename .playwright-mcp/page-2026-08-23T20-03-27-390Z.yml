@@ -1,0 +1,151 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - generic: Operativo
+            - button:
+              - generic: NG
+              - generic:
+                - generic: Nacho Gaute
+                - generic: Administrador
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Ingreso
+                - generic:
+                  - generic:
+                    - heading [level=1]: Ingreso de vehículos
+                  - generic: Turno activo · 23/08/2026
+              - generic:
+                - generic:
+                  - generic:
+                    - button:
+                      - generic:
+                        - generic: Registrar entrada
+                        - generic: Por patente o por ticket
+                    - button:
+                      - generic:
+                        - generic: Buscar y cerrar ticket
+                        - generic: Patente o código
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic: INGRESO REGISTRADO
+                              - generic: "#GM-72C2"
+                            - generic:
+                              - heading [level=2]: Estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: ENTRADA
+                              - paragraph: 23/08/2026
+                            - generic:
+                              - generic: HORARIO
+                              - paragraph: 17:02:07
+                          - generic:
+                            - generic:
+                              - paragraph: Registro por patente para vehículo tipo AUTO
+                              - paragraph: Camioneta
+                          - generic:
+                            - generic: ENTRADA
+                            - text: registrada correctamente
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: TE004TF
+                        - generic: Registrado
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - heading [level=3]: Vehículos activos
+                        - generic: "3"
+                      - generic: en vivo
+                    - generic:
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: A232NTM
+                            - generic: En horario
+                          - generic:
+                            - generic: hace 6 min
+                            - generic: ·
+                            - generic: Auto
+                            - generic: ·
+                            - generic: 16:56
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: "111"
+                            - generic: En horario
+                          - generic:
+                            - generic: hace 4 min
+                            - generic: ·
+                            - generic: Auto
+                            - generic: ·
+                            - generic: 16:58
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: TE004TF
+                            - generic: En horario
+                          - generic:
+                            - generic: hace 1 min
+                            - generic: ·
+                            - generic: Auto
+                            - generic: ·
+                            - generic: 17:02
+                  - generic:
+                    - generic:
+                      - heading [level=3]: Vehículos en el playón
+                      - generic: 1/3
+                    - paragraph: Ocupación por ticket de código de barras.
+                    - paragraph: 33% de los tickets circulando en el playón
+                    - generic:
+                      - button: "111"
+                      - button [disabled]: "112"
+                      - button [disabled]: "113"
+                  - generic:
+                    - generic: Activo · sin salida registrada
+                    - generic: Activo · se pasó de la duración avisada
+                    - generic: Inactivo · con salida registrada
+  - region "Notifications alt+T"
+  - list
+  - status [ref=f22e204]:
+    - generic [ref=f22e209]:
+      - text: Static route
+      - button [ref=f22e210] [cursor=pointer]
+  - alert
+  - dialog [ref=f22e215]:
+    - generic [ref=f22e217]:
+      - heading "Buscar y cerrar ticket" [level=2] [ref=f22e219]
+      - generic [ref=f22e220]:
+        - textbox "Patente, ficha, casillero o apellido" [active] [ref=f22e225]
+        - generic [ref=f22e226]:
+          - button "A232NTM hace 7 min" [ref=f22e227] [cursor=pointer]:
+            - generic [ref=f22e234]:
+              - generic [ref=f22e235]: A232NTM
+              - generic [ref=f22e236]: hace 7 min
+          - button "— hace 4 min" [ref=f22e237] [cursor=pointer]:
+            - generic [ref=f22e244]:
+              - generic [ref=f22e245]: —
+              - generic [ref=f22e246]: hace 4 min
+          - button "TE004TF hace 1 min" [ref=f22e247] [cursor=pointer]:
+            - generic [ref=f22e254]:
+              - generic [ref=f22e255]: TE004TF
+              - generic [ref=f22e256]: hace 1 min
+    - button "Cerrar" [ref=f22e257] [cursor=pointer]

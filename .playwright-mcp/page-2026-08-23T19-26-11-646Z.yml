@@ -1,0 +1,107 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - generic: Operativo
+            - button:
+              - generic: NG
+              - generic:
+                - generic: Nacho Gaute
+                - generic: Administrador
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Tickets
+                - generic:
+                  - generic:
+                    - heading [level=1]: Registro de estacionamiento
+                  - generic: Turno activo · 23/08/2026
+              - generic:
+                - generic:
+                  - generic:
+                    - button [expanded]: Registrar entrada por patente
+                    - button: Buscar y cerrar ticket
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic: SALIDA REGISTRADA
+                              - generic: "#GM-2855"
+                            - generic:
+                              - heading [level=2]: Estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: SALIDA
+                              - paragraph: 22/08/2026
+                            - generic:
+                              - generic: PRECIO
+                              - paragraph: $2000
+                              - paragraph: "Tarifa: Hasta 45min"
+                          - generic:
+                            - generic:
+                              - generic:
+                                - generic:
+                                  - paragraph: Entrada
+                                  - paragraph: 18:28:04
+                                - generic:
+                                  - paragraph: Salida
+                                  - paragraph: 19:04:35
+                          - generic:
+                            - generic: SALIDA
+                            - text: registrada correctamente
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: A232NTM
+                        - generic: Registrado
+                - generic:
+                  - generic:
+                    - generic:
+                      - heading [level=3]: Vehículos activos
+                      - generic: "0"
+                    - generic: No hay vehículos activos.
+                  - generic: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - list
+  - alert
+  - dialog [ref=f1e119]:
+    - generic [ref=f1e121]:
+      - heading "Entrada por patente" [level=2] [ref=f1e123]
+      - generic [ref=f1e124]:
+        - generic [ref=f1e125]:
+          - checkbox "Sin patente (moto sin chapa, patente rota, etc.)" [active] [ref=f1e126] [cursor=pointer]
+          - checkbox
+          - generic [ref=f1e127] [cursor=pointer]: Sin patente (moto sin chapa, patente rota, etc.)
+        - generic [ref=f1e128]:
+          - text: Patente
+          - textbox "Patente" [ref=f1e129]:
+            - /placeholder: AB123CD
+        - generic [ref=f1e130]:
+          - text: Tipo de Vehículo
+          - combobox [ref=f1e131] [cursor=pointer]:
+            - generic: Auto
+          - combobox [ref=f1e134]
+        - generic [ref=f1e135]:
+          - text: Casillero (opcional)
+          - textbox "Casillero (opcional)" [ref=f1e136]:
+            - /placeholder: Escriba número de casillero
+        - generic [ref=f1e137]:
+          - generic [ref=f1e138]: Apellido (opcional)
+          - textbox "Apellido (opcional)" [ref=f1e139]:
+            - /placeholder: Escriba apellido
+        - button "Registrar entrada" [ref=f1e140] [cursor=pointer]
+    - button "Cerrar" [ref=f1e141] [cursor=pointer]

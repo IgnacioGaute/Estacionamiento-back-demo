@@ -34,4 +34,21 @@ export class CreateTicketRegistrationDto {
     @IsOptional()
     @Matches(/^\d{4}-\d{2}-\d{2}$/)
     dateNow: string
+
+    @IsString()
+    @IsOptional()
+    priceBracketLabel?: string
+
+    @IsOptional()
+    priceBracketFallbackUsed?: boolean
+
+    @IsString()
+    @IsOptional()
+    expectedBracketLabel?: string
+
+    @IsOptional()
+    expectedUptoMinutes?: number
+
+    @IsOptional()
+    exceededExpectedStay?: boolean
 }

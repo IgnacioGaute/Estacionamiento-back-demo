@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Body, Param, NotFoundException, UseGuards, Delete, Patch } from '@nestjs/common';
+import { Controller, Get, Post, Put, Body, Param, Query, NotFoundException, UseGuards, Delete, Patch } from '@nestjs/common';
 import { BoxListsService } from './box-lists.service';
 import { CreateBoxListDto } from './dto/create-box-list.dto';
 import { UpdateBoxListDto } from './dto/update-box-list.dto';
@@ -29,6 +29,24 @@ export class BoxListsController {
     @Get('otherPayment')
   async findAllOtherPayment() {
     return await this.boxListsService.findAllOtherPayment();
+  }
+
+  @Get('summary')
+  async getRevenueSummary(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('groupBy') groupBy?: 'day' | 'month',
+  ) {
+    return await this.boxListsService.getRevenueSummary(from, to, groupBy);
+  }
+
+  @Get('otherPayment/summary')
+  async getOtherPaymentsSummary(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('groupBy') groupBy?: 'day' | 'month',
+  ) {
+    return await this.boxListsService.getOtherPaymentsSummary(from, to, groupBy);
   }
 
   @Get(':id')

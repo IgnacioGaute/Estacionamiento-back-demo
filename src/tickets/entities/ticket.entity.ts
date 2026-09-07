@@ -31,6 +31,9 @@ export class Ticket {
   @Column('enum', { enum: TICKET_TYPE})
   vehicleType: string;
 
+  @Column('int', {nullable:true})
+  intervalMinutes: number;
+
   @OneToOne(() => TicketRegistration, (ticketRegistration) => ticketRegistration.ticket)
   ticketRegistration: TicketRegistration;
 }

@@ -1,0 +1,69 @@
+- generic [active] [ref=f7e1]:
+  - main [ref=f7e4]:
+    - generic [ref=f7e7]:
+      - link [ref=f7e8] [cursor=pointer]:
+        - /url: /tickets
+      - button "NG" [ref=f7e11] [cursor=pointer]
+    - main [ref=f7e15]:
+      - generic [ref=f7e16]:
+        - button "Ayuda" [ref=f7e18] [cursor=pointer]
+        - generic [ref=f7e22]:
+          - navigation [ref=f7e23]:
+            - generic [ref=f7e24]: Estacionamiento
+            - generic [ref=f7e25]: /
+            - generic [ref=f7e26]: Operación
+            - generic [ref=f7e27]: /
+            - generic [ref=f7e28]: Ingreso
+          - generic [ref=f7e29]:
+            - heading "Ingreso de vehículos" [level=1] [ref=f7e31]
+            - generic [ref=f7e32]: Turno activo · 24/08/2026
+        - generic [ref=f7e35]:
+          - button "Ingreso" [ref=f7e36] [cursor=pointer]
+          - button "Activos" [ref=f7e37] [cursor=pointer]
+        - generic [ref=f7e39]:
+          - button "Registrar entrada Por patente" [ref=f7e41] [cursor=pointer]:
+            - generic [ref=f7e46]:
+              - generic [ref=f7e47]: Registrar entrada
+              - generic [ref=f7e48]: Por patente
+          - generic [ref=f7e169]:
+            - button "Ver último registro" [ref=f7e170] [cursor=pointer]
+            - generic [ref=f7e173]:
+              - generic [ref=f7e177]:
+                - generic [ref=f7e178]:
+                  - generic [ref=f7e179]: EN HORARIO
+                  - generic [ref=f7e180]: "#GM-905B"
+                - heading "Estacionamiento" [level=2] [ref=f7e181]
+                - generic [ref=f7e182]:
+                  - generic [ref=f7e183]:
+                    - generic [ref=f7e184]: ENTRADA
+                    - paragraph [ref=f7e187]: 11:18:52
+                    - paragraph [ref=f7e188]: 24/08/2026
+                  - generic [ref=f7e189]:
+                    - generic [ref=f7e190]: TRANSCURRIDO
+                    - paragraph [ref=f7e194]: 30 min
+                  - generic [ref=f7e195]:
+                    - generic [ref=f7e196]: TIPO
+                    - paragraph [ref=f7e201]: Auto
+                - paragraph [ref=f7e202]: "Avisó que se queda: Hasta 45min"
+                - generic [ref=f7e203]:
+                  - generic [ref=f7e204]:
+                    - paragraph [ref=f7e205]: Monto a cobrar
+                    - paragraph [ref=f7e206]: "Tarifa: Hasta 45min"
+                    - paragraph [ref=f7e207]: "Ya cobrado (anticipo): $2000"
+                  - paragraph [ref=f7e208]: $0
+                - generic [ref=f7e209]:
+                  - button "Cobrar salida" [ref=f7e210] [cursor=pointer]
+                  - button "Anticipo / avisar duración" [ref=f7e211] [cursor=pointer]
+              - generic [ref=f7e212]:
+                - generic [ref=f7e218]:
+                  - paragraph [ref=f7e219]: Patente
+                  - paragraph [ref=f7e220]: A213Nfr
+                - generic [ref=f7e221]: Registrado
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list
+  - status [ref=f7e224]:
+    - generic [ref=f7e229]:
+      - text: Static route
+      - button "Hide static indicator" [ref=f7e230] [cursor=pointer]
+  - alert [ref=f7e168]

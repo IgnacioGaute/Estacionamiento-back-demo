@@ -1,0 +1,126 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - generic: Operativo
+            - button:
+              - generic: NG
+              - generic:
+                - generic: Nacho Gaute
+                - generic: Administrador
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Ingreso
+                - generic:
+                  - generic:
+                    - heading [level=1]: Ingreso de vehículos
+                  - generic: Turno activo · 23/08/2026
+              - generic:
+                - generic:
+                  - generic:
+                    - button [expanded]:
+                      - generic:
+                        - generic: Registrar entrada
+                        - generic: Por patente o por ticket
+                    - button:
+                      - generic:
+                        - generic: Buscar y cerrar ticket
+                        - generic: Patente o código
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic: SALIDA REGISTRADA
+                              - generic: "#GM-8837"
+                            - generic:
+                              - heading [level=2]: Estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: SALIDA
+                              - paragraph: 23/08/2026
+                            - generic:
+                              - generic: PRECIO
+                              - paragraph: $1000
+                              - paragraph: "Tarifa: hasta 1min"
+                          - generic:
+                            - generic:
+                              - generic:
+                                - generic:
+                                  - paragraph: Entrada
+                                  - paragraph: 16:36:52
+                                - generic:
+                                  - paragraph: Salida
+                                  - paragraph: 16:37:41
+                          - generic:
+                            - generic: SALIDA
+                            - text: registrada correctamente
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: TE002TD
+                        - generic: Registrado
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - heading [level=3]: Vehículos activos
+                        - generic: "1"
+                      - generic: en vivo
+                    - generic:
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: "111"
+                            - generic: En horario
+                          - generic:
+                            - generic: hace 42 h 43 min
+                            - generic: ·
+                            - generic: Auto
+                            - generic: ·
+                            - generic: 21:57
+                  - generic:
+                    - generic:
+                      - heading [level=3]: Vehículos en el playón
+                      - generic: 1/3
+                    - paragraph: Ocupación por ticket de código de barras.
+                    - paragraph: 33% de los tickets circulando en el playón
+                    - generic:
+                      - button: "111"
+                      - button [disabled]: "112"
+                      - button [disabled]: "113"
+                  - generic:
+                    - generic: Activo · sin salida registrada
+                    - generic: Activo · se pasó de la duración avisada
+                    - generic: Inactivo · con salida registrada
+  - region "Notifications alt+T"
+  - list
+  - alert
+  - dialog [ref=f14e166]:
+    - generic [ref=f14e168]:
+      - heading "Registrar entrada" [level=2] [ref=f14e170]
+      - generic [ref=f14e171]:
+        - generic [ref=f14e172]:
+          - button "Patente" [ref=f14e173] [cursor=pointer]
+          - button "Ticket" [ref=f14e177] [cursor=pointer]
+        - generic [ref=f14e201]:
+          - generic [ref=f14e202]:
+            - text: Número de ticket
+            - textbox "0000" [active] [ref=f14e203]
+            - paragraph [ref=f14e204]: Escaneá la tarjeta o escribí el número manualmente.
+          - button "Registrar entrada" [disabled]
+    - button "Cerrar" [ref=f14e196] [cursor=pointer]

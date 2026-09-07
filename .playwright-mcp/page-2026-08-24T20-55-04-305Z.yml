@@ -1,0 +1,121 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - generic: Operativo
+            - button [expanded]:
+              - generic: NG
+              - generic:
+                - generic: Nacho Gaute
+                - generic: Administrador
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Ingreso
+                - generic:
+                  - generic:
+                    - heading [level=1]: Ingreso de vehículos
+                    - paragraph: Identificá cada auto por patente o por ticket. Buscá y cerrá cualquiera desde el panel de la derecha.
+                  - generic: Turno activo · 24/08/2026
+              - generic:
+                - generic:
+                  - generic:
+                    - button:
+                      - generic:
+                        - generic: Registrar entrada
+                        - generic: Por patente
+                    - button:
+                      - generic:
+                        - generic: Buscar y cerrar ticket
+                        - generic: Patente o código
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic: SALIDA REGISTRADA
+                              - generic: "#GM-7212"
+                            - generic:
+                              - heading [level=2]: Estacionamiento
+                              - paragraph: Registro de estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: SALIDA
+                              - paragraph: 24/08/2026
+                            - generic:
+                              - generic: PRECIO
+                              - paragraph: $10000
+                              - paragraph: "Tarifa: Hasta 1dia"
+                          - generic:
+                            - generic:
+                              - generic:
+                                - generic:
+                                  - paragraph: Entrada
+                                  - paragraph: 11:17:47
+                                - generic:
+                                  - paragraph: Salida
+                                  - paragraph: 17:49:19
+                          - generic:
+                            - generic: SALIDA
+                            - text: registrada correctamente
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: A232NTM
+                        - generic: Registrado
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - heading [level=3]: Vehículos activos
+                        - generic: "0"
+                      - generic: en vivo
+                    - generic: No hay vehículos activos.
+                  - generic: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - list
+  - alert
+  - menu "NG Nacho Gaute Administrador" [active] [ref=f10e135]:
+    - generic [ref=f10e136]:
+      - generic [ref=f10e137]: NG
+      - generic [ref=f10e139]:
+        - generic [ref=f10e140]: Nacho Gaute
+        - generic [ref=f10e141]: nachogaute02@gmail.com
+      - generic [ref=f10e142]: Admin
+    - generic [ref=f10e143]:
+      - button "Clientes" [ref=f10e144] [cursor=pointer]
+      - generic [ref=f10e153]:
+        - link "Propietarios" [ref=f10e154] [cursor=pointer]:
+          - /url: /owners
+        - link "Inquilinos" [ref=f10e158] [cursor=pointer]:
+          - /url: /renters
+        - link "Inquilinos de terceros" [ref=f10e163] [cursor=pointer]:
+          - /url: /privates
+    - separator [ref=f10e167]
+    - group [ref=f10e168]:
+      - link [ref=f10e169] [cursor=pointer]:
+        - /url: /tickets
+        - menuitem "Tickets" [ref=f10e170]
+      - menuitem "Planilla de caja" [ref=f10e171] [cursor=pointer]
+      - link [ref=f10e172] [cursor=pointer]:
+        - /url: /notes
+        - menuitem "Avisos" [ref=f10e173]
+    - separator [ref=f10e174]
+    - link [ref=f10e175] [cursor=pointer]:
+      - /url: /admin/dashboard
+      - menuitem "Administrar" [ref=f10e176]
+    - separator [ref=f10e177]
+    - menuitem "Cerrar sesión" [ref=f10e178] [cursor=pointer]

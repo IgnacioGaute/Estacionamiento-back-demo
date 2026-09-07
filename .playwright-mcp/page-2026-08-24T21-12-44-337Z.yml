@@ -1,0 +1,105 @@
+- generic [active] [ref=f19e1]:
+  - generic [ref=f19e3]:
+    - generic [ref=f19e8]:
+      - button "Toggle Sidebar" [ref=f19e11] [cursor=pointer]
+      - generic [ref=f19e13]:
+        - list [ref=f19e15]:
+          - listitem [ref=f19e16]:
+            - link [ref=f19e17] [cursor=pointer]:
+              - /url: /admin/dashboard
+          - listitem [ref=f19e24]:
+            - link [ref=f19e25] [cursor=pointer]:
+              - /url: /admin/users
+          - listitem [ref=f19e30]:
+            - link [ref=f19e31] [cursor=pointer]:
+              - /url: /admin/tickets
+          - listitem [ref=f19e35]:
+            - link [ref=f19e36] [cursor=pointer]:
+              - /url: /admin/frecuentes
+          - listitem [ref=f19e43]:
+            - link [ref=f19e44] [cursor=pointer]:
+              - /url: /admin/parking-type
+          - listitem [ref=f19e49]:
+            - link [ref=f19e50] [cursor=pointer]:
+              - /url: /admin/other-payments
+          - listitem [ref=f19e55]:
+            - link [ref=f19e56] [cursor=pointer]:
+              - /url: /tickets
+        - generic: Estacionamiento
+      - button "Toggle Sidebar" [ref=f19e64]
+    - main [ref=f19e65]:
+      - generic [ref=f19e68]:
+        - link [ref=f19e69] [cursor=pointer]:
+          - /url: /tickets
+        - generic [ref=f19e73]: Operativo
+        - button "NG Nacho Gaute Administrador" [ref=f19e75] [cursor=pointer]:
+          - generic [ref=f19e76]: NG
+          - generic [ref=f19e78]:
+            - generic [ref=f19e79]: Nacho Gaute
+            - generic [ref=f19e80]: Administrador
+      - main [ref=f19e85]:
+        - generic [ref=f19e86]:
+          - generic [ref=f19e87]:
+            - generic [ref=f19e88]:
+              - navigation "breadcrumb" [ref=f19e89]:
+                - generic [ref=f19e90]:
+                  - text: Estacionamiento
+                  - generic [ref=f19e91]: /
+                - generic [ref=f19e92]:
+                  - text: Administración
+                  - generic [ref=f19e93]: /
+                - generic [ref=f19e94]: Tickets
+              - heading "Administrar Tickets" [level=1] [ref=f19e95]
+              - paragraph [ref=f19e96]: Gestiona todos los tickets registrados.
+            - generic [ref=f19e98]:
+              - button "Ayuda" [ref=f19e99] [cursor=pointer]
+              - button "Exportar" [ref=f19e103] [cursor=pointer]
+          - generic [ref=f19e104]:
+            - tablist [ref=f19e105]:
+              - tab "Tickets" [selected] [ref=f19e106] [cursor=pointer]
+              - tab "Tarifas" [ref=f19e107] [cursor=pointer]
+            - tabpanel "Tickets" [ref=f19e108]:
+              - generic [ref=f19e109]:
+                - generic [ref=f19e110]:
+                  - textbox "Filtrar tipos..." [ref=f19e111]
+                  - generic [ref=f19e112]:
+                    - button "Crear Ticket" [ref=f19e113] [cursor=pointer]
+                    - button "Vista" [ref=f19e114] [cursor=pointer]
+                - table [ref=f19e119]:
+                  - rowgroup [ref=f19e120]:
+                    - row [ref=f19e121]:
+                      - columnheader [ref=f19e122]:
+                        - button "Codigo de Barras" [ref=f19e124] [cursor=pointer]
+                      - columnheader [ref=f19e125]:
+                        - button "Tipo de Vehiculo" [ref=f19e127] [cursor=pointer]
+                      - columnheader [ref=f19e128]
+                  - rowgroup [ref=f19e129]:
+                    - row [ref=f19e130]:
+                      - cell "111" [ref=f19e131]
+                      - cell "AUTO" [ref=f19e133]
+                      - cell [ref=f19e135]:
+                        - button "Open menu" [ref=f19e136] [cursor=pointer]
+                    - row [ref=f19e138]:
+                      - cell "112" [ref=f19e139]
+                      - cell "AUTO" [ref=f19e141]
+                      - cell [ref=f19e143]:
+                        - button "Open menu" [ref=f19e144] [cursor=pointer]
+                    - row [ref=f19e146]:
+                      - cell "113" [ref=f19e147]
+                      - cell "AUTO" [ref=f19e149]
+                      - cell [ref=f19e151]:
+                        - button "Open menu" [ref=f19e152] [cursor=pointer]
+                - generic [ref=f19e154]:
+                  - generic [ref=f19e155]:
+                    - generic [ref=f19e156]: Filas
+                    - combobox [ref=f19e157] [cursor=pointer]
+                    - combobox [ref=f19e160]
+                  - generic [ref=f19e161]:
+                    - generic [ref=f19e162]: 1/1
+                    - button "Ir a la primera página" [disabled]
+                    - button "Ir a la página anterior" [disabled]
+                    - button "Ir a la página siguiente" [disabled]
+                    - button "Ir a la última página" [disabled]
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list

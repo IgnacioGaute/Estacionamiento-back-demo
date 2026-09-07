@@ -1,0 +1,257 @@
+- generic [active] [ref=f13e1]:
+  - main [ref=f13e4]:
+    - generic [ref=f13e7]:
+      - button "Toggle Sidebar" [ref=f13e8] [cursor=pointer]
+      - link [ref=f13e10] [cursor=pointer]:
+        - /url: /tickets
+      - button "NG" [ref=f13e13] [cursor=pointer]
+    - main [ref=f13e17]:
+      - generic [ref=f13e18]:
+        - generic [ref=f13e19]:
+          - generic [ref=f13e20]:
+            - navigation "breadcrumb" [ref=f13e21]:
+              - generic [ref=f13e22]:
+                - text: Estacionamiento
+                - generic [ref=f13e23]: /
+              - generic [ref=f13e24]:
+                - text: Administración
+                - generic [ref=f13e25]: /
+              - generic [ref=f13e26]: Dashboard
+            - heading "Dashboard" [level=1] [ref=f13e27]
+          - button "Ayuda" [ref=f13e29] [cursor=pointer]
+        - generic [ref=f13e34]:
+          - generic [ref=f13e36]:
+            - generic [ref=f13e37]:
+              - generic [ref=f13e38]: Recaudación
+              - generic [ref=f13e39]: Últimos 140 días
+            - generic [ref=f13e40]: $ 25.619.200
+          - generic [ref=f13e41]:
+            - generic [ref=f13e42]:
+              - generic [ref=f13e43]:
+                - generic [ref=f13e44]: abr
+                - generic [ref=f13e45]: may
+                - generic [ref=f13e46]: jun
+                - generic [ref=f13e47]: jul
+                - generic [ref=f13e48]: ago
+              - generic [ref=f13e49]:
+                - generic [ref=f13e50]:
+                  - generic [ref=f13e51] [cursor=pointer]
+                  - generic [ref=f13e52] [cursor=pointer]
+                  - generic [ref=f13e53] [cursor=pointer]
+                  - generic [ref=f13e54] [cursor=pointer]
+                  - generic [ref=f13e55] [cursor=pointer]
+                  - generic [ref=f13e56] [cursor=pointer]
+                  - generic [ref=f13e57] [cursor=pointer]
+                - generic [ref=f13e58]:
+                  - generic [ref=f13e59] [cursor=pointer]
+                  - generic [ref=f13e60] [cursor=pointer]
+                  - generic [ref=f13e61] [cursor=pointer]
+                  - generic [ref=f13e62] [cursor=pointer]
+                  - generic [ref=f13e63] [cursor=pointer]
+                  - generic [ref=f13e64] [cursor=pointer]
+                  - generic [ref=f13e65] [cursor=pointer]
+                - generic [ref=f13e66]:
+                  - generic [ref=f13e67] [cursor=pointer]
+                  - generic [ref=f13e68] [cursor=pointer]
+                  - generic [ref=f13e69] [cursor=pointer]
+                  - generic [ref=f13e70] [cursor=pointer]
+                  - generic [ref=f13e71] [cursor=pointer]
+                  - generic [ref=f13e72] [cursor=pointer]
+                  - generic [ref=f13e73] [cursor=pointer]
+                - generic [ref=f13e74]:
+                  - generic [ref=f13e75] [cursor=pointer]
+                  - generic [ref=f13e76] [cursor=pointer]
+                  - generic [ref=f13e77] [cursor=pointer]
+                  - generic [ref=f13e78] [cursor=pointer]
+                  - generic [ref=f13e79] [cursor=pointer]
+                  - generic [ref=f13e80] [cursor=pointer]
+                  - generic [ref=f13e81] [cursor=pointer]
+                - generic [ref=f13e82]:
+                  - generic [ref=f13e83] [cursor=pointer]
+                  - generic [ref=f13e84] [cursor=pointer]
+                  - generic [ref=f13e85] [cursor=pointer]
+                  - generic [ref=f13e86] [cursor=pointer]
+                  - generic [ref=f13e87] [cursor=pointer]
+                  - generic [ref=f13e88] [cursor=pointer]
+                  - generic [ref=f13e89] [cursor=pointer]
+                - generic [ref=f13e90]:
+                  - generic [ref=f13e91] [cursor=pointer]
+                  - generic [ref=f13e92] [cursor=pointer]
+                  - generic [ref=f13e93] [cursor=pointer]
+                  - generic [ref=f13e94] [cursor=pointer]
+                  - generic [ref=f13e95] [cursor=pointer]
+                  - generic [ref=f13e96] [cursor=pointer]
+                  - generic [ref=f13e97] [cursor=pointer]
+                - generic [ref=f13e98]:
+                  - generic [ref=f13e99] [cursor=pointer]
+                  - generic [ref=f13e100] [cursor=pointer]
+                  - generic [ref=f13e101] [cursor=pointer]
+                  - generic [ref=f13e102] [cursor=pointer]
+                  - generic [ref=f13e103] [cursor=pointer]
+                  - generic [ref=f13e104] [cursor=pointer]
+                  - generic [ref=f13e105] [cursor=pointer]
+                - generic [ref=f13e106]:
+                  - generic [ref=f13e107] [cursor=pointer]
+                  - generic [ref=f13e108] [cursor=pointer]
+                  - generic [ref=f13e109] [cursor=pointer]
+                  - generic [ref=f13e110] [cursor=pointer]
+                  - generic [ref=f13e111] [cursor=pointer]
+                  - generic [ref=f13e112] [cursor=pointer]
+                  - generic [ref=f13e113] [cursor=pointer]
+                - generic [ref=f13e114]:
+                  - generic [ref=f13e115] [cursor=pointer]
+                  - generic [ref=f13e116] [cursor=pointer]
+                  - generic [ref=f13e117] [cursor=pointer]
+                  - generic [ref=f13e118] [cursor=pointer]
+                  - generic [ref=f13e119] [cursor=pointer]
+                  - generic [ref=f13e120] [cursor=pointer]
+                  - generic [ref=f13e121] [cursor=pointer]
+                - generic [ref=f13e122]:
+                  - generic [ref=f13e123] [cursor=pointer]
+                  - generic [ref=f13e124] [cursor=pointer]
+                  - generic [ref=f13e125] [cursor=pointer]
+                  - generic [ref=f13e126] [cursor=pointer]
+                  - generic [ref=f13e127] [cursor=pointer]
+                  - generic [ref=f13e128] [cursor=pointer]
+                  - generic [ref=f13e129] [cursor=pointer]
+                - generic [ref=f13e130]:
+                  - generic [ref=f13e131] [cursor=pointer]
+                  - generic [ref=f13e132] [cursor=pointer]
+                  - generic [ref=f13e133] [cursor=pointer]
+                  - generic [ref=f13e134] [cursor=pointer]
+                  - generic [ref=f13e135] [cursor=pointer]
+                  - generic [ref=f13e136] [cursor=pointer]
+                  - generic [ref=f13e137] [cursor=pointer]
+                - generic [ref=f13e138]:
+                  - generic [ref=f13e139] [cursor=pointer]
+                  - generic [ref=f13e140] [cursor=pointer]
+                  - generic [ref=f13e141] [cursor=pointer]
+                  - generic [ref=f13e142] [cursor=pointer]
+                  - generic [ref=f13e143] [cursor=pointer]
+                  - generic [ref=f13e144] [cursor=pointer]
+                  - generic [ref=f13e145] [cursor=pointer]
+                - generic [ref=f13e146]:
+                  - generic [ref=f13e147] [cursor=pointer]
+                  - generic [ref=f13e148] [cursor=pointer]
+                  - generic [ref=f13e149] [cursor=pointer]
+                  - generic [ref=f13e150] [cursor=pointer]
+                  - generic [ref=f13e151] [cursor=pointer]
+                  - generic [ref=f13e152] [cursor=pointer]
+                  - generic [ref=f13e153] [cursor=pointer]
+                - generic [ref=f13e154]:
+                  - generic [ref=f13e155] [cursor=pointer]
+                  - generic [ref=f13e156] [cursor=pointer]
+                  - generic [ref=f13e157] [cursor=pointer]
+                  - generic [ref=f13e158] [cursor=pointer]
+                  - generic [ref=f13e159] [cursor=pointer]
+                  - generic [ref=f13e160] [cursor=pointer]
+                  - generic [ref=f13e161] [cursor=pointer]
+                - generic [ref=f13e162]:
+                  - generic [ref=f13e163] [cursor=pointer]
+                  - generic [ref=f13e164] [cursor=pointer]
+                  - generic [ref=f13e165] [cursor=pointer]
+                  - generic [ref=f13e166] [cursor=pointer]
+                  - generic [ref=f13e167] [cursor=pointer]
+                  - generic [ref=f13e168] [cursor=pointer]
+                  - generic [ref=f13e169] [cursor=pointer]
+                - generic [ref=f13e170]:
+                  - generic [ref=f13e171] [cursor=pointer]
+                  - generic [ref=f13e172] [cursor=pointer]
+                  - generic [ref=f13e173] [cursor=pointer]
+                  - generic [ref=f13e174] [cursor=pointer]
+                  - generic [ref=f13e175] [cursor=pointer]
+                  - generic [ref=f13e176] [cursor=pointer]
+                  - generic [ref=f13e177] [cursor=pointer]
+                - generic [ref=f13e178]:
+                  - generic [ref=f13e179] [cursor=pointer]
+                  - generic [ref=f13e180] [cursor=pointer]
+                  - generic [ref=f13e181] [cursor=pointer]
+                  - generic [ref=f13e182] [cursor=pointer]
+                  - generic [ref=f13e183] [cursor=pointer]
+                  - generic [ref=f13e184] [cursor=pointer]
+                  - generic [ref=f13e185] [cursor=pointer]
+                - generic [ref=f13e186]:
+                  - generic [ref=f13e187] [cursor=pointer]
+                  - generic [ref=f13e188] [cursor=pointer]
+                  - generic [ref=f13e189] [cursor=pointer]
+                  - generic [ref=f13e190] [cursor=pointer]
+                  - generic [ref=f13e191] [cursor=pointer]
+                  - generic [ref=f13e192] [cursor=pointer]
+                  - generic [ref=f13e193] [cursor=pointer]
+                - generic [ref=f13e194]:
+                  - generic [ref=f13e195] [cursor=pointer]
+                  - generic [ref=f13e196] [cursor=pointer]
+                  - generic [ref=f13e197] [cursor=pointer]
+                  - generic [ref=f13e198] [cursor=pointer]
+                  - generic [ref=f13e199] [cursor=pointer]
+                  - generic [ref=f13e200] [cursor=pointer]
+                  - generic [ref=f13e201] [cursor=pointer]
+                - generic [ref=f13e202]:
+                  - generic [ref=f13e203] [cursor=pointer]
+                  - generic [ref=f13e204] [cursor=pointer]
+                  - generic [ref=f13e205] [cursor=pointer]
+                  - generic [ref=f13e206] [cursor=pointer]
+                  - generic [ref=f13e207] [cursor=pointer]
+                  - generic [ref=f13e208] [cursor=pointer]
+                  - generic [ref=f13e209] [cursor=pointer]
+            - generic [ref=f13e210]: Pasá el mouse por los cuadros
+          - generic [ref=f13e212]:
+            - generic [ref=f13e213]: 20 semanas × 7 días
+            - generic [ref=f13e214]: Planillas de caja
+        - button "01/08/2026 – 24/08/2026" [ref=f13e216] [cursor=pointer]
+        - generic [ref=f13e217]:
+          - generic [ref=f13e219]:
+            - generic [ref=f13e220]:
+              - generic [ref=f13e221]:
+                - generic [ref=f13e222]:
+                  - generic [ref=f13e223]: Ingresos vs egresos
+                  - generic [ref=f13e224]: Línea
+                - generic [ref=f13e225]: $ 0
+              - generic [ref=f13e226]:
+                - button "Ambas" [ref=f13e227] [cursor=pointer]
+                - button "Ingresos" [ref=f13e228] [cursor=pointer]
+            - generic [ref=f13e231]:
+              - generic [ref=f13e232]: Puntas redondeadas
+              - generic [ref=f13e233]: Pico $ 35.000
+          - generic [ref=f13e235]:
+            - generic [ref=f13e236]:
+              - generic [ref=f13e237]:
+                - generic [ref=f13e238]:
+                  - generic [ref=f13e239]: Recibos pagados vs pendientes
+                  - generic [ref=f13e240]: Medidor
+                - generic [ref=f13e241]: 17% recibos pagados
+              - combobox [ref=f13e242] [cursor=pointer]
+              - combobox [ref=f13e245]
+            - generic [ref=f13e246]:
+              - generic:
+                - generic: 17.0%
+                - generic: 5 pendientes
+            - generic [ref=f13e248]:
+              - generic [ref=f13e249]: Arco redondeado de 240°
+              - generic [ref=f13e250]: Pagados 1 · Pendientes 5
+          - generic [ref=f13e252]:
+            - generic [ref=f13e253]:
+              - generic [ref=f13e254]:
+                - generic [ref=f13e255]:
+                  - generic [ref=f13e256]: Clientes creados por tipo
+                  - generic [ref=f13e257]: Barras + línea
+                - generic [ref=f13e258]: 6 clientes en el período
+              - button "Línea activa" [ref=f13e259] [cursor=pointer]
+            - generic [ref=f13e262]:
+              - generic [ref=f13e263]: Capas monocromáticas
+              - generic [ref=f13e264]: Particulares al tope
+          - generic [ref=f13e266]:
+            - generic [ref=f13e268]:
+              - generic [ref=f13e269]:
+                - generic [ref=f13e270]: Tipos de pago más usados
+                - generic [ref=f13e271]: Benchmark
+              - generic [ref=f13e272]: 1 medios evaluados
+            - generic [ref=f13e275]:
+              - generic [ref=f13e276]: Transferencia
+              - generic [ref=f13e277]: 100% · 2 recibos
+            - generic [ref=f13e281]:
+              - generic [ref=f13e282]: Barras redondeadas
+              - generic [ref=f13e283]: Marca de reparto parejo
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list

@@ -1,0 +1,93 @@
+- generic [active] [ref=f22e1]:
+  - main [ref=f22e4]:
+    - generic [ref=f22e7]:
+      - link [ref=f22e8] [cursor=pointer]:
+        - /url: /tickets
+      - generic [ref=f22e12]: Operativo
+      - button "NG Nacho Gaute Administrador" [ref=f22e14] [cursor=pointer]:
+        - generic [ref=f22e15]: NG
+        - generic [ref=f22e17]:
+          - generic [ref=f22e18]: Nacho Gaute
+          - generic [ref=f22e19]: Administrador
+    - main [ref=f22e24]:
+      - generic [ref=f22e25]:
+        - button "Ayuda" [ref=f22e27] [cursor=pointer]
+        - generic [ref=f22e31]:
+          - navigation [ref=f22e32]:
+            - generic [ref=f22e33]: Estacionamiento
+            - generic [ref=f22e34]: /
+            - generic [ref=f22e35]: Operación
+            - generic [ref=f22e36]: /
+            - generic [ref=f22e37]: Ingreso
+          - generic [ref=f22e38]:
+            - generic [ref=f22e39]:
+              - heading "Ingreso de vehículos" [level=1] [ref=f22e40]
+              - paragraph [ref=f22e41]: Identificá cada auto por patente o por ticket. Buscá y cerrá cualquiera desde el panel de la derecha.
+            - generic [ref=f22e42]: Turno activo · 24/08/2026
+        - generic [ref=f22e45]:
+          - generic [ref=f22e46]:
+            - generic [ref=f22e47]:
+              - button "Registrar entrada Por patente" [ref=f22e48] [cursor=pointer]:
+                - generic [ref=f22e53]:
+                  - generic [ref=f22e54]: Registrar entrada
+                  - generic [ref=f22e55]: Por patente
+              - button "Buscar y cerrar ticket Patente o código" [ref=f22e56] [cursor=pointer]:
+                - generic [ref=f22e61]:
+                  - generic [ref=f22e62]: Buscar y cerrar ticket
+                  - generic [ref=f22e63]: Patente o código
+            - generic [ref=f22e65]:
+              - generic [ref=f22e69]:
+                - generic [ref=f22e70]:
+                  - generic [ref=f22e71]:
+                    - generic [ref=f22e72]: SALIDA REGISTRADA
+                    - generic [ref=f22e77]: "#GM-905B"
+                  - generic [ref=f22e78]:
+                    - heading "Estacionamiento" [level=2] [ref=f22e79]
+                    - paragraph [ref=f22e80]: Registro de estacionamiento
+                - generic [ref=f22e81]:
+                  - generic [ref=f22e82]:
+                    - generic [ref=f22e83]: SALIDA
+                    - paragraph [ref=f22e86]: 24/08/2026
+                  - generic [ref=f22e87]:
+                    - generic [ref=f22e88]: PRECIO
+                    - paragraph [ref=f22e92]: $10000
+                    - paragraph [ref=f22e93]: "Tarifa: Hasta 1dia"
+                - generic [ref=f22e94]: El cliente había avisado "Hasta 45min" y se pasó de ese tiempo.
+                - generic [ref=f22e103]:
+                  - generic [ref=f22e104]:
+                    - paragraph [ref=f22e105]: Entrada
+                    - paragraph [ref=f22e106]: 11:18:52
+                  - generic [ref=f22e108]:
+                    - paragraph [ref=f22e109]: Salida
+                    - paragraph [ref=f22e110]: 16:49:34
+                - generic [ref=f22e111]:
+                  - generic [ref=f22e113]: SALIDA
+                  - text: registrada correctamente
+              - generic [ref=f22e114]:
+                - generic [ref=f22e120]:
+                  - paragraph [ref=f22e121]: Patente
+                  - paragraph [ref=f22e122]: A213Nfr
+                - generic [ref=f22e123]: Registrado
+          - generic [ref=f22e126]:
+            - generic [ref=f22e127]:
+              - generic [ref=f22e128]:
+                - generic [ref=f22e129]:
+                  - heading "Vehículos activos" [level=3] [ref=f22e130]
+                  - generic [ref=f22e131]: "1"
+                - generic [ref=f22e132]: en vivo
+              - 'button "A232NTM En horario hace 5 h 37 min · Auto · 11:17 Avisó: Hasta 2dias" [ref=f22e135] [cursor=pointer]':
+                - generic [ref=f22e142]:
+                  - generic [ref=f22e143]:
+                    - generic [ref=f22e144]: A232NTM
+                    - generic [ref=f22e145]: En horario
+                  - generic [ref=f22e146]:
+                    - generic [ref=f22e150]: hace 5 h 37 min
+                    - generic [ref=f22e151]: ·
+                    - generic [ref=f22e152]: Auto
+                    - generic [ref=f22e153]: ·
+                    - generic [ref=f22e154]: 11:17
+                  - generic [ref=f22e155]: "Avisó: Hasta 2dias"
+            - generic [ref=f22e158]: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list

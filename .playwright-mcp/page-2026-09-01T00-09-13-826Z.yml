@@ -1,0 +1,49 @@
+- generic [ref=f8e3]:
+  - banner [ref=f8e4]:
+    - generic [ref=f8e6]:
+      - generic [ref=f8e7]:
+        - button "Pages" [ref=f8e10]:
+          - generic [ref=f8e11]: 
+        - generic [ref=f8e12]:
+          - button "Zoom" [disabled] [ref=f8e15]
+          - button "Fit" [ref=f8e20]:
+            - generic [ref=f8e21]: 
+        - status "This view’s runtime does not offer self-publish (window.claude.self is absent) — content can be viewed but not saved from here." [ref=f8e22]:
+          - generic [ref=f8e23]: 
+          - generic [ref=f8e24]: Read-only
+      - generic [ref=f8e25]:
+        - button "Export" [ref=f8e27]:
+          - generic [ref=f8e28]: 
+        - button "Back to canvas" [ref=f8e30]:
+          - generic [ref=f8e31]: 
+  - generic [ref=f8e32]:
+    - main [ref=f8e33]:
+      - iframe [ref=f8e37]:
+        - generic [ref=f9e5]:
+          - button [ref=f9e7] [cursor=pointer]
+          - generic [ref=f9e11]:
+            - heading "Registrar entrada" [level=2] [ref=f9e12]
+            - generic [ref=f9e13]:
+              - button "Patente" [ref=f9e14] [cursor=pointer]
+              - button "Ticket" [ref=f9e19] [cursor=pointer]
+            - generic [ref=f9e21]:
+              - generic [ref=f9e22]:
+                - generic [ref=f9e23]: Clientes frecuentes
+                - textbox "Buscar por patente o apellido..." [ref=f9e29]
+              - generic [ref=f9e30]: o completá los datos manualmente
+              - generic [ref=f9e33]:
+                - generic [ref=f9e34]: Patente
+                - textbox "AB123CD" [ref=f9e35]
+              - generic [ref=f9e36]:
+                - generic [ref=f9e37]: Tipo de vehículo
+                - generic [ref=f9e38]:
+                  - button "Auto" [ref=f9e39] [cursor=pointer]
+                  - button "Camioneta" [ref=f9e40] [cursor=pointer]
+              - generic [ref=f9e41]:
+                - generic [ref=f9e42]: Casillero (opcional)
+                - textbox "Escriba número de casillero" [ref=f9e43]
+              - generic [ref=f9e44]:
+                - generic [ref=f9e45]: Apellido (opcional)
+                - textbox "Escriba apellido" [ref=f9e46]
+              - button "Registrar entrada" [ref=f9e47] [cursor=pointer]
+    - complementary

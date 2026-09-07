@@ -12,8 +12,8 @@ import {
     UpdateDateColumn,
   } from 'typeorm';
 import { PaymentStatusType, Receipt } from 'src/receipts/entities/receipt.entity';
-import { Vehicle } from './vehicle.entity';
-import { VehicleRenter } from './vehicle-renter.entity';
+import { ParkingOwner } from 'src/parking/entities/parking-owner.entity';
+import { ParkingRenter } from 'src/parking/entities/parking-renter.entity';
 
 export const CUSTOMER_TYPE = ['OWNER', 'RENTER', 'PRIVATE'] as const;
 export type CustomerType = (typeof CUSTOMER_TYPE)[number];
@@ -63,14 +63,14 @@ export type CustomerType = (typeof CUSTOMER_TYPE)[number];
     @Column('int', { default: 0 })
     credit: number;
 
-    @OneToMany(() => Vehicle, (vehicle) => vehicle.customer, { cascade: true})
-    vehicles: Vehicle[];
+    @OneToMany(() => ParkingOwner, (parkingOwner) => parkingOwner.customer, { cascade: true})
+    parkingOwners: ParkingOwner[];
 
     @OneToMany(() => Receipt, (receipts) => receipts.customer, {cascade: true})
     receipts: Receipt[];
 
-    @OneToMany(() => VehicleRenter, (vehicleRenter) => vehicleRenter.customer,{ cascade: true})
-    vehicleRenters: VehicleRenter[];
+    @OneToMany(() => ParkingRenter, (parkingRenter) => parkingRenter.customer,{ cascade: true})
+    parkingRenters: ParkingRenter[];
   
     @DeleteDateColumn()
     deletedAt: Date;

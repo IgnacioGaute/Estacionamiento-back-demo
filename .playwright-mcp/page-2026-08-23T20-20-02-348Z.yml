@@ -1,0 +1,136 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - generic: Operativo
+            - button:
+              - generic: NG
+              - generic:
+                - generic: Nacho Gaute
+                - generic: Administrador
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Ingreso
+                - generic:
+                  - generic:
+                    - heading [level=1]: Ingreso de vehículos
+                  - generic: Turno activo · 23/08/2026
+              - generic:
+                - generic:
+                  - generic:
+                    - button:
+                      - generic:
+                        - generic: Registrar entrada
+                        - generic: Por patente
+                    - button:
+                      - generic:
+                        - generic: Buscar y cerrar ticket
+                        - generic: Patente o código
+                  - generic:
+                    - button: Ver último registro
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic: EN HORARIO
+                            - generic: "#GM-B8D3"
+                          - heading [level=2]: Estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: ENTRADA
+                              - paragraph: 17:18:49
+                              - paragraph: 23/08/2026
+                            - generic:
+                              - generic: TRANSCURRIDO
+                              - paragraph: 0 min
+                            - generic:
+                              - generic: TIPO
+                              - paragraph: Auto
+                          - generic:
+                            - generic:
+                              - paragraph: Monto a cobrar
+                              - paragraph: "Tarifa: hasta 1min"
+                            - paragraph: $1000
+                          - generic:
+                            - button: Cobrar salida
+                            - button: Anticipo / avisar duración
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: TE005TG
+                        - generic: Registrado
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - heading [level=3]: Vehículos activos
+                        - generic: "2"
+                      - generic: en vivo
+                    - generic:
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: A232NTM
+                            - generic: En horario
+                          - generic:
+                            - generic: hace 23 min
+                            - generic: ·
+                            - generic: Auto
+                            - generic: ·
+                            - generic: 16:56
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: TE005TG
+                            - generic: En horario
+                          - generic:
+                            - generic: hace 0 min
+                            - generic: ·
+                            - generic: Auto
+                            - generic: ·
+                            - generic: 17:18
+                  - generic: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - list
+  - status [ref=f27e265]:
+    - generic [ref=f27e270]:
+      - text: Static route
+      - button [ref=f27e276] [cursor=pointer]
+  - alert
+  - dialog [ref=f27e278]:
+    - generic [ref=f27e280]:
+      - heading "Estadía planificada · TE005TG" [level=2] [ref=f27e282]
+      - generic [ref=f27e283]:
+        - generic [ref=f27e284]:
+          - text: ¿Cuánto tiempo avisó que se queda? (opcional)
+          - combobox [active] [ref=f27e285] [cursor=pointer]:
+            - generic: Hasta 1hora (Hasta 1 hora) · $3000
+          - combobox [ref=f27e288]
+          - paragraph [ref=f27e289]: Si al volver se pasó de este tiempo, vas a ver un aviso al escanear la salida.
+        - generic [ref=f27e291]:
+          - generic [ref=f27e292]: ¿Pagó algo ahora?
+          - switch [ref=f27e293] [cursor=pointer]
+          - checkbox
+        - generic [ref=f27e294]:
+          - text: Apellido del cliente (opcional)
+          - textbox "Apellido del cliente (opcional)" [ref=f27e295]:
+            - /placeholder: Escriba apellido
+        - generic [ref=f27e296]:
+          - text: Patente (opcional)
+          - textbox "Patente (opcional)" [ref=f27e297]:
+            - /placeholder: Escriba patente
+        - button "Guardar" [ref=f27e298] [cursor=pointer]
+    - button "Cerrar" [ref=f27e299] [cursor=pointer]

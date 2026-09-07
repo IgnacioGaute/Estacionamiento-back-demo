@@ -1,0 +1,44 @@
+- generic [active] [ref=f4e1]:
+  - banner [ref=f4e2]:
+    - generic [ref=f4e8]:
+      - generic [ref=f4e9]: Estacionamiento
+      - generic [ref=f4e10]: Tutoriales del sistema — guía en video para el equipo
+  - navigation "Índice de videos" [ref=f4e11]:
+    - link "01 Login y usuarios" [ref=f4e12] [cursor=pointer]:
+      - /url: "#login"
+      - generic [ref=f4e13]: "01"
+      - text: Login y usuarios
+    - link "02 Tickets" [ref=f4e14] [cursor=pointer]:
+      - /url: "#tickets"
+      - generic [ref=f4e15]: "02"
+      - text: Tickets
+    - link "03 Clientes y recibos" [ref=f4e16] [cursor=pointer]:
+      - /url: "#clientes"
+      - generic [ref=f4e17]: "03"
+      - text: Clientes y recibos
+    - link "04 Varios y Dashboard" [ref=f4e18] [cursor=pointer]:
+      - /url: "#dashboard-varios"
+      - generic [ref=f4e19]: "04"
+      - text: Varios y Dashboard
+  - main [ref=f4e20]:
+    - generic [ref=f4e22]:
+      - generic [ref=f4e23]: "01"
+      - generic [ref=f4e24]:
+        - heading "Login, usuarios y roles" [level=2] [ref=f4e25]
+        - paragraph [ref=f4e26]: "Cómo entrar al sistema con email o usuario, recuperar la contraseña, y cómo administrar las cuentas del equipo: crear operadores, editar perfiles y dar de baja usuarios desde Admin → Usuarios."
+    - generic [ref=f4e30]:
+      - generic [ref=f4e31]: "02"
+      - generic [ref=f4e32]:
+        - 'heading "Tickets: operación y administración" [level=2] [ref=f4e33]'
+        - paragraph [ref=f4e34]: "El flujo diario de ingreso y salida de vehículos —por patente o por ticket, con el buscador de clientes frecuentes— y el lado admin: tarifas, fichas físicas, clientes frecuentes y la planilla de caja."
+    - generic [ref=f4e38]:
+      - generic [ref=f4e39]: "03"
+      - generic [ref=f4e40]:
+        - heading "Clientes, recibos y pagos" [level=2] [ref=f4e41]
+        - paragraph [ref=f4e42]: "Alta y gestión de propietarios, inquilinos e inquilinos de terceros: cocheras, tipos de estacionamiento, generación de recibos mensuales y registro de pagos."
+    - generic [ref=f4e46]:
+      - generic [ref=f4e47]: "04"
+      - generic [ref=f4e48]:
+        - heading "Varios y Dashboard" [level=2] [ref=f4e49]
+        - paragraph [ref=f4e50]: "Ingresos y egresos sueltos de caja, y un recorrido por el Dashboard: recaudación, actividad por hora, ingresos vs egresos, recibos pagados y tipos de pago."
+  - contentinfo [ref=f4e53]: Uso interno — Estacionamiento

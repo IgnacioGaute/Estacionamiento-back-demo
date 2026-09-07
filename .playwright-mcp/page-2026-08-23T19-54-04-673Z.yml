@@ -1,0 +1,114 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - generic: Operativo
+            - button:
+              - generic: NG
+              - generic:
+                - generic: Nacho Gaute
+                - generic: Administrador
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Ingreso
+                - generic:
+                  - generic:
+                    - heading [level=1]: Ingreso de vehículos
+                  - generic: Turno activo · 23/08/2026
+              - generic:
+                - generic:
+                  - generic:
+                    - button:
+                      - generic:
+                        - generic: Registrar entrada
+                        - generic: Por patente
+                    - button:
+                      - generic:
+                        - generic: Buscar y cerrar ticket
+                        - generic: Patente o código
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic: INGRESO REGISTRADO
+                              - generic: "#GM-BEB3"
+                            - generic:
+                              - heading [level=2]: Estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: ENTRADA
+                              - paragraph: 23/08/2026
+                            - generic:
+                              - generic: HORARIO
+                              - paragraph: 16:53:29
+                          - generic:
+                            - generic:
+                              - paragraph: Registro por patente para vehículo tipo AUTO
+                              - paragraph: Camioneta
+                          - generic:
+                            - generic: ENTRADA
+                            - text: registrada correctamente
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: TE003TE
+                        - generic: Registrado
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - heading [level=3]: Vehículos activos
+                        - generic: "1"
+                      - generic: en vivo
+                    - generic:
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: TE003TE
+                            - generic: En horario
+                          - generic:
+                            - generic: hace 0 min
+                            - generic: ·
+                            - generic: Auto
+                            - generic: ·
+                            - generic: 16:53
+                  - generic: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - list
+  - status [ref=f20e191]:
+    - generic [ref=f20e196]:
+      - text: Static route
+      - button [ref=f20e197] [cursor=pointer]
+  - alert
+  - dialog [active] [ref=f20e175]:
+    - generic [ref=f20e177]:
+      - heading "Buscar y cerrar ticket" [level=2] [ref=f20e179]
+      - generic [ref=f20e180]:
+        - generic [ref=f20e181]:
+          - paragraph [ref=f20e201]: TE003TE
+          - paragraph [ref=f20e202]: Entró 16:53:29 · hace 0 min
+          - paragraph [ref=f20e203]: "Tarifa: hasta 1min ($1000)"
+        - generic [ref=f20e204]:
+          - paragraph [ref=f20e205]: Saldo a cobrar
+          - paragraph [ref=f20e206]: $1000
+        - generic [ref=f20e207]:
+          - button "Efectivo" [ref=f20e208] [cursor=pointer]
+          - button "Transferencia" [ref=f20e213] [cursor=pointer]
+        - button "Cortesía / no cobrar" [ref=f20e217] [cursor=pointer]
+        - button "Volver a buscar" [ref=f20e218] [cursor=pointer]
+    - button "Cerrar" [ref=f20e186] [cursor=pointer]

@@ -5,7 +5,7 @@ services:
     image: postgres:16.2
     restart: always
     environment:
-      POSTGRES_DB: estacionamiento
+      POSTGRES_DB: estacionamiento_demo
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: admin
     volumes:
@@ -15,4 +15,4 @@ services:
 
 volumes:
   postgres_data:
-    name: estacionamiento_pg_data
+    name: estacionamiento_demo_pg_data

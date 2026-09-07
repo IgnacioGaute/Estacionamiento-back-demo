@@ -11,6 +11,10 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { NotesModule } from './notes/notes.module';
+import { ParkingModule } from './parking/parking.module';
+import { TurnosModule } from './turnos/turnos.module';
+import { MovimientosModule } from './movimientos/movimientos.module';
+import { PlateRecognitionModule } from './plate-recognition/plate-recognition.module';
 
 @Module({
   imports: [ConfigModule.forRoot({
@@ -33,7 +37,11 @@ import { NotesModule } from './notes/notes.module';
   CustomersModule,
   UsersModule,
   AuthModule,
-  NotesModule
+  NotesModule,
+  ParkingModule,
+  TurnosModule,
+  MovimientosModule,
+  PlateRecognitionModule
 ],
   controllers: [],
   providers: [],

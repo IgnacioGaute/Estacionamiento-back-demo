@@ -1,0 +1,137 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - generic: Operativo
+            - button:
+              - generic: NG
+              - generic:
+                - generic: Nacho Gaute
+                - generic: Administrador
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Ingreso
+                - generic:
+                  - generic:
+                    - heading [level=1]: Ingreso de vehículos
+                    - paragraph: Identificá cada auto por patente o por ticket. Buscá y cerrá cualquiera desde el panel de la derecha.
+                  - generic: Turno activo · 24/08/2026
+              - generic:
+                - generic:
+                  - generic:
+                    - button [expanded]:
+                      - generic:
+                        - generic: Registrar entrada
+                        - generic: Por patente
+                    - button:
+                      - generic:
+                        - generic: Buscar y cerrar ticket
+                        - generic: Patente o código
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic: SALIDA REGISTRADA
+                              - generic: "#GM-EFAD"
+                            - generic:
+                              - heading [level=2]: Estacionamiento
+                              - paragraph: Registro de estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: SALIDA
+                              - paragraph: 24/08/2026
+                            - generic:
+                              - generic: PRECIO
+                              - paragraph: $1000
+                              - paragraph: "Tarifa: hasta 1min"
+                          - generic:
+                            - generic:
+                              - generic:
+                                - generic:
+                                  - paragraph: Entrada
+                                  - paragraph: 12:30:04
+                                - generic:
+                                  - paragraph: Salida
+                                  - paragraph: 12:30:49
+                          - generic:
+                            - generic: SALIDA
+                            - text: registrada correctamente
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: TE001
+                        - generic: Registrado
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - heading [level=3]: Vehículos activos
+                        - generic: "2"
+                      - generic: en vivo
+                    - generic:
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: A232NTM
+                            - generic: En horario
+                          - generic:
+                            - generic: hace 1 h 17 min
+                            - generic: ·
+                            - generic: Auto
+                            - generic: ·
+                            - generic: 11:17
+                          - generic: "Avisó: Hasta 2dias"
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: A213Nfr
+                            - generic: Vencido
+                          - generic:
+                            - generic: hace 1 h 16 min
+                            - generic: ·
+                            - generic: Auto
+                            - generic: ·
+                            - generic: 11:18
+                  - generic: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - list
+  - alert
+  - dialog [ref=f16e843]:
+    - generic [ref=f16e845]:
+      - heading "Registrar entrada" [level=2] [ref=f16e847]
+      - generic [ref=f16e849]:
+        - generic [ref=f16e850] [cursor=pointer]: Sin patente (moto sin chapa, patente rota, etc.)
+        - generic [ref=f16e853]:
+          - text: Patente
+          - textbox "Patente" [active] [ref=f16e854]:
+            - /placeholder: AB123CD
+        - generic [ref=f16e855]:
+          - text: Tipo de Vehículo
+          - generic [ref=f16e856]:
+            - button "Auto" [ref=f16e857] [cursor=pointer]
+            - button "Camioneta" [ref=f16e858] [cursor=pointer]
+        - generic [ref=f16e859]:
+          - text: Casillero (opcional)
+          - textbox "Casillero (opcional)" [ref=f16e860]:
+            - /placeholder: Escriba número de casillero
+        - generic [ref=f16e861]:
+          - generic [ref=f16e862]: Apellido (opcional)
+          - textbox "Apellido (opcional)" [ref=f16e863]:
+            - /placeholder: Escriba apellido
+        - button "Registrar entrada" [ref=f16e864] [cursor=pointer]
+    - button "Cerrar" [ref=f16e865] [cursor=pointer]

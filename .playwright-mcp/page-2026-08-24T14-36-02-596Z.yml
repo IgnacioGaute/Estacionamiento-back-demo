@@ -1,0 +1,98 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - button:
+              - generic: NG
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Ingreso
+                - generic:
+                  - generic:
+                    - heading [level=1]: Ingreso de vehículos
+                  - generic: Turno activo · 24/08/2026
+              - generic:
+                - button: Ingreso
+                - button: Activos
+              - generic:
+                - generic:
+                  - generic:
+                    - button:
+                      - generic:
+                        - generic: Registrar entrada
+                        - generic: Por patente
+                    - button:
+                      - generic:
+                        - generic: Buscar y cerrar ticket
+                        - generic: Patente o código
+                  - generic:
+                    - button: Ver último registro
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic: EN HORARIO
+                            - generic: "#GM-905B"
+                          - heading [level=2]: Estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: ENTRADA
+                              - paragraph: 11:18:52
+                              - paragraph: 24/08/2026
+                            - generic:
+                              - generic: TRANSCURRIDO
+                              - paragraph: 15 min
+                            - generic:
+                              - generic: TIPO
+                              - paragraph: Auto
+                          - paragraph: "Avisó que se queda: Hasta 45min"
+                          - generic:
+                            - generic:
+                              - paragraph: Monto a cobrar
+                              - paragraph: "Tarifa: hasta 15min"
+                            - paragraph: $1000
+                          - generic:
+                            - button: Cobrar salida
+                            - button: Anticipo / avisar duración
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: A213Nfr
+                        - generic: Registrado
+  - region "Notifications alt+T"
+  - list
+  - status [ref=f3e307]:
+    - generic [ref=f3e312]:
+      - text: Static route
+      - button [ref=f3e313] [cursor=pointer]
+  - alert
+  - dialog [active] [ref=f3e270]:
+    - generic [ref=f3e272]:
+      - heading "Buscar y cerrar ticket" [level=2] [ref=f3e274]
+      - generic [ref=f3e275]:
+        - generic [ref=f3e276]:
+          - paragraph [ref=f3e317]: A213Nfr
+          - paragraph [ref=f3e318]: Entró 11:18:52 · hace 17 min
+          - paragraph [ref=f3e319]: "Tarifa: Hasta 45min ($2000)"
+        - generic [ref=f3e320]:
+          - paragraph [ref=f3e321]: Saldo a cobrar
+          - paragraph [ref=f3e322]: $2000
+        - generic [ref=f3e323]:
+          - button "Efectivo" [ref=f3e324] [cursor=pointer]
+          - button "Transferencia" [ref=f3e329] [cursor=pointer]
+        - button "Cortesía / no cobrar" [ref=f3e333] [cursor=pointer]
+        - button "Volver a buscar" [ref=f3e334] [cursor=pointer]
+    - button "Cerrar" [ref=f3e302] [cursor=pointer]

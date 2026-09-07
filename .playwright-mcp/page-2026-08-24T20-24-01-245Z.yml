@@ -1,0 +1,108 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - button [expanded]:
+              - generic: NG
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Ingreso
+                - generic:
+                  - generic:
+                    - heading [level=1]: Ingreso de vehículos
+                  - generic: Turno activo · 24/08/2026
+              - generic:
+                - button: Ingreso
+                - button: Activos
+              - generic:
+                - generic:
+                  - generic:
+                    - button:
+                      - generic:
+                        - generic: Registrar entrada
+                        - generic: Por patente
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic: SALIDA REGISTRADA
+                              - generic: "#GM-905B"
+                            - generic:
+                              - heading [level=2]: Estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: SALIDA
+                              - paragraph: 24/08/2026
+                            - generic:
+                              - generic: PRECIO
+                              - paragraph: $10000
+                              - paragraph: "Tarifa: Hasta 1dia"
+                          - generic: El cliente había avisado "Hasta 45min" y se pasó de ese tiempo.
+                          - generic:
+                            - generic:
+                              - generic:
+                                - generic:
+                                  - paragraph: Entrada
+                                  - paragraph: 11:18:52
+                                - generic:
+                                  - paragraph: Salida
+                                  - paragraph: 16:49:34
+                          - generic:
+                            - generic: SALIDA
+                            - text: registrada correctamente
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: A213Nfr
+                        - generic: Registrado
+  - region "Notifications alt+T"
+  - list
+  - alert
+  - menu "NG Nacho GauteAdministrador" [active] [ref=f1e1]:
+    - generic [ref=f1e2]:
+      - generic [ref=f1e3]: NG
+      - generic [ref=f1e5]:
+        - generic [ref=f1e6]: Nacho Gaute
+        - generic [ref=f1e7]: nachogaute02@gmail.com
+      - generic [ref=f1e8]: Admin
+    - generic [ref=f1e9]:
+      - button "Clientes" [ref=f1e10] [cursor=pointer]
+      - generic [ref=f1e19]:
+        - link "Propietarios" [ref=f1e20] [cursor=pointer]:
+          - /url: /owners
+        - link "Inquilinos" [ref=f1e24] [cursor=pointer]:
+          - /url: /renters
+        - link "Inquilinos de terceros" [ref=f1e29] [cursor=pointer]:
+          - /url: /privates
+    - separator [ref=f1e33]
+    - group [ref=f1e34]:
+      - link [ref=f1e35] [cursor=pointer]:
+        - /url: /tickets
+        - menuitem "Tickets" [ref=f1e36]
+      - menuitem "Planilla de caja" [ref=f1e37] [cursor=pointer]
+      - menuitem "Historial tickets por día/semana" [ref=f1e38] [cursor=pointer]
+      - link [ref=f1e39] [cursor=pointer]:
+        - /url: /notes
+        - menuitem "Avisos" [ref=f1e40]
+      - menuitem "Agregar a pantalla de inicio" [ref=f1e41] [cursor=pointer]
+    - separator [ref=f1e42]
+    - link [ref=f1e43] [cursor=pointer]:
+      - /url: /admin/dashboard
+      - menuitem "Administrar" [ref=f1e44]
+    - separator [ref=f1e45]
+    - menuitem "Cerrar sesión" [ref=f1e46] [cursor=pointer]

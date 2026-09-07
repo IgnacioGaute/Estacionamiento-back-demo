@@ -1,7 +1,8 @@
-import { Controller, Get, Param, Post, Body, Patch, UseGuards, Delete } from '@nestjs/common';
+import { Controller, Get, Param, Post, Body, Patch, Query, UseGuards, Delete } from '@nestjs/common';
 import { ReceiptsService } from './receipts.service';
 import { UpdateReceiptDto } from './dto/update-receipt.dto';
 import { CustomerType } from 'src/customers/entities/customer.entity';
+import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
 
 @Controller('receipts')
 export class ReceiptsController {
@@ -22,6 +23,12 @@ export class ReceiptsController {
         @Param('receiptId') receiptId: string
     ) {
         return await this.receiptsService.cancelReceipt(receiptId, customerId);
+    }
+
+    @Get('summary')
+    @UseGuards(AuthOrTokenAuthGuard)
+    async getReceiptsSummary(@Query('from') from?: string, @Query('to') to?: string) {
+        return await this.receiptsService.getReceiptsSummary(from, to);
     }
 
     @Get(':customerType')

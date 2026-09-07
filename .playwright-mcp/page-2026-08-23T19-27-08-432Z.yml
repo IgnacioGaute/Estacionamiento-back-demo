@@ -1,0 +1,107 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - generic: Operativo
+            - button:
+              - generic: NG
+              - generic:
+                - generic: Nacho Gaute
+                - generic: Administrador
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Tickets
+                - generic:
+                  - generic:
+                    - heading [level=1]: Registro de estacionamiento
+                  - generic: Turno activo · 23/08/2026
+              - generic:
+                - generic:
+                  - generic:
+                    - button: Registrar entrada por patente
+                    - button: Buscar y cerrar ticket
+                  - generic:
+                    - button: Ver último registro
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic: EN HORARIO
+                            - generic: "#GM-C3FC"
+                          - heading [level=2]: Estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: ENTRADA
+                              - paragraph: 16:26:25
+                              - paragraph: 23/08/2026
+                            - generic:
+                              - generic: TRANSCURRIDO
+                              - paragraph: 0 min
+                            - generic:
+                              - generic: TIPO
+                              - paragraph: Auto
+                          - generic:
+                            - generic:
+                              - paragraph: Monto a cobrar
+                              - paragraph: "Tarifa: hasta 1min"
+                            - paragraph: $1000
+                          - generic:
+                            - button: Cobrar salida
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: TE001TC
+                        - generic: Registrado
+                - generic:
+                  - generic:
+                    - generic:
+                      - heading [level=3]: Vehículos activos
+                      - generic: "1"
+                    - generic:
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: TE001TC
+                            - generic: En horario
+                          - generic:
+                            - generic: hace 0 min
+                            - generic: ·
+                            - generic: Auto
+                  - generic: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - list
+  - status [ref=f1e293]:
+    - generic [ref=f1e298]:
+      - text: Static route
+      - button [ref=f1e299] [cursor=pointer]
+  - alert
+  - dialog [active] [ref=f1e304]:
+    - generic [ref=f1e306]:
+      - heading "Buscar y cerrar ticket" [level=2] [ref=f1e308]
+      - generic [ref=f1e309]:
+        - generic [ref=f1e310]:
+          - paragraph [ref=f1e311]: TE001TC
+          - paragraph [ref=f1e312]: Entró 16:26:25 · hace 0 min
+          - paragraph [ref=f1e313]: "Tarifa: hasta 1min ($1000)"
+        - generic [ref=f1e314]:
+          - paragraph [ref=f1e315]: Saldo a cobrar
+          - paragraph [ref=f1e316]: $1000
+        - generic [ref=f1e317]:
+          - button "EFECTIVO" [ref=f1e318] [cursor=pointer]
+          - button "TRANSFERENCIA" [ref=f1e319] [cursor=pointer]
+        - button "Cortesía / no cobrar" [ref=f1e320] [cursor=pointer]
+        - button "Volver a buscar" [ref=f1e321] [cursor=pointer]
+    - button "Cerrar" [ref=f1e322] [cursor=pointer]

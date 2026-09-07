@@ -1,0 +1,120 @@
+- generic [ref=f16e1]:
+  - main [ref=f16e340]:
+    - generic [ref=f16e343]:
+      - link [ref=f16e344] [cursor=pointer]:
+        - /url: /tickets
+      - generic [ref=f16e348]: Operativo
+      - button "NG Nacho Gaute Administrador" [ref=f16e350] [cursor=pointer]:
+        - generic [ref=f16e351]: NG
+        - generic [ref=f16e353]:
+          - generic [ref=f16e354]: Nacho Gaute
+          - generic [ref=f16e355]: Administrador
+    - main [ref=f16e360]:
+      - generic [ref=f16e361]:
+        - button "Ayuda" [ref=f16e363] [cursor=pointer]
+        - generic [ref=f16e367]:
+          - navigation [ref=f16e368]:
+            - generic [ref=f16e369]: Estacionamiento
+            - generic [ref=f16e370]: /
+            - generic [ref=f16e371]: Operación
+            - generic [ref=f16e372]: /
+            - generic [ref=f16e373]: Ingreso
+          - generic [ref=f16e374]:
+            - generic [ref=f16e375]:
+              - heading "Ingreso de vehículos" [level=1] [ref=f16e376]
+              - paragraph [ref=f16e377]: Identificá cada auto por patente o por ticket. Buscá y cerrá cualquiera desde el panel de la derecha.
+            - generic [ref=f16e378]: Turno activo · 24/08/2026
+        - generic [ref=f16e381]:
+          - generic [ref=f16e382]:
+            - generic [ref=f16e383]:
+              - button "Registrar entrada Por patente" [ref=f16e384] [cursor=pointer]:
+                - generic [ref=f16e389]:
+                  - generic [ref=f16e390]: Registrar entrada
+                  - generic [ref=f16e391]: Por patente
+              - button "Buscar y cerrar ticket Patente o código" [ref=f16e392] [cursor=pointer]:
+                - generic [ref=f16e397]:
+                  - generic [ref=f16e398]: Buscar y cerrar ticket
+                  - generic [ref=f16e399]: Patente o código
+            - generic [ref=f16e957]:
+              - button "Ver último registro" [ref=f16e958] [cursor=pointer]
+              - generic [ref=f16e961]:
+                - generic [ref=f16e965]:
+                  - generic [ref=f16e966]:
+                    - generic [ref=f16e967]: EN HORARIO
+                    - generic [ref=f16e968]: "#GM-D2B7"
+                  - heading "Estacionamiento" [level=2] [ref=f16e969]
+                  - generic [ref=f16e970]:
+                    - generic [ref=f16e971]:
+                      - generic [ref=f16e972]: ENTRADA
+                      - paragraph [ref=f16e975]: 12:35:49
+                      - paragraph [ref=f16e976]: 24/08/2026
+                    - generic [ref=f16e977]:
+                      - generic [ref=f16e978]: TRANSCURRIDO
+                      - paragraph [ref=f16e982]: 0 min
+                    - generic [ref=f16e983]:
+                      - generic [ref=f16e984]: TIPO
+                      - paragraph [ref=f16e989]: Auto
+                  - generic [ref=f16e990]:
+                    - generic [ref=f16e991]:
+                      - paragraph [ref=f16e992]: Monto a cobrar
+                      - paragraph [ref=f16e993]: "Tarifa: hasta 1min"
+                    - paragraph [ref=f16e994]: $1000
+                  - generic [ref=f16e995]:
+                    - button "Cobrar salida" [ref=f16e996] [cursor=pointer]
+                    - button "Anticipo / avisar duración" [ref=f16e997] [cursor=pointer]
+                - generic [ref=f16e998]:
+                  - generic [ref=f16e1004]:
+                    - paragraph [ref=f16e1005]: Patente
+                    - paragraph [ref=f16e1006]: TE002
+                  - generic [ref=f16e1007]: Registrado
+          - generic [ref=f16e453]:
+            - generic [ref=f16e454]:
+              - generic [ref=f16e455]:
+                - generic [ref=f16e456]:
+                  - heading "Vehículos activos" [level=3] [ref=f16e457]
+                  - generic [ref=f16e458]: "3"
+                - generic [ref=f16e459]: en vivo
+              - generic [ref=f16e461]:
+                - 'button "A232NTM En horario hace 1 h 18 min · Auto · 11:17 Avisó: Hasta 2dias" [ref=f16e1010] [cursor=pointer]':
+                  - generic [ref=f16e469]:
+                    - generic [ref=f16e470]:
+                      - generic [ref=f16e471]: A232NTM
+                      - generic [ref=f16e472]: En horario
+                    - generic [ref=f16e473]:
+                      - generic [ref=f16e477]: hace 1 h 18 min
+                      - generic [ref=f16e478]: ·
+                      - generic [ref=f16e479]: Auto
+                      - generic [ref=f16e480]: ·
+                      - generic [ref=f16e481]: 11:17
+                    - generic [ref=f16e482]: "Avisó: Hasta 2dias"
+                - button "A213Nfr Vencido hace 1 h 17 min · Auto · 11:18" [ref=f16e1011] [cursor=pointer]:
+                  - generic [ref=f16e492]:
+                    - generic [ref=f16e493]:
+                      - generic [ref=f16e494]: A213Nfr
+                      - generic [ref=f16e495]: Vencido
+                    - generic [ref=f16e496]:
+                      - generic [ref=f16e500]: hace 1 h 17 min
+                      - generic [ref=f16e501]: ·
+                      - generic [ref=f16e502]: Auto
+                      - generic [ref=f16e503]: ·
+                      - generic [ref=f16e504]: 11:18
+                - button "TE002 En horario hace 0 min · Auto · 12:35" [active] [ref=f16e925] [cursor=pointer]:
+                  - generic [ref=f16e932]:
+                    - generic [ref=f16e933]:
+                      - generic [ref=f16e934]: TE002
+                      - generic [ref=f16e935]: En horario
+                    - generic [ref=f16e936]:
+                      - generic [ref=f16e940]: hace 0 min
+                      - generic [ref=f16e941]: ·
+                      - generic [ref=f16e942]: Auto
+                      - generic [ref=f16e943]: ·
+                      - generic [ref=f16e944]: 12:35
+            - generic [ref=f16e529]: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list
+  - status [ref=f16e1012]:
+    - generic [ref=f16e1017]:
+      - text: Static route
+      - button "Hide static indicator" [ref=f16e1018] [cursor=pointer]
+  - alert [ref=f16e542]

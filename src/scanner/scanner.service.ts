@@ -18,7 +18,7 @@ export class ScannerService {
     
   ) {}
 
-  async start(scannerDto?: ScannerDto): Promise<{ success: boolean; message: string; type?: string; id?:string, barcode?: string, receipt?: Receipt, receiptId?: string }> {
+  async start(scannerDto?: ScannerDto): Promise<{ success: boolean; message: string; type?: string; id?:string, barcode?: string, receipt?: Receipt, receiptId?: string, warning?: string }> {
     if (this.isScanning) {
       return { success: false, message: 'El escáner ya está en ejecución.' };
     }
@@ -54,10 +54,22 @@ export class ScannerService {
         this.isScanning = false;
         if (registration) {
           this.logger.log('Registro de ticket creado exitosamente.');
+          const warnings: string[] = [];
+          if (registration.exceededExpectedStay) {
+            warnings.push(
+              `El cliente había avisado que se quedaba hasta "${registration.expectedBracketLabel}", pero la estadía real fue más larga.`,
+            );
+          }
+          if (registration.priceBracketFallbackUsed) {
+            warnings.push(
+              `La estadía superó todas las franjas de precio configuradas. Se cobró la tarifa "${registration.priceBracketLabel}". Revisá la configuración en Tarifas.`,
+            );
+          }
           return {
             success: true,
             message: 'Registro de ticket creado exitosamente.',
             type: 'TICKET',
+            warning: warnings.length > 0 ? warnings.join(' ') : undefined,
           };
         } else {
           this.logger.warn('No se pudo registrar el ticket.');
@@ -97,7 +109,10 @@ export class ScannerService {
     } catch (error: any) {
       this.logger.error('Error al procesar el código de barras:', error);
       this.isScanning = false;
-      return { success: false, message: 'Error al procesar el código de barras.' };
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
+      return { success: false, message: error?.message || 'Error al procesar el código de barras.' };
     } finally {
     await queryRunner.release();
   }

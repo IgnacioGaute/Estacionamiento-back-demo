@@ -7,9 +7,10 @@ import { Customer } from 'src/customers/entities/customer.entity';
 import { Receipt } from './entities/receipt.entity';
 import { ReceiptPayment } from './entities/receipt-payment.entity';
 import { PaymentHistoryOnAccount } from './entities/payment-history-on-account.entity';
+import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Customer, Receipt, ReceiptPayment, PaymentHistoryOnAccount]), BoxListsModule],
+  imports: [TypeOrmModule.forFeature([Customer, Receipt, ReceiptPayment, PaymentHistoryOnAccount, Movimiento]), BoxListsModule],
   controllers: [ReceiptsController],
   providers: [ReceiptsService],
   exports: [ReceiptsService]

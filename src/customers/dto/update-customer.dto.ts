@@ -1,59 +1,8 @@
-import { Allow, IsArray, IsBoolean, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsEnum, IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CUSTOMER_TYPE, CustomerType } from '../entities/customer.entity';
-import { Parking, PARKING_TYPE } from '../entities/parking-type.entity';
-
-export class CreateVehicleDto {
-
-  @IsString()
-  @IsOptional()
-  id: string;
-
-  @IsString()
-  @IsOptional()
-  garageNumber: string;
-
-  @IsBoolean()
-  @IsOptional()
-  rent: boolean;
-
-  @IsEnum(PARKING_TYPE)
-  @IsOptional()
-  parking: Parking;
-
-  @IsNumber()
-  @IsOptional()
-  amount: number;
-
-  @IsNumber()
-  @IsOptional()
-  amountRenter: number;
-
-}
-
-export class CreateVehicleRenterDto {
-        
-  @IsString()
-  @IsOptional()
-  id: string;
-
-  @IsString()
-  @IsOptional()
-  garageNumber: string;
-
-  @Allow()
-  @IsOptional()
-  owner?: string;
-
-  @IsNumber()
-  @IsOptional()
-  amount: number;
-
-  @Allow()
-  @IsOptional()
-  newOwner?: string;
-
-}
+import { UpdateParkingOwnerDto } from 'src/parking/dto/update-parking-owner.dto';
+import { UpdateParkingRenterDto } from 'src/parking/dto/update-parking-renter.dto';
 
 export class UpdateCustomerDto {
   @IsString()
@@ -88,21 +37,21 @@ export class UpdateCustomerDto {
   @ValidateNested({ each: true })
   @Type(() => MonthDebtDto)
   monthsDebt?: MonthDebtDto[];
-  
+
   @IsNumber()
   credit: number;
 
   @IsArray()
-  @ValidateNested({ each: true }) // Validar cada vehículo individualmente
-  @Type(() => CreateVehicleDto)
-  @IsOptional() // Transformar a la clase `CreateVehicleDto`
-  vehicles?: CreateVehicleDto[]; 
+  @ValidateNested({ each: true }) // Validar cada owner individualmente
+  @Type(() => UpdateParkingOwnerDto)
+  @IsOptional()
+  parkingOwners?: UpdateParkingOwnerDto[];
 
   @IsArray()
-  @ValidateNested({ each: true }) // Validar cada vehículo individualmente
-  @Type(() => CreateVehicleRenterDto)
-  @IsOptional() // Transformar a la clase `CreateVehicleDto`
-  vehicleRenters?: CreateVehicleRenterDto[]; 
+  @ValidateNested({ each: true }) // Validar cada inquilino individualmente
+  @Type(() => UpdateParkingRenterDto)
+  @IsOptional()
+  parkingRenters?: UpdateParkingRenterDto[];
 }
 
 class MonthDebtDto {
@@ -112,4 +61,3 @@ class MonthDebtDto {
   @IsNumber()
   amount: number; // Monto de la deuda para ese mes
 }
-

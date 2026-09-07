@@ -1,0 +1,99 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - button:
+              - generic: NG
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Ingreso
+                - generic:
+                  - generic:
+                    - heading [level=1]: Ingreso de vehículos
+                  - generic: Turno activo · 31/08/2026
+              - generic:
+                - button: Ingreso
+                - button: Activos
+              - generic:
+                - generic:
+                  - generic:
+                    - button [expanded]:
+                      - generic:
+                        - generic: Registrar entrada
+                        - generic: Por patente o por ticket
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic: SALIDA REGISTRADA
+                              - generic: "#GM-3D50"
+                            - generic:
+                              - heading [level=2]: Estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: SALIDA
+                              - paragraph: 31/08/2026
+                            - generic:
+                              - generic: PRECIO
+                              - paragraph: $7317000
+                              - paragraph: "Tarifa: sin limite ($20000 + 7297 × $1000)"
+                          - generic:
+                            - generic:
+                              - generic:
+                                - generic:
+                                  - paragraph: Entrada
+                                  - paragraph: 19:13:16
+                                - generic:
+                                  - paragraph: Salida
+                                  - paragraph: 20:50:33
+                          - generic:
+                            - generic: SALIDA
+                            - text: registrada correctamente
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: AH145JN
+                        - generic: Registrado
+  - region "Notifications alt+T"
+  - list
+  - status [ref=f10e108]:
+    - generic [ref=f10e113]:
+      - text: Static route
+      - button [ref=f10e114] [cursor=pointer]
+  - alert
+  - dialog [active] [ref=f10e119]:
+    - generic [ref=f10e121]:
+      - heading "Registrar entrada" [level=2] [ref=f10e123]
+      - generic [ref=f10e124]:
+        - generic [ref=f10e125]:
+          - button "Patente" [ref=f10e126] [cursor=pointer]
+          - button "Ticket" [ref=f10e130] [cursor=pointer]
+        - generic [ref=f10e132]:
+          - generic [ref=f10e133]:
+            - text: Clientes frecuentes
+            - generic [ref=f10e134]:
+              - generic [ref=f10e167]:
+                - generic [ref=f10e172]:
+                  - generic [ref=f10e173]: A232NTM
+                  - generic [ref=f10e174]: Gaute
+                - button [ref=f10e175] [cursor=pointer]
+              - generic [ref=f10e179]:
+                - generic [ref=f10e180]: Auto
+                - generic [ref=f10e181]: 4 visitas
+          - button "Registrar entrada" [ref=f10e182] [cursor=pointer]
+    - button "Cerrar" [ref=f10e154] [cursor=pointer]

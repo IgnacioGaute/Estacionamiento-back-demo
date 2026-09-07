@@ -1,0 +1,100 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - button:
+              - generic: NG
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Ingreso
+                - generic:
+                  - generic:
+                    - heading [level=1]: Ingreso de vehículos
+                  - generic: Turno activo · 24/08/2026
+              - generic:
+                - button: Ingreso
+                - button: Activos
+              - generic:
+                - generic:
+                  - generic:
+                    - button [expanded]:
+                      - generic:
+                        - generic: Registrar entrada
+                        - generic: Por patente
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic: SALIDA REGISTRADA
+                              - generic: "#GM-905B"
+                            - generic:
+                              - heading [level=2]: Estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: SALIDA
+                              - paragraph: 24/08/2026
+                            - generic:
+                              - generic: PRECIO
+                              - paragraph: $10000
+                              - paragraph: "Tarifa: Hasta 1dia"
+                          - generic: El cliente había avisado "Hasta 45min" y se pasó de ese tiempo.
+                          - generic:
+                            - generic:
+                              - generic:
+                                - generic:
+                                  - paragraph: Entrada
+                                  - paragraph: 11:18:52
+                                - generic:
+                                  - paragraph: Salida
+                                  - paragraph: 16:49:34
+                          - generic:
+                            - generic: SALIDA
+                            - text: registrada correctamente
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: A213Nfr
+                        - generic: Registrado
+  - region "Notifications alt+T"
+  - list
+  - alert
+  - dialog [ref=f25e111]:
+    - generic [ref=f25e113]:
+      - heading "Registrar entrada" [level=2] [ref=f25e115]
+      - generic [ref=f25e117]:
+        - generic [ref=f25e118] [cursor=pointer]: Sin patente (moto sin chapa, patente rota, etc.)
+        - generic [ref=f25e121]:
+          - text: Patente
+          - textbox "Patente" [active] [ref=f25e122]:
+            - /placeholder: AB123CD
+        - button "Escanear patente con la cámara" [ref=f25e123] [cursor=pointer]
+        - generic [ref=f25e127]:
+          - text: Tipo de Vehículo
+          - generic [ref=f25e128]:
+            - button "Auto" [ref=f25e129] [cursor=pointer]
+            - button "Camioneta" [ref=f25e130] [cursor=pointer]
+        - generic [ref=f25e131]:
+          - text: Casillero (opcional)
+          - textbox "Casillero (opcional)" [ref=f25e132]:
+            - /placeholder: Escriba número de casillero
+        - generic [ref=f25e133]:
+          - generic [ref=f25e134]: Apellido (opcional)
+          - textbox "Apellido (opcional)" [ref=f25e135]:
+            - /placeholder: Escriba apellido
+        - button "Registrar entrada" [ref=f25e136] [cursor=pointer]
+    - button "Cerrar" [ref=f25e137] [cursor=pointer]

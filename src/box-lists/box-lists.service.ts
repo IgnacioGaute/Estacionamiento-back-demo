@@ -82,6 +82,92 @@ async createBox(createBoxListDto: CreateBoxListDto) {
       this.logger.error(error.message, error.stack);
     }
   }
+
+  private getDefaultRange() {
+    const argentinaNow = dayjs().tz('America/Argentina/Buenos_Aires');
+    return {
+      from: argentinaNow.startOf('month').format('YYYY-MM-DD'),
+      to: argentinaNow.format('YYYY-MM-DD'),
+    };
+  }
+
+  async getRevenueSummary(from?: string, to?: string, groupBy: 'day' | 'month' = 'day') {
+    try {
+      const defaults = this.getDefaultRange();
+      const rangeFrom = from ?? defaults.from;
+      const rangeTo = to ?? defaults.to;
+
+      const bucketExpr = groupBy === 'month'
+        ? "TO_CHAR(box.date::date, 'YYYY-MM')"
+        : "TO_CHAR(box.date::date, 'YYYY-MM-DD')";
+
+      const rows = await this.boxListRepository
+        .createQueryBuilder('box')
+        .select(bucketExpr, 'bucket')
+        .addSelect('SUM(box.totalPrice)', 'total')
+        .where('box.date BETWEEN :from AND :to', { from: rangeFrom, to: rangeTo })
+        .groupBy('bucket')
+        .orderBy('bucket', 'ASC')
+        .getRawMany();
+
+      return {
+        from: rangeFrom,
+        to: rangeTo,
+        groupBy,
+        series: rows.map((r) => ({ bucket: r.bucket as string, total: Number(r.total) })),
+      };
+    } catch (error: any) {
+      this.logger.error(error.message, error.stack);
+      throw error;
+    }
+  }
+
+  async getOtherPaymentsSummary(from?: string, to?: string, groupBy: 'day' | 'month' = 'day') {
+    try {
+      const defaults = this.getDefaultRange();
+      const rangeFrom = from ?? defaults.from;
+      const rangeTo = to ?? defaults.to;
+
+      const byTypeRows = await this.otherPaymentepository
+        .createQueryBuilder('other_payment')
+        .select('other_payment.type', 'type')
+        .addSelect('SUM(other_payment.price)', 'total')
+        .addSelect('COUNT(*)', 'count')
+        .where('other_payment.dateNow BETWEEN :from AND :to', { from: rangeFrom, to: rangeTo })
+        .andWhere('other_payment.type IS NOT NULL')
+        .groupBy('other_payment.type')
+        .getRawMany();
+
+      const bucketExpr = groupBy === 'month'
+        ? `TO_CHAR(other_payment."dateNow"::date, 'YYYY-MM')`
+        : `TO_CHAR(other_payment."dateNow"::date, 'YYYY-MM-DD')`;
+
+      const seriesRows = await this.otherPaymentepository
+        .createQueryBuilder('other_payment')
+        .select(bucketExpr, 'bucket')
+        .addSelect("SUM(CASE WHEN other_payment.type = 'INGRESOS' THEN other_payment.price ELSE 0 END)", 'ingresos')
+        .addSelect("SUM(CASE WHEN other_payment.type = 'EGRESOS' THEN other_payment.price ELSE 0 END)", 'egresos')
+        .where('other_payment.dateNow BETWEEN :from AND :to', { from: rangeFrom, to: rangeTo })
+        .groupBy('bucket')
+        .orderBy('bucket', 'ASC')
+        .getRawMany();
+
+      return {
+        from: rangeFrom,
+        to: rangeTo,
+        groupBy,
+        byType: byTypeRows.map((r) => ({ type: r.type as string, total: Number(r.total), count: Number(r.count) })),
+        series: seriesRows.map((r) => ({
+          bucket: r.bucket as string,
+          ingresos: Number(r.ingresos),
+          egresos: Number(r.egresos),
+        })),
+      };
+    } catch (error: any) {
+      this.logger.error(error.message, error.stack);
+      throw error;
+    }
+  }
   async updateBox(id: string, updateBoxListDto: UpdateBoxListDto, manager?: EntityManager) {
     try {
       const repo = manager ? manager.getRepository(BoxList) : this.boxListRepository;
@@ -111,27 +197,28 @@ async createBox(createBoxListDto: CreateBoxListDto) {
         where: { date: date},
         relations: [
           'ticketRegistrations',
+          'ticketRegistrations.movimientos',
           'receipts',
           'receipts.customer',
           'otherPayments',
           'ticketRegistrationForDays',
-          'receipts.customer.vehicleRenters',
-          'receipts.customer.vehicles',
-          'receipts.customer.vehicleRenters.vehicle.customer',
-          'receipts.customer.vehicleRenters.vehicle.customer.receipts',
+          'receipts.customer.parkingRenters',
+          'receipts.customer.parkingOwners',
+          'receipts.customer.parkingRenters.parkingOwner.customer',
+          'receipts.customer.parkingRenters.parkingOwner.customer.receipts',
           'receiptPayments',
           'receiptPayments.receipt',
           'receiptPayments.receipt.customer',
-          'receiptPayments.receipt.customer.vehicleRenters',
-          'receiptPayments.receipt.customer.vehicles',
-          'receiptPayments.receipt.customer.vehicleRenters.vehicle.customer',
-          'receiptPayments.receipt.customer.vehicleRenters.vehicle.customer.receipts',
+          'receiptPayments.receipt.customer.parkingRenters',
+          'receiptPayments.receipt.customer.parkingOwners',
+          'receiptPayments.receipt.customer.parkingRenters.parkingOwner.customer',
+          'receiptPayments.receipt.customer.parkingRenters.parkingOwner.customer.receipts',
           'paymentHistoryOnAccount',
           'paymentHistoryOnAccount.receipt',
           'paymentHistoryOnAccount.receipt.customer',
-          'paymentHistoryOnAccount.receipt.customer.vehicleRenters',
-          'paymentHistoryOnAccount.receipt.customer.vehicles',
-          'paymentHistoryOnAccount.receipt.customer.vehicleRenters.vehicle.customer',
+          'paymentHistoryOnAccount.receipt.customer.parkingRenters',
+          'paymentHistoryOnAccount.receipt.customer.parkingOwners',
+          'paymentHistoryOnAccount.receipt.customer.parkingRenters.parkingOwner.customer',
         ],
       });
       
@@ -152,7 +239,7 @@ async createBox(createBoxListDto: CreateBoxListDto) {
     try{
       const boxListWithRegistrations = await this.boxListRepository.findOne({
         where: { id: boxListId },
-        relations: ['ticketRegistrations', 'receipts', 'ticketRegistrationForDays','otherPayments', 'receipts.customer.vehicleRenters', 'receipts.customer.vehicles'],
+        relations: ['ticketRegistrations', 'receipts', 'ticketRegistrationForDays','otherPayments', 'receipts.customer.parkingRenters', 'receipts.customer.parkingOwners'],
       });
       if(!boxListWithRegistrations){
         throw new NotFoundException('Box list not found')
@@ -185,34 +272,42 @@ async createBox(createBoxListDto: CreateBoxListDto) {
     }
   }
 
+  // Solo lo que efectivamente queda en la caja física (efectivo) afecta el totalPrice.
+  // Una transferencia no se refleja en el total, igual que los pagos de recibos por transferencia.
+  private computeBoxDelta(type: string | undefined, price: number): number {
+    return type === 'EGRESOS' ? -price : price;
+  }
+
   async createOtherPayment(createOtherPaymentDto: CreateOtherPaymentDto) {
     try{
       const otherPayment = this.otherPaymentepository.create(createOtherPaymentDto);
 
       const argentinaTime = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day');
       const now = argentinaTime.format('YYYY-MM-DD')
-      
+
 
       otherPayment.dateNow = now;
       const boxListDate = now;
+      const affectsBox = createOtherPaymentDto.paymentMethod !== 'TRANSFER';
+      const delta = affectsBox ? this.computeBoxDelta(createOtherPaymentDto.type, otherPayment.price) : 0;
       let boxList = await this.findBoxByDate(boxListDate);
-      
+
       if (!boxList) {
           boxList = await this.createBox({
               date: boxListDate,
-              totalPrice: createOtherPaymentDto.type === 'EGRESOS' ? -otherPayment.price : otherPayment.price
+              totalPrice: delta,
           });
       } else {
-        boxList.totalPrice += createOtherPaymentDto.type === 'EGRESOS' ? -otherPayment.price : otherPayment.price;
-      
+        boxList.totalPrice += delta;
+
           await this.updateBox(boxList.id, {
               totalPrice: boxList.totalPrice,
           });
       }
-      
+
       otherPayment.boxList = { id: boxList.id } as BoxList;
 
-      const savedOtherPayment = await this.otherPaymentepository.save(otherPayment); 
+      const savedOtherPayment = await this.otherPaymentepository.save(otherPayment);
 
       return savedOtherPayment;
     } catch (error: any) {
@@ -222,21 +317,34 @@ async createBox(createBoxListDto: CreateBoxListDto) {
 
     async updateOtherPayment(id: string, updateOtherPaymentDto: UpdateOtherPaymentDto) {
     try{
-      const expense = await this.otherPaymentepository.findOne({where:{id:id}})
+      const expense = await this.otherPaymentepository.findOne({where:{id:id}, relations:['boxList']})
 
       if(!expense){
         throw new NotFoundException('Expense not found')
       }
 
-      const otherPayment = this.otherPaymentepository.merge(expense, updateOtherPaymentDto);
-
       const boxList = await this.boxListRepository.findOne({where:{id:expense.boxList.id}})
 
-      boxList.totalPrice = boxList.totalPrice - expense.price + updateOtherPaymentDto.price;
+      // Revertir el impacto anterior en caja (si el pago viejo era en efectivo)
+      if (expense.paymentMethod !== 'TRANSFER') {
+        boxList.totalPrice -= this.computeBoxDelta(expense.type, expense.price);
+      }
+
+      const otherPayment = this.otherPaymentepository.merge(expense, updateOtherPaymentDto);
+
+      // Aplicar el nuevo impacto en caja (si el pago actualizado es en efectivo)
+      if (otherPayment.paymentMethod !== 'TRANSFER') {
+        boxList.totalPrice += this.computeBoxDelta(otherPayment.type, otherPayment.price);
+      }
+
+      // otherPayment.boxList tiene cascade:true — si queda apuntando a la relación
+      // vieja (con el totalPrice desactualizado), guardar otherPayment pisa el
+      // totalPrice recién actualizado. Se sincroniza la referencia antes de guardar.
+      otherPayment.boxList = boxList;
 
       await this.boxListRepository.save(boxList);
 
-      const savedOtherPayment = await this.otherPaymentepository.save(otherPayment); 
+      const savedOtherPayment = await this.otherPaymentepository.save(otherPayment);
 
       return savedOtherPayment;
     } catch (error: any) {
@@ -263,10 +371,13 @@ async createBox(createBoxListDto: CreateBoxListDto) {
     try{
       const expense = await this.otherPaymentepository.findOne({where:{id:id},relations:['boxList']})
 
-      expense.boxList.totalPrice += expense.price;
-      await this.boxListRepository.save(expense.boxList);
       if(!expense){
         throw new NotFoundException('Expense not found')
+      }
+
+      if (expense.paymentMethod !== 'TRANSFER') {
+        expense.boxList.totalPrice -= this.computeBoxDelta(expense.type, expense.price);
+        await this.boxListRepository.save(expense.boxList);
       }
 
       await this.otherPaymentepository.remove(expense);

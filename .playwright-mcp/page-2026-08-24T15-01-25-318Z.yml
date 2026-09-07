@@ -1,0 +1,10 @@
+- generic [active] [ref=f9e1]:
+  - generic [ref=f9e3]:
+    - generic [ref=f9e16]:
+      - generic [ref=f9e17]: ESTACI
+      - generic [ref=f9e18]: ONAMIENTO
+    - generic [ref=f9e19]: ABRIENDO BARRERA · CARGANDO SISTEMA
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list
+  - alert [ref=f9e21]

@@ -1,0 +1,119 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - generic: Operativo
+            - button:
+              - generic: NG
+              - generic:
+                - generic: Nacho Gaute
+                - generic: Administrador
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Ingreso
+                - generic:
+                  - generic:
+                    - heading [level=1]: Ingreso de vehículos
+                    - paragraph: Identificá cada auto por patente o por ticket. Buscá y cerrá cualquiera desde el panel de la derecha.
+                  - generic: Turno activo · 24/08/2026
+              - generic:
+                - generic:
+                  - generic:
+                    - button:
+                      - generic:
+                        - generic: Registrar entrada
+                        - generic: Por patente
+                    - button:
+                      - generic:
+                        - generic: Buscar y cerrar ticket
+                        - generic: Patente o código
+                  - generic:
+                    - button: Ver último registro
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic: EN HORARIO
+                            - generic: "#GM-278D"
+                          - heading [level=2]: Estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: ENTRADA
+                              - paragraph: 18:33:46
+                              - paragraph: 24/08/2026
+                            - generic:
+                              - generic: TRANSCURRIDO
+                              - paragraph: 0 min
+                            - generic:
+                              - generic: TIPO
+                              - paragraph: Auto
+                          - generic:
+                            - generic:
+                              - paragraph: Monto a cobrar
+                              - paragraph: "Tarifa: hasta 1min"
+                            - paragraph: $1000
+                          - generic:
+                            - button: Cobrar salida
+                            - button: Anticipo / avisar duración
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: TE005
+                        - generic: Registrado
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - heading [level=3]: Vehículos activos
+                        - generic: "1"
+                      - generic: en vivo
+                    - generic:
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: TE005
+                            - generic: En horario
+                          - generic:
+                            - generic: hace 0 min
+                            - generic: ·
+                            - generic: Auto
+                            - generic: ·
+                            - generic: 18:33
+                  - generic: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - list
+  - status [ref=f22e259]:
+    - generic [ref=f22e264]:
+      - text: Static route
+      - button [ref=f22e265] [cursor=pointer]
+  - alert
+  - dialog [active] [ref=f22e270]:
+    - generic [ref=f22e272]:
+      - heading "Buscar y cerrar ticket" [level=2] [ref=f22e274]
+      - generic [ref=f22e275]:
+        - generic [ref=f22e276]:
+          - paragraph [ref=f22e277]: TE005
+          - paragraph [ref=f22e278]: Entró 18:33:46 · hace 0 min
+          - paragraph [ref=f22e279]: "Tarifa: hasta 1min ($1000)"
+        - generic [ref=f22e280]:
+          - paragraph [ref=f22e281]: Saldo a cobrar
+          - paragraph [ref=f22e282]: $1000
+        - generic [ref=f22e283]:
+          - button "Efectivo" [ref=f22e284] [cursor=pointer]
+          - button "Transferencia" [ref=f22e289] [cursor=pointer]
+        - button "Cortesía / no cobrar" [ref=f22e293] [cursor=pointer]
+        - button "Volver a buscar" [ref=f22e294] [cursor=pointer]
+    - button "Cerrar" [ref=f22e295] [cursor=pointer]

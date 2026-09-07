@@ -1,0 +1,302 @@
+- generic [active] [ref=f24e1]:
+  - generic [ref=f24e3]:
+    - generic [ref=f24e8]:
+      - button "Toggle Sidebar" [ref=f24e11] [cursor=pointer]
+      - generic [ref=f24e13]:
+        - list [ref=f24e15]:
+          - listitem [ref=f24e16]:
+            - link [ref=f24e17] [cursor=pointer]:
+              - /url: /admin/dashboard
+          - listitem [ref=f24e24]:
+            - link [ref=f24e25] [cursor=pointer]:
+              - /url: /admin/users
+          - listitem [ref=f24e30]:
+            - link [ref=f24e31] [cursor=pointer]:
+              - /url: /admin/tickets
+          - listitem [ref=f24e35]:
+            - link [ref=f24e36] [cursor=pointer]:
+              - /url: /admin/frecuentes
+          - listitem [ref=f24e43]:
+            - link [ref=f24e44] [cursor=pointer]:
+              - /url: /admin/parking-type
+          - listitem [ref=f24e49]:
+            - link [ref=f24e50] [cursor=pointer]:
+              - /url: /admin/other-payments
+          - listitem [ref=f24e55]:
+            - link [ref=f24e56] [cursor=pointer]:
+              - /url: /tickets
+        - generic: Estacionamiento
+      - button "Toggle Sidebar" [ref=f24e64]
+    - main [ref=f24e65]:
+      - generic [ref=f24e68]:
+        - link [ref=f24e69] [cursor=pointer]:
+          - /url: /tickets
+        - generic [ref=f24e73]: Operativo
+        - button "NG Nacho Gaute Administrador" [ref=f24e75] [cursor=pointer]:
+          - generic [ref=f24e76]: NG
+          - generic [ref=f24e78]:
+            - generic [ref=f24e79]: Nacho Gaute
+            - generic [ref=f24e80]: Administrador
+      - main [ref=f24e85]:
+        - generic [ref=f24e86]:
+          - generic [ref=f24e87]:
+            - generic [ref=f24e88]:
+              - navigation "breadcrumb" [ref=f24e89]:
+                - generic [ref=f24e90]:
+                  - text: Estacionamiento
+                  - generic [ref=f24e91]: /
+                - generic [ref=f24e92]:
+                  - text: Administración
+                  - generic [ref=f24e93]: /
+                - generic [ref=f24e94]: Dashboard
+              - heading "Dashboard" [level=1] [ref=f24e95]
+            - button "Ayuda" [ref=f24e97] [cursor=pointer]
+          - generic [ref=f24e102]:
+            - generic [ref=f24e104]:
+              - generic [ref=f24e105]:
+                - generic [ref=f24e106]: Recaudación
+                - generic [ref=f24e107]: Últimos 140 días
+              - generic [ref=f24e108]: $ 25.620.200
+            - generic [ref=f24e109]:
+              - generic [ref=f24e110]:
+                - generic [ref=f24e111]:
+                  - generic [ref=f24e112]: abr
+                  - generic [ref=f24e113]: may
+                  - generic [ref=f24e114]: jun
+                  - generic [ref=f24e115]: jul
+                  - generic [ref=f24e116]: ago
+                - generic [ref=f24e117]:
+                  - generic [ref=f24e118]:
+                    - generic [ref=f24e119] [cursor=pointer]
+                    - generic [ref=f24e120] [cursor=pointer]
+                    - generic [ref=f24e121] [cursor=pointer]
+                    - generic [ref=f24e122] [cursor=pointer]
+                    - generic [ref=f24e123] [cursor=pointer]
+                    - generic [ref=f24e124] [cursor=pointer]
+                    - generic [ref=f24e125] [cursor=pointer]
+                  - generic [ref=f24e126]:
+                    - generic [ref=f24e127] [cursor=pointer]
+                    - generic [ref=f24e128] [cursor=pointer]
+                    - generic [ref=f24e129] [cursor=pointer]
+                    - generic [ref=f24e130] [cursor=pointer]
+                    - generic [ref=f24e131] [cursor=pointer]
+                    - generic [ref=f24e132] [cursor=pointer]
+                    - generic [ref=f24e133] [cursor=pointer]
+                  - generic [ref=f24e134]:
+                    - generic [ref=f24e135] [cursor=pointer]
+                    - generic [ref=f24e136] [cursor=pointer]
+                    - generic [ref=f24e137] [cursor=pointer]
+                    - generic [ref=f24e138] [cursor=pointer]
+                    - generic [ref=f24e139] [cursor=pointer]
+                    - generic [ref=f24e140] [cursor=pointer]
+                    - generic [ref=f24e141] [cursor=pointer]
+                  - generic [ref=f24e142]:
+                    - generic [ref=f24e143] [cursor=pointer]
+                    - generic [ref=f24e144] [cursor=pointer]
+                    - generic [ref=f24e145] [cursor=pointer]
+                    - generic [ref=f24e146] [cursor=pointer]
+                    - generic [ref=f24e147] [cursor=pointer]
+                    - generic [ref=f24e148] [cursor=pointer]
+                    - generic [ref=f24e149] [cursor=pointer]
+                  - generic [ref=f24e150]:
+                    - generic [ref=f24e151] [cursor=pointer]
+                    - generic [ref=f24e152] [cursor=pointer]
+                    - generic [ref=f24e153] [cursor=pointer]
+                    - generic [ref=f24e154] [cursor=pointer]
+                    - generic [ref=f24e155] [cursor=pointer]
+                    - generic [ref=f24e156] [cursor=pointer]
+                    - generic [ref=f24e157] [cursor=pointer]
+                  - generic [ref=f24e158]:
+                    - generic [ref=f24e159] [cursor=pointer]
+                    - generic [ref=f24e160] [cursor=pointer]
+                    - generic [ref=f24e161] [cursor=pointer]
+                    - generic [ref=f24e162] [cursor=pointer]
+                    - generic [ref=f24e163] [cursor=pointer]
+                    - generic [ref=f24e164] [cursor=pointer]
+                    - generic [ref=f24e165] [cursor=pointer]
+                  - generic [ref=f24e166]:
+                    - generic [ref=f24e167] [cursor=pointer]
+                    - generic [ref=f24e168] [cursor=pointer]
+                    - generic [ref=f24e169] [cursor=pointer]
+                    - generic [ref=f24e170] [cursor=pointer]
+                    - generic [ref=f24e171] [cursor=pointer]
+                    - generic [ref=f24e172] [cursor=pointer]
+                    - generic [ref=f24e173] [cursor=pointer]
+                  - generic [ref=f24e174]:
+                    - generic [ref=f24e175] [cursor=pointer]
+                    - generic [ref=f24e176] [cursor=pointer]
+                    - generic [ref=f24e177] [cursor=pointer]
+                    - generic [ref=f24e178] [cursor=pointer]
+                    - generic [ref=f24e179] [cursor=pointer]
+                    - generic [ref=f24e180] [cursor=pointer]
+                    - generic [ref=f24e181] [cursor=pointer]
+                  - generic [ref=f24e182]:
+                    - generic [ref=f24e183] [cursor=pointer]
+                    - generic [ref=f24e184] [cursor=pointer]
+                    - generic [ref=f24e185] [cursor=pointer]
+                    - generic [ref=f24e186] [cursor=pointer]
+                    - generic [ref=f24e187] [cursor=pointer]
+                    - generic [ref=f24e188] [cursor=pointer]
+                    - generic [ref=f24e189] [cursor=pointer]
+                  - generic [ref=f24e190]:
+                    - generic [ref=f24e191] [cursor=pointer]
+                    - generic [ref=f24e192] [cursor=pointer]
+                    - generic [ref=f24e193] [cursor=pointer]
+                    - generic [ref=f24e194] [cursor=pointer]
+                    - generic [ref=f24e195] [cursor=pointer]
+                    - generic [ref=f24e196] [cursor=pointer]
+                    - generic [ref=f24e197] [cursor=pointer]
+                  - generic [ref=f24e198]:
+                    - generic [ref=f24e199] [cursor=pointer]
+                    - generic [ref=f24e200] [cursor=pointer]
+                    - generic [ref=f24e201] [cursor=pointer]
+                    - generic [ref=f24e202] [cursor=pointer]
+                    - generic [ref=f24e203] [cursor=pointer]
+                    - generic [ref=f24e204] [cursor=pointer]
+                    - generic [ref=f24e205] [cursor=pointer]
+                  - generic [ref=f24e206]:
+                    - generic [ref=f24e207] [cursor=pointer]
+                    - generic [ref=f24e208] [cursor=pointer]
+                    - generic [ref=f24e209] [cursor=pointer]
+                    - generic [ref=f24e210] [cursor=pointer]
+                    - generic [ref=f24e211] [cursor=pointer]
+                    - generic [ref=f24e212] [cursor=pointer]
+                    - generic [ref=f24e213] [cursor=pointer]
+                  - generic [ref=f24e214]:
+                    - generic [ref=f24e215] [cursor=pointer]
+                    - generic [ref=f24e216] [cursor=pointer]
+                    - generic [ref=f24e217] [cursor=pointer]
+                    - generic [ref=f24e218] [cursor=pointer]
+                    - generic [ref=f24e219] [cursor=pointer]
+                    - generic [ref=f24e220] [cursor=pointer]
+                    - generic [ref=f24e221] [cursor=pointer]
+                  - generic [ref=f24e222]:
+                    - generic [ref=f24e223] [cursor=pointer]
+                    - generic [ref=f24e224] [cursor=pointer]
+                    - generic [ref=f24e225] [cursor=pointer]
+                    - generic [ref=f24e226] [cursor=pointer]
+                    - generic [ref=f24e227] [cursor=pointer]
+                    - generic [ref=f24e228] [cursor=pointer]
+                    - generic [ref=f24e229] [cursor=pointer]
+                  - generic [ref=f24e230]:
+                    - generic [ref=f24e231] [cursor=pointer]
+                    - generic [ref=f24e232] [cursor=pointer]
+                    - generic [ref=f24e233] [cursor=pointer]
+                    - generic [ref=f24e234] [cursor=pointer]
+                    - generic [ref=f24e235] [cursor=pointer]
+                    - generic [ref=f24e236] [cursor=pointer]
+                    - generic [ref=f24e237] [cursor=pointer]
+                  - generic [ref=f24e238]:
+                    - generic [ref=f24e239] [cursor=pointer]
+                    - generic [ref=f24e240] [cursor=pointer]
+                    - generic [ref=f24e241] [cursor=pointer]
+                    - generic [ref=f24e242] [cursor=pointer]
+                    - generic [ref=f24e243] [cursor=pointer]
+                    - generic [ref=f24e244] [cursor=pointer]
+                    - generic [ref=f24e245] [cursor=pointer]
+                  - generic [ref=f24e246]:
+                    - generic [ref=f24e247] [cursor=pointer]
+                    - generic [ref=f24e248] [cursor=pointer]
+                    - generic [ref=f24e249] [cursor=pointer]
+                    - generic [ref=f24e250] [cursor=pointer]
+                    - generic [ref=f24e251] [cursor=pointer]
+                    - generic [ref=f24e252] [cursor=pointer]
+                    - generic [ref=f24e253] [cursor=pointer]
+                  - generic [ref=f24e254]:
+                    - generic [ref=f24e255] [cursor=pointer]
+                    - generic [ref=f24e256] [cursor=pointer]
+                    - generic [ref=f24e257] [cursor=pointer]
+                    - generic [ref=f24e258] [cursor=pointer]
+                    - generic [ref=f24e259] [cursor=pointer]
+                    - generic [ref=f24e260] [cursor=pointer]
+                    - generic [ref=f24e261] [cursor=pointer]
+                  - generic [ref=f24e262]:
+                    - generic [ref=f24e263] [cursor=pointer]
+                    - generic [ref=f24e264] [cursor=pointer]
+                    - generic [ref=f24e265] [cursor=pointer]
+                    - generic [ref=f24e266] [cursor=pointer]
+                    - generic [ref=f24e267] [cursor=pointer]
+                    - generic [ref=f24e268] [cursor=pointer]
+                    - generic [ref=f24e269] [cursor=pointer]
+                  - generic [ref=f24e270]:
+                    - generic [ref=f24e271] [cursor=pointer]
+                    - generic [ref=f24e272] [cursor=pointer]
+                    - generic [ref=f24e273] [cursor=pointer]
+                    - generic [ref=f24e274] [cursor=pointer]
+                    - generic [ref=f24e275] [cursor=pointer]
+                    - generic [ref=f24e276] [cursor=pointer]
+                    - generic [ref=f24e277] [cursor=pointer]
+              - generic [ref=f24e278]: Pasá el mouse por los cuadros
+            - generic [ref=f24e280]:
+              - generic [ref=f24e281]: 20 semanas × 7 días
+              - generic [ref=f24e282]: Planillas de caja
+          - generic [ref=f24e284]:
+            - generic [ref=f24e286]:
+              - generic [ref=f24e287]:
+                - generic [ref=f24e288]: Actividad por hora
+                - generic [ref=f24e289]: Hoy
+              - generic [ref=f24e290]: 6 entradas y salidas
+            - generic [ref=f24e293]:
+              - generic [ref=f24e294]: Curva suavizada
+              - generic [ref=f24e295]: Pico 11:00 · 2
+          - button "01/08/2026 – 24/08/2026" [ref=f24e297] [cursor=pointer]
+          - generic [ref=f24e298]:
+            - generic [ref=f24e300]:
+              - generic [ref=f24e301]:
+                - generic [ref=f24e302]:
+                  - generic [ref=f24e303]:
+                    - generic [ref=f24e304]: Ingresos vs egresos
+                    - generic [ref=f24e305]: Línea
+                  - generic [ref=f24e306]: $ 0
+                - generic [ref=f24e307]:
+                  - button "Ambas" [ref=f24e308] [cursor=pointer]
+                  - button "Ingresos" [ref=f24e309] [cursor=pointer]
+              - generic [ref=f24e312]:
+                - generic [ref=f24e313]: Puntas redondeadas
+                - generic [ref=f24e314]: Pico $ 35.000
+            - generic [ref=f24e316]:
+              - generic [ref=f24e317]:
+                - generic [ref=f24e318]:
+                  - generic [ref=f24e319]:
+                    - generic [ref=f24e320]: Recibos pagados vs pendientes
+                    - generic [ref=f24e321]: Medidor
+                  - generic [ref=f24e322]: 17% recibos pagados
+                - combobox [ref=f24e323] [cursor=pointer]
+                - combobox [ref=f24e326]
+              - generic [ref=f24e327]:
+                - generic:
+                  - generic: 17.0%
+                  - generic: 5 pendientes
+              - generic [ref=f24e329]:
+                - generic [ref=f24e330]: Arco redondeado de 240°
+                - generic [ref=f24e331]: Pagados 1 · Pendientes 5
+            - generic [ref=f24e333]:
+              - generic [ref=f24e334]:
+                - generic [ref=f24e335]:
+                  - generic [ref=f24e336]:
+                    - generic [ref=f24e337]: Clientes creados por tipo
+                    - generic [ref=f24e338]: Barras + línea
+                  - generic [ref=f24e339]: 6 clientes en el período
+                - button "Línea activa" [ref=f24e340] [cursor=pointer]
+              - generic [ref=f24e343]:
+                - generic [ref=f24e344]: Capas monocromáticas
+                - generic [ref=f24e345]: Particulares al tope
+            - generic [ref=f24e347]:
+              - generic [ref=f24e349]:
+                - generic [ref=f24e350]:
+                  - generic [ref=f24e351]: Tipos de pago más usados
+                  - generic [ref=f24e352]: Benchmark
+                - generic [ref=f24e353]: 2 medios evaluados
+              - generic [ref=f24e354]:
+                - generic [ref=f24e356]:
+                  - generic [ref=f24e357]: Efectivo
+                  - generic [ref=f24e358]: 67% · 10 cobros
+                - generic [ref=f24e363]:
+                  - generic [ref=f24e364]: Transferencia
+                  - generic [ref=f24e365]: 33% · 5 cobros
+              - generic [ref=f24e369]:
+                - generic [ref=f24e370]: Barras redondeadas
+                - generic [ref=f24e371]: Marca de reparto parejo
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list

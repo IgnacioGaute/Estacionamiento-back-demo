@@ -31,4 +31,7 @@ export class TicketPrice {
   @Column('enum', { enum: TICKET_TIME_TYPE, nullable:true})
   ticketTimeType: TicketTimeType;
 
+  @Column('int', {nullable:true})
+  intervalMinutes: number;
+
 }

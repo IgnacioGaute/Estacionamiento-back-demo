@@ -1,0 +1,87 @@
+- generic [active] [ref=f25e1]:
+  - main [ref=f25e4]:
+    - generic [ref=f25e7]:
+      - link [ref=f25e8] [cursor=pointer]:
+        - /url: /tickets
+      - generic [ref=f25e12]: Operativo
+      - button "NG Nacho Gaute Administrador" [ref=f25e14] [cursor=pointer]:
+        - generic [ref=f25e15]: NG
+        - generic [ref=f25e17]:
+          - generic [ref=f25e18]: Nacho Gaute
+          - generic [ref=f25e19]: Administrador
+    - main [ref=f25e24]:
+      - generic [ref=f25e25]:
+        - button "Ayuda" [ref=f25e27] [cursor=pointer]
+        - generic [ref=f25e31]:
+          - navigation [ref=f25e32]:
+            - generic [ref=f25e33]: Estacionamiento
+            - generic [ref=f25e34]: /
+            - generic [ref=f25e35]: Operación
+            - generic [ref=f25e36]: /
+            - generic [ref=f25e37]: Ingreso
+          - generic [ref=f25e38]:
+            - heading "Ingreso de vehículos" [level=1] [ref=f25e40]
+            - generic [ref=f25e41]: Turno activo · 23/08/2026
+        - generic [ref=f25e44]:
+          - generic [ref=f25e45]:
+            - generic [ref=f25e46]:
+              - button "Registrar entrada Por patente" [ref=f25e47] [cursor=pointer]:
+                - generic [ref=f25e52]:
+                  - generic [ref=f25e53]: Registrar entrada
+                  - generic [ref=f25e54]: Por patente
+              - button "Buscar y cerrar ticket Patente o código" [ref=f25e55] [cursor=pointer]:
+                - generic [ref=f25e60]:
+                  - generic [ref=f25e61]: Buscar y cerrar ticket
+                  - generic [ref=f25e62]: Patente o código
+            - generic [ref=f25e64]:
+              - generic [ref=f25e68]:
+                - generic [ref=f25e69]:
+                  - generic [ref=f25e70]:
+                    - generic [ref=f25e71]: SALIDA REGISTRADA
+                    - generic [ref=f25e76]: "#GM-72C2"
+                  - heading "Estacionamiento" [level=2] [ref=f25e78]
+                - generic [ref=f25e79]:
+                  - generic [ref=f25e80]:
+                    - generic [ref=f25e81]: SALIDA
+                    - paragraph [ref=f25e84]: 23/08/2026
+                  - generic [ref=f25e85]:
+                    - generic [ref=f25e86]: PRECIO
+                    - paragraph [ref=f25e90]: $1000
+                    - paragraph [ref=f25e91]: "Tarifa: hasta 15min"
+                - generic [ref=f25e98]:
+                  - generic [ref=f25e99]:
+                    - paragraph [ref=f25e100]: Entrada
+                    - paragraph [ref=f25e101]: 17:02:07
+                  - generic [ref=f25e103]:
+                    - paragraph [ref=f25e104]: Salida
+                    - paragraph [ref=f25e105]: 17:04:30
+                - generic [ref=f25e106]:
+                  - generic [ref=f25e108]: SALIDA
+                  - text: registrada correctamente
+              - generic [ref=f25e109]:
+                - generic [ref=f25e112]:
+                  - paragraph [ref=f25e113]: Patente
+                  - paragraph [ref=f25e114]: TE004TF
+                - generic [ref=f25e115]: Registrado
+          - generic [ref=f25e118]:
+            - generic [ref=f25e119]:
+              - generic [ref=f25e120]:
+                - generic [ref=f25e121]:
+                  - heading "Vehículos activos" [level=3] [ref=f25e122]
+                  - generic [ref=f25e123]: "1"
+                - generic [ref=f25e124]: en vivo
+              - button "A232NTM En horario hace 10 min · Auto · 16:56" [ref=f25e127] [cursor=pointer]:
+                - generic [ref=f25e134]:
+                  - generic [ref=f25e135]:
+                    - generic [ref=f25e136]: A232NTM
+                    - generic [ref=f25e137]: En horario
+                  - generic [ref=f25e138]:
+                    - generic [ref=f25e142]: hace 10 min
+                    - generic [ref=f25e143]: ·
+                    - generic [ref=f25e144]: Auto
+                    - generic [ref=f25e145]: ·
+                    - generic [ref=f25e146]: 16:56
+            - generic [ref=f25e149]: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list

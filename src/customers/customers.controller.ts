@@ -1,15 +1,10 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
-import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
+import { Controller, Get, Post, Body, Patch, Param, Query, Delete, UseGuards } from '@nestjs/common';
 import { CustomersService } from './customers.service';
-import { CreateCustomerDto, CreateVehicleDto } from './dto/create-customer.dto';
+import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
-import { Customer, CustomerType } from './entities/customer.entity';
+import { CustomerType } from './entities/customer.entity';
 import { CreateInterestSettingDto } from './dto/interest-setting.dto';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
-import { UpdateAmountAllCustomerDto } from './dto/update-amount-all-customers.dto';
-import { CreateParkingTypeDto } from './dto/create-parking-type.dto';
-import { ParkingType } from './entities/parking-type.entity';
-import { UpdateParkingTypeDto } from './dto/update-parking-type.dto';
 
 
 @Controller('customers')
@@ -27,14 +22,14 @@ export class CustomersController {
     return this.customersService.findAll(customer);
   }
 
-  @Get('vehicleRenter')
-  async getCustomerVehicleRenter() {
-    return await this.customersService.getCustomerVehicleRenter();
-  }
-
   @Get('thirds')
   async getCustomerthird() {
     return await this.customersService.getCustomerthird();
+  }
+
+  @Get('summary')
+  async getCustomersSummary(@Query('from') from?: string, @Query('to') to?: string) {
+    return await this.customersService.getCustomersSummary(from, to);
   }
 
   @Get(':id')
@@ -70,30 +65,5 @@ export class CustomersController {
   @Get('interestSetting/interest')
   async findInterest() {
     return await this.customersService.findInterest();
-  }
-
-  @Patch('update/updateAmount') 
-  updateAmount(@Body() updateAmountAllCustomerDto: UpdateAmountAllCustomerDto) {
-    return this.customersService.updateAmount(updateAmountAllCustomerDto);
-  }
-
-  @Post('parking/parkingTypes')
-  createParkingType(@Body() createParkingTypeDto: CreateParkingTypeDto) {
-    return this.customersService.createParkingType(createParkingTypeDto);
-  }
-
-  @Get('parking/parkingTypes')
-  findAllParkingType(@Paginate() query: PaginateQuery): Promise<Paginated<ParkingType>> {
-    return this.customersService.findAllParkingType(query);
-  }
-
-  @Patch('parking/parkingTypes/:parkingTypeId')
-  updateparkingType(@Param('parkingTypeId') parkingTypeId: string, @Body() updateParkingTypeDto: UpdateParkingTypeDto) {
-    return this.customersService.updateparkingType(parkingTypeId, updateParkingTypeDto);
-  }
-
-  @Delete('parking/parkingTypes/:parkingTypeId')
-  removeParkingType(@Param('parkingTypeId') parkingTypeId: string) {
-    return this.customersService.removeParkingType(parkingTypeId);
   }
 }

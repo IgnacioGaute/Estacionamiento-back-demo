@@ -1,0 +1,44 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e8]:
+      - generic [ref=e9]: Garage Mitre
+      - generic [ref=e10]: Tutoriales del sistema — guía en video para el equipo
+  - navigation "Índice de videos" [ref=e11]:
+    - link "01 Login y usuarios" [ref=e12] [cursor=pointer]:
+      - /url: "#login"
+      - generic [ref=e13]: "01"
+      - text: Login y usuarios
+    - link "02 Tickets" [ref=e14] [cursor=pointer]:
+      - /url: "#tickets"
+      - generic [ref=e15]: "02"
+      - text: Tickets
+    - link "03 Clientes y recibos" [ref=e16] [cursor=pointer]:
+      - /url: "#clientes"
+      - generic [ref=e17]: "03"
+      - text: Clientes y recibos
+    - link "04 Varios y Dashboard" [ref=e18] [cursor=pointer]:
+      - /url: "#dashboard-varios"
+      - generic [ref=e19]: "04"
+      - text: Varios y Dashboard
+  - main [ref=e20]:
+    - generic [ref=e22]:
+      - generic [ref=e23]: "01"
+      - generic [ref=e24]:
+        - heading "Login, usuarios y roles" [level=2] [ref=e25]
+        - paragraph [ref=e26]: "Cómo entrar al sistema con email o usuario, recuperar la contraseña, y cómo administrar las cuentas del equipo: crear operadores, editar perfiles y dar de baja usuarios desde Admin → Usuarios."
+    - generic [ref=e30]:
+      - generic [ref=e31]: "02"
+      - generic [ref=e32]:
+        - 'heading "Tickets: operación y administración" [level=2] [ref=e33]'
+        - paragraph [ref=e34]: "El flujo diario de ingreso y salida de vehículos —por patente o por ticket, con el buscador de clientes frecuentes— y el lado admin: tarifas, fichas físicas, clientes frecuentes y la planilla de caja."
+    - generic [ref=e38]:
+      - generic [ref=e39]: "03"
+      - generic [ref=e40]:
+        - heading "Clientes, recibos y pagos" [level=2] [ref=e41]
+        - paragraph [ref=e42]: "Alta y gestión de propietarios, inquilinos e inquilinos de terceros: cocheras, tipos de estacionamiento, generación de recibos mensuales y registro de pagos."
+    - generic [ref=e46]:
+      - generic [ref=e47]: "04"
+      - generic [ref=e48]:
+        - heading "Varios y Dashboard" [level=2] [ref=e49]
+        - paragraph [ref=e50]: "Ingresos y egresos sueltos de caja, y un recorrido por el Dashboard: recaudación, actividad por hora, ingresos vs egresos, recibos pagados y tipos de pago."
+  - contentinfo [ref=e53]: Uso interno — Garage Mitre

@@ -1,0 +1,210 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - button:
+              - generic: NG
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - generic:
+                  - navigation:
+                    - generic:
+                      - text: Estacionamiento
+                      - generic: /
+                    - generic:
+                      - text: Operación
+                      - generic: /
+                    - generic: Propietarios
+                  - heading [level=1]: Propietarios
+                  - paragraph: 2 propietarios registrados.
+                - generic:
+                  - generic:
+                    - button: Generar recibos
+                    - generic:
+                      - button
+                      - button
+                      - button
+              - generic:
+                - generic:
+                  - generic:
+                    - generic:
+                      - textbox:
+                        - /placeholder: Filtrar por apellido...
+                    - generic:
+                      - generic:
+                        - button: Ayuda
+                        - generic:
+                          - button: Nuevo propietario
+                  - generic:
+                    - generic:
+                      - generic:
+                        - table:
+                          - rowgroup:
+                            - row:
+                              - columnheader:
+                                - generic:
+                                  - button: Apellido
+                              - columnheader:
+                                - generic:
+                                  - button: Nombre
+                              - columnheader:
+                                - generic:
+                                  - button: Cocheras
+                              - columnheader:
+                                - generic: Resumen
+                              - columnheader:
+                                - generic: Acciones
+                          - rowgroup:
+                            - row:
+                              - cell:
+                                - generic: Gaute
+                              - cell:
+                                - generic: Andres
+                              - cell:
+                                - generic: "1"
+                              - cell:
+                                - generic:
+                                  - generic:
+                                    - button [expanded]:
+                                      - generic: Ver Resumen
+                              - cell:
+                                - generic:
+                                  - button:
+                                    - generic: Abrir acciones
+                            - row:
+                              - cell:
+                                - generic:
+                                  - generic:
+                                    - generic: Cocheras
+                                    - generic: b88
+                                  - generic:
+                                    - generic: Último pago
+                                    - generic: —
+                                  - generic:
+                                    - generic: Saldo a pagar
+                                    - generic: $ 60.000
+                                  - generic:
+                                    - button [expanded]:
+                                      - generic: Ficha completa
+                            - row:
+                              - cell:
+                                - generic: Gaute
+                              - cell:
+                                - generic: Ignacio
+                              - cell:
+                                - generic: "2"
+                              - cell:
+                                - generic:
+                                  - generic:
+                                    - button:
+                                      - generic: Ver Resumen
+                              - cell:
+                                - generic:
+                                  - button:
+                                    - generic: Abrir acciones
+                  - generic:
+                    - generic:
+                      - generic: Filas
+                      - combobox:
+                        - generic: "10"
+                    - generic:
+                      - generic: 1/1
+                      - button [disabled]:
+                        - generic: Ir a la página anterior
+                      - button [disabled]:
+                        - generic: Ir a la página siguiente
+  - region "Notifications alt+T"
+  - list
+  - generic [ref=f14e148] [cursor=pointer]:
+    - generic [ref=f14e151]: 3 errors
+    - button [ref=f14e176]
+  - alert
+  - dialog [ref=f14e178]:
+    - generic [ref=f14e181]:
+      - generic [ref=f14e182]:
+        - generic [ref=f14e183]: AG
+        - generic [ref=f14e185]:
+          - heading "Andres Gaute" [level=2] [ref=f14e186]
+          - generic [ref=f14e187]: Propietario
+        - generic [ref=f14e189]:
+          - generic [ref=f14e190]: Cochera
+          - generic [ref=f14e191]: b88
+      - button "Ayuda" [active] [ref=f14e194] [cursor=pointer]
+      - generic [ref=f14e198]:
+        - generic [ref=f14e199]:
+          - generic [ref=f14e200]:
+            - generic [ref=f14e201]:
+              - heading "Estado de Cuenta" [level=3] [ref=f14e202]
+              - button "2026" [ref=f14e204] [cursor=pointer]
+            - generic [ref=f14e205]:
+              - button "Jul 26 $ 30.000 POR COBRAR" [ref=f14e206] [cursor=pointer]:
+                - generic [ref=f14e207]: Jul 26
+                - generic [ref=f14e208]: $ 30.000
+                - generic [ref=f14e209]: POR COBRAR
+              - button "Ago 26 $ 30.000 POR COBRAR" [ref=f14e210] [cursor=pointer]:
+                - generic [ref=f14e211]: Ago 26
+                - generic [ref=f14e212]: $ 30.000
+                - generic [ref=f14e213]: POR COBRAR
+          - generic [ref=f14e214]:
+            - generic [ref=f14e215]:
+              - heading "Recibos Emitidos" [level=3] [ref=f14e216]
+              - generic [ref=f14e217]: 2 total
+            - table [ref=f14e220]:
+              - rowgroup [ref=f14e221]:
+                - row [ref=f14e222]:
+                  - columnheader "Número" [ref=f14e223]
+                  - columnheader "Estado" [ref=f14e224]
+                  - columnheader "Concepto" [ref=f14e225]
+                  - columnheader "Fecha" [ref=f14e226]
+                  - columnheader "Forma de pago" [ref=f14e227]
+                  - columnheader "Importe" [ref=f14e228]
+                  - columnheader "Acciones" [ref=f14e229]
+              - rowgroup [ref=f14e230]:
+                - row [ref=f14e231]:
+                  - cell "N° 0000-00000007" [ref=f14e232]
+                  - cell "Pendiente" [ref=f14e233]
+                  - cell "Abono mensual · Agosto Creado 20/08/26" [ref=f14e238]:
+                    - generic [ref=f14e239]: Abono mensual · Agosto
+                    - generic [ref=f14e240]: Creado 20/08/26
+                  - cell "—" [ref=f14e241]
+                  - cell [ref=f14e242]
+                  - cell "$ 30.000" [ref=f14e243]
+                  - cell [ref=f14e244]:
+                    - button [ref=f14e245] [cursor=pointer]
+                - row [ref=f14e246]:
+                  - cell "N° 0000-00000005" [ref=f14e247]
+                  - cell "Pendiente" [ref=f14e248]
+                  - cell "Abono mensual · Julio Creado 19/08/26" [ref=f14e253]:
+                    - generic [ref=f14e254]: Abono mensual · Julio
+                    - generic [ref=f14e255]: Creado 19/08/26
+                  - cell "—" [ref=f14e256]
+                  - cell [ref=f14e257]
+                  - cell "$ 30.000" [ref=f14e258]
+                  - cell [ref=f14e259]:
+                    - button [ref=f14e260] [cursor=pointer]
+        - generic [ref=f14e261]:
+          - generic [ref=f14e262]:
+            - heading "Saldo a Pagar" [level=3] [ref=f14e264]
+            - generic [ref=f14e265]: Ago 26
+            - generic [ref=f14e266]: $ 30.000
+            - paragraph [ref=f14e267]: Pendiente · Agosto 2026
+            - button "Registrar · Ago" [ref=f14e269] [cursor=pointer]
+          - generic [ref=f14e271]:
+            - heading "Datos del Abono" [level=3] [ref=f14e272]
+            - generic [ref=f14e273]:
+              - generic [ref=f14e274]:
+                - term [ref=f14e275]: Tipo
+                - definition [ref=f14e276]: Propietario
+              - generic [ref=f14e277]:
+                - term [ref=f14e278]: Alta
+                - definition [ref=f14e279]: 08/2026
+              - generic [ref=f14e280]:
+                - term [ref=f14e281]: Cocheras
+                - definition [ref=f14e282]: "1"
+    - button "Cerrar" [ref=f14e283] [cursor=pointer]

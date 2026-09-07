@@ -1,0 +1,63 @@
+- generic [ref=f5e1]:
+  - main [ref=f5e4]:
+    - generic [ref=f5e7]:
+      - link [ref=f5e8] [cursor=pointer]:
+        - /url: /tickets
+      - button "NG" [ref=f5e11] [cursor=pointer]
+    - main [ref=f5e15]:
+      - generic [ref=f5e16]:
+        - button "Ayuda" [ref=f5e18] [cursor=pointer]
+        - generic [ref=f5e22]:
+          - navigation [ref=f5e23]:
+            - generic [ref=f5e24]: Estacionamiento
+            - generic [ref=f5e25]: /
+            - generic [ref=f5e26]: Operación
+            - generic [ref=f5e27]: /
+            - generic [ref=f5e28]: Ingreso
+          - generic [ref=f5e29]:
+            - heading "Ingreso de vehículos" [level=1] [ref=f5e31]
+            - generic [ref=f5e32]: Turno activo · 24/08/2026
+        - generic [ref=f5e35]:
+          - button "Ingreso" [ref=f5e36] [cursor=pointer]
+          - button "Activos" [active] [ref=f5e37] [cursor=pointer]
+        - generic [ref=f5e102]:
+          - button "Buscar y cerrar ticket Patente o código" [ref=f5e103] [cursor=pointer]:
+            - generic [ref=f5e108]:
+              - generic [ref=f5e109]: Buscar y cerrar ticket
+              - generic [ref=f5e110]: Patente o código
+          - generic [ref=f5e111]:
+            - generic [ref=f5e112]:
+              - generic [ref=f5e113]:
+                - heading "Vehículos activos" [level=3] [ref=f5e114]
+                - generic [ref=f5e115]: "2"
+              - generic [ref=f5e116]: en vivo
+            - generic [ref=f5e118]:
+              - 'button "A232NTM En horario hace 27 min · Auto · 11:17 Avisó: Hasta 2dias" [ref=f5e119] [cursor=pointer]':
+                - generic [ref=f5e126]:
+                  - generic [ref=f5e127]:
+                    - generic [ref=f5e128]: A232NTM
+                    - generic [ref=f5e129]: En horario
+                  - generic [ref=f5e130]:
+                    - generic [ref=f5e134]: hace 27 min
+                    - generic [ref=f5e135]: ·
+                    - generic [ref=f5e136]: Auto
+                    - generic [ref=f5e137]: ·
+                    - generic [ref=f5e138]: 11:17
+                  - generic [ref=f5e139]: "Avisó: Hasta 2dias"
+              - 'button "A213Nfr En horario hace 26 min · Auto · 11:18 Avisó: Hasta 45min" [ref=f5e142] [cursor=pointer]':
+                - generic [ref=f5e149]:
+                  - generic [ref=f5e150]:
+                    - generic [ref=f5e151]: A213Nfr
+                    - generic [ref=f5e152]: En horario
+                  - generic [ref=f5e153]:
+                    - generic [ref=f5e157]: hace 26 min
+                    - generic [ref=f5e158]: ·
+                    - generic [ref=f5e159]: Auto
+                    - generic [ref=f5e160]: ·
+                    - generic [ref=f5e161]: 11:18
+                  - generic [ref=f5e162]: "Avisó: Hasta 45min"
+          - generic [ref=f5e165]: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list
+  - alert [ref=f5e168]

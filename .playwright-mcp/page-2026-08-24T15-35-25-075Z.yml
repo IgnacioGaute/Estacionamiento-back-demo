@@ -1,0 +1,192 @@
+- generic:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - generic: Operativo
+            - button:
+              - generic: NG
+              - generic:
+                - generic: Nacho Gaute
+                - generic: Administrador
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Ingreso
+                - generic:
+                  - generic:
+                    - heading [level=1]: Ingreso de vehículos
+                    - paragraph: Identificá cada auto por patente o por ticket. Buscá y cerrá cualquiera desde el panel de la derecha.
+                  - generic: Turno activo · 24/08/2026
+              - generic:
+                - generic:
+                  - generic:
+                    - button:
+                      - generic:
+                        - generic: Registrar entrada
+                        - generic: Por patente
+                    - button:
+                      - generic:
+                        - generic: Buscar y cerrar ticket
+                        - generic: Patente o código
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic: SALIDA REGISTRADA
+                              - generic: "#GM-EFAD"
+                            - generic:
+                              - heading [level=2]: Estacionamiento
+                              - paragraph: Registro de estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: SALIDA
+                              - paragraph: 24/08/2026
+                            - generic:
+                              - generic: PRECIO
+                              - paragraph: $1000
+                              - paragraph: "Tarifa: hasta 1min"
+                          - generic:
+                            - generic:
+                              - generic:
+                                - generic:
+                                  - paragraph: Entrada
+                                  - paragraph: 12:30:04
+                                - generic:
+                                  - paragraph: Salida
+                                  - paragraph: 12:30:49
+                          - generic:
+                            - generic: SALIDA
+                            - text: registrada correctamente
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: TE001
+                        - generic: Registrado
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - heading [level=3]: Vehículos activos
+                        - generic: "2"
+                      - generic: en vivo
+                    - generic:
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: A232NTM
+                            - generic: En horario
+                          - generic:
+                            - generic: hace 1 h 17 min
+                            - generic: ·
+                            - generic: Auto
+                            - generic: ·
+                            - generic: 11:17
+                          - generic: "Avisó: Hasta 2dias"
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: A213Nfr
+                            - generic: Vencido
+                          - generic:
+                            - generic: hace 1 h 16 min
+                            - generic: ·
+                            - generic: Auto
+                            - generic: ·
+                            - generic: 11:18
+                  - generic: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T"
+  - list
+  - alert
+  - dialog [ref=f16e752]:
+    - generic [ref=f16e754]:
+      - generic [ref=f16e761]:
+        - heading "Planilla de caja" [level=2] [ref=f16e762]
+        - paragraph [ref=f16e763]: Elegí el día para ver y exportar la planilla.
+      - generic [ref=f16e764]:
+        - generic [ref=f16e767]:
+          - generic [ref=f16e768]:
+            - generic [ref=f16e769]: agosto 2026
+            - generic:
+              - button "Go to previous month" [ref=f16e770] [cursor=pointer]
+              - button "Go to next month" [ref=f16e771] [cursor=pointer]
+          - grid "agosto 2026" [ref=f16e772]:
+            - rowgroup [ref=f16e773]:
+              - row [ref=f16e774]:
+                - columnheader "lunes" [ref=f16e775]: lu
+                - columnheader "martes" [ref=f16e776]: ma
+                - columnheader "miércoles" [ref=f16e777]: mi
+                - columnheader "jueves" [ref=f16e778]: ju
+                - columnheader "viernes" [ref=f16e779]: vi
+                - columnheader "sábado" [ref=f16e780]: sá
+                - columnheader "domingo" [ref=f16e781]: do
+            - rowgroup [ref=f16e782]:
+              - row [ref=f16e783]:
+                - gridcell "27" [ref=f16e784] [cursor=pointer]
+                - gridcell "28" [ref=f16e785] [cursor=pointer]
+                - gridcell "29" [ref=f16e786] [cursor=pointer]
+                - gridcell "30" [ref=f16e787] [cursor=pointer]
+                - gridcell "31" [ref=f16e788] [cursor=pointer]
+                - gridcell "1" [ref=f16e789] [cursor=pointer]
+                - gridcell "2" [ref=f16e790] [cursor=pointer]
+              - row [ref=f16e791]:
+                - gridcell "3" [ref=f16e792] [cursor=pointer]
+                - gridcell "4" [ref=f16e793] [cursor=pointer]
+                - gridcell "5" [ref=f16e794] [cursor=pointer]
+                - gridcell "6" [ref=f16e795] [cursor=pointer]
+                - gridcell "7" [ref=f16e796] [cursor=pointer]
+                - gridcell "8" [ref=f16e797] [cursor=pointer]
+                - gridcell "9" [ref=f16e798] [cursor=pointer]
+              - row [ref=f16e799]:
+                - gridcell "10" [ref=f16e800] [cursor=pointer]
+                - gridcell "11" [ref=f16e801] [cursor=pointer]
+                - gridcell "12" [ref=f16e802] [cursor=pointer]
+                - gridcell "13" [ref=f16e803] [cursor=pointer]
+                - gridcell "14" [ref=f16e804] [cursor=pointer]
+                - gridcell "15" [ref=f16e805] [cursor=pointer]
+                - gridcell "16" [ref=f16e806] [cursor=pointer]
+              - row [ref=f16e807]:
+                - gridcell "17" [ref=f16e808] [cursor=pointer]
+                - gridcell "18" [ref=f16e809] [cursor=pointer]
+                - gridcell "19" [ref=f16e810] [cursor=pointer]
+                - gridcell "20" [ref=f16e811] [cursor=pointer]
+                - gridcell "21" [ref=f16e812] [cursor=pointer]
+                - gridcell "22" [ref=f16e813] [cursor=pointer]
+                - gridcell "23" [ref=f16e814] [cursor=pointer]
+              - row [ref=f16e815]:
+                - gridcell "24" [selected] [ref=f16e816] [cursor=pointer]
+                - gridcell "25" [disabled] [ref=f16e817]
+                - gridcell "26" [disabled] [ref=f16e818]
+                - gridcell "27" [disabled] [ref=f16e819]
+                - gridcell "28" [disabled] [ref=f16e820]
+                - gridcell "29" [disabled] [ref=f16e821]
+                - gridcell "30" [disabled] [ref=f16e822]
+              - row [ref=f16e823]:
+                - gridcell "31" [disabled] [ref=f16e824]
+                - gridcell "1" [disabled] [ref=f16e825]
+                - gridcell "2" [disabled] [ref=f16e826]
+                - gridcell "3" [disabled] [ref=f16e827]
+                - gridcell "4" [disabled] [ref=f16e828]
+                - gridcell "5" [disabled] [ref=f16e829]
+                - gridcell "6" [disabled] [ref=f16e830]
+        - generic [ref=f16e831]:
+          - generic [ref=f16e832]: Fecha seleccionada
+          - generic [ref=f16e833]: 24/08/2026
+        - generic [ref=f16e834]: No hay datos disponibles para la fecha seleccionada.
+      - generic [ref=f16e835]:
+        - button "Cancelar" [active] [ref=f16e836] [cursor=pointer]
+        - button "Imprimir planilla" [disabled]
+    - button "Cerrar" [ref=f16e837] [cursor=pointer]

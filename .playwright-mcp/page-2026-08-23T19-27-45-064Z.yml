@@ -1,0 +1,73 @@
+- generic [active] [ref=f1e1]:
+  - main [ref=f1e4]:
+    - generic [ref=f1e7]:
+      - link [ref=f1e8] [cursor=pointer]:
+        - /url: /tickets
+      - generic [ref=f1e12]: Operativo
+      - button "NG Nacho Gaute Administrador" [ref=f1e14] [cursor=pointer]:
+        - generic [ref=f1e15]: NG
+        - generic [ref=f1e17]:
+          - generic [ref=f1e18]: Nacho Gaute
+          - generic [ref=f1e19]: Administrador
+    - main [ref=f1e24]:
+      - generic [ref=f1e25]:
+        - button "Ayuda" [ref=f1e27] [cursor=pointer]
+        - generic [ref=f1e31]:
+          - navigation [ref=f1e32]:
+            - generic [ref=f1e33]: Estacionamiento
+            - generic [ref=f1e34]: /
+            - generic [ref=f1e35]: Operación
+            - generic [ref=f1e36]: /
+            - generic [ref=f1e37]: Tickets
+          - generic [ref=f1e38]:
+            - heading "Registro de estacionamiento" [level=1] [ref=f1e40]
+            - generic [ref=f1e41]: Turno activo · 23/08/2026
+        - generic [ref=f1e44]:
+          - generic [ref=f1e45]:
+            - generic [ref=f1e46]:
+              - button [ref=f1e47] [cursor=pointer]
+              - button "Buscar y cerrar ticket" [ref=f1e52] [cursor=pointer]
+            - generic [ref=f1e331]:
+              - generic [ref=f1e335]:
+                - generic [ref=f1e336]:
+                  - generic [ref=f1e337]:
+                    - generic [ref=f1e338]: SALIDA REGISTRADA
+                    - generic [ref=f1e343]: "#GM-C3FC"
+                  - heading "Estacionamiento" [level=2] [ref=f1e345]
+                - generic [ref=f1e346]:
+                  - generic [ref=f1e347]:
+                    - generic [ref=f1e348]: SALIDA
+                    - paragraph [ref=f1e351]: 23/08/2026
+                  - generic [ref=f1e352]:
+                    - generic [ref=f1e353]: PRECIO
+                    - paragraph [ref=f1e357]: $1000
+                    - paragraph [ref=f1e358]: "Tarifa: hasta 1min"
+                - generic [ref=f1e365]:
+                  - generic [ref=f1e366]:
+                    - paragraph [ref=f1e367]: Entrada
+                    - paragraph [ref=f1e368]: 16:26:25
+                  - generic [ref=f1e370]:
+                    - paragraph [ref=f1e371]: Salida
+                    - paragraph [ref=f1e372]: 16:27:39
+                - generic [ref=f1e373]:
+                  - generic [ref=f1e375]: SALIDA
+                  - text: registrada correctamente
+              - generic [ref=f1e376]:
+                - generic [ref=f1e379]:
+                  - paragraph [ref=f1e380]: Patente
+                  - paragraph [ref=f1e381]: TE001TC
+                - generic [ref=f1e382]: Registrado
+          - generic [ref=f1e108]:
+            - generic [ref=f1e109]:
+              - generic [ref=f1e110]:
+                - heading "Vehículos activos" [level=3] [ref=f1e111]
+                - generic [ref=f1e112]: "0"
+              - generic [ref=f1e113]: No hay vehículos activos.
+            - generic [ref=f1e114]: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T":
+    - list:
+      - listitem [ref=f1e385]:
+        - generic [ref=f1e389]: Ticket cerrado exitosamente
+  - region "Notifications (F8)":
+    - list
+  - alert [ref=f1e117]

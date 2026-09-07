@@ -1,0 +1,62 @@
+- generic [active] [ref=e1]:
+  - main [ref=e4]:
+    - generic [ref=e7]:
+      - link [ref=e8] [cursor=pointer]:
+        - /url: /tickets
+      - button "NG" [ref=e11] [cursor=pointer]
+    - main [ref=e15]:
+      - generic [ref=e16]:
+        - button "Ayuda" [ref=e18] [cursor=pointer]
+        - generic [ref=e22]:
+          - navigation [ref=e23]:
+            - generic [ref=e24]: Estacionamiento
+            - generic [ref=e25]: /
+            - generic [ref=e26]: Operación
+            - generic [ref=e27]: /
+            - generic [ref=e28]: Ingreso
+          - generic [ref=e29]:
+            - heading "Ingreso de vehículos" [level=1] [ref=e31]
+            - generic [ref=e32]: Turno activo · 24/08/2026
+        - generic [ref=e35]:
+          - button "Ingreso" [ref=e36] [cursor=pointer]
+          - button "Activos" [ref=e37] [cursor=pointer]
+        - generic [ref=e39]:
+          - button "Registrar entrada Por patente" [ref=e41] [cursor=pointer]:
+            - generic [ref=e46]:
+              - generic [ref=e47]: Registrar entrada
+              - generic [ref=e48]: Por patente
+          - generic [ref=e50]:
+            - generic [ref=e54]:
+              - generic [ref=e55]:
+                - generic [ref=e56]:
+                  - generic [ref=e57]: SALIDA REGISTRADA
+                  - generic [ref=e62]: "#GM-905B"
+                - heading "Estacionamiento" [level=2] [ref=e64]
+              - generic [ref=e65]:
+                - generic [ref=e66]:
+                  - generic [ref=e67]: SALIDA
+                  - paragraph [ref=e70]: 24/08/2026
+                - generic [ref=e71]:
+                  - generic [ref=e72]: PRECIO
+                  - paragraph [ref=e76]: $10000
+                  - paragraph [ref=e77]: "Tarifa: Hasta 1dia"
+              - generic [ref=e78]: El cliente había avisado "Hasta 45min" y se pasó de ese tiempo.
+              - generic [ref=e87]:
+                - generic [ref=e88]:
+                  - paragraph [ref=e89]: Entrada
+                  - paragraph [ref=e90]: 11:18:52
+                - generic [ref=e92]:
+                  - paragraph [ref=e93]: Salida
+                  - paragraph [ref=e94]: 16:49:34
+              - generic [ref=e95]:
+                - generic [ref=e97]: SALIDA
+                - text: registrada correctamente
+            - generic [ref=e98]:
+              - generic [ref=e104]:
+                - paragraph [ref=e105]: Patente
+                - paragraph [ref=e106]: A213Nfr
+              - generic [ref=e107]: Registrado
+  - region "Notifications alt+T"
+  - region "Notifications (F8)":
+    - list
+  - alert [ref=e110]

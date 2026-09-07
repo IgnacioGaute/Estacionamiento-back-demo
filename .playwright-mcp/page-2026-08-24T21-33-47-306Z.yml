@@ -1,0 +1,126 @@
+- generic [active]:
+  - generic:
+    - generic:
+      - main:
+        - generic:
+          - generic:
+            - link:
+              - /url: /tickets
+            - generic: Operativo
+            - button:
+              - generic: NG
+              - generic:
+                - generic: Nacho Gaute
+                - generic: Administrador
+        - generic:
+          - main:
+            - generic:
+              - generic:
+                - button: Ayuda
+              - generic:
+                - navigation:
+                  - generic: Estacionamiento
+                  - generic: /
+                  - generic: Operación
+                  - generic: /
+                  - generic: Ingreso
+                - generic:
+                  - generic:
+                    - heading [level=1]: Ingreso de vehículos
+                    - paragraph: Identificá cada auto por patente o por ticket. Buscá y cerrá cualquiera desde el panel de la derecha.
+                  - generic: Turno activo · 24/08/2026
+              - generic:
+                - generic:
+                  - generic:
+                    - button:
+                      - generic:
+                        - generic: Registrar entrada
+                        - generic: Por patente
+                    - button:
+                      - generic:
+                        - generic: Buscar y cerrar ticket
+                        - generic: Patente o código
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic: INGRESO REGISTRADO
+                              - generic: "#GM-278D"
+                            - generic:
+                              - heading [level=2]: Estacionamiento
+                              - paragraph: Registro de estacionamiento
+                          - generic:
+                            - generic:
+                              - generic: ENTRADA
+                              - paragraph: 24/08/2026
+                            - generic:
+                              - generic: HORARIO
+                              - paragraph: 18:33:46
+                          - generic:
+                            - generic:
+                              - paragraph: Registro por patente para vehículo tipo AUTO
+                              - paragraph: Camioneta
+                          - generic:
+                            - generic: ENTRADA
+                            - text: registrada correctamente
+                      - generic:
+                        - generic:
+                          - paragraph: Patente
+                          - paragraph: TE005
+                        - generic: Registrado
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - heading [level=3]: Vehículos activos
+                        - generic: "1"
+                      - generic: en vivo
+                    - generic:
+                      - button:
+                        - generic:
+                          - generic:
+                            - generic: TE005
+                            - generic: En horario
+                          - generic:
+                            - generic: hace 0 min
+                            - generic: ·
+                            - generic: Auto
+                            - generic: ·
+                            - generic: 18:33
+                  - generic: Activo · se pasó de la duración avisada
+  - region "Notifications alt+T":
+    - list:
+      - listitem:
+        - generic: Entrada registrada exitosamente
+  - list
+  - status [ref=f22e163]:
+    - generic [ref=f22e168]:
+      - text: Static route
+      - button [ref=f22e169] [cursor=pointer]
+  - alert
+  - dialog [ref=f22e136]:
+    - generic [ref=f22e138]:
+      - heading "Registrar entrada" [level=2] [ref=f22e140]
+      - generic [ref=f22e142]:
+        - generic [ref=f22e143] [cursor=pointer]: Sin patente (moto sin chapa, patente rota, etc.)
+        - generic [ref=f22e146]:
+          - text: Patente
+          - textbox "Patente" [ref=f22e147]:
+            - /placeholder: AB123CD
+        - generic [ref=f22e148]:
+          - text: Tipo de Vehículo
+          - generic [ref=f22e149]:
+            - button "Auto" [ref=f22e150] [cursor=pointer]
+            - button "Camioneta" [ref=f22e151] [cursor=pointer]
+        - generic [ref=f22e152]:
+          - text: Casillero (opcional)
+          - textbox "Casillero (opcional)" [ref=f22e153]:
+            - /placeholder: Escriba número de casillero
+        - generic [ref=f22e154]:
+          - generic [ref=f22e155]: Apellido (opcional)
+          - textbox "Apellido (opcional)" [ref=f22e156]:
+            - /placeholder: Escriba apellido
+        - button "Registrar entrada" [ref=f22e157] [cursor=pointer]
+    - button "Cerrar" [ref=f22e158] [cursor=pointer]
