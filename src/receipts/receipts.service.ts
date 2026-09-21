@@ -137,10 +137,10 @@ async updateReceipt(
   await queryRunner.startTransaction();
 
   // =========================================================
-  // ✅ Helper (solo EF/CH impacta en caja)
+  // ✅ Helper (solo efectivo físico impacta en caja)
   // =========================================================
   const shouldAffectBox = (paymentType: string) =>
-    paymentType === "CASH" || paymentType === "CHECK";
+    paymentType === "CASH";
 
   // =========================================================
   // ✅ Helper: logs SOLO para PRIVATE
@@ -148,11 +148,7 @@ async updateReceipt(
   const logPrivate = (customer: any, message: string, data?: any) => {
     if (customer?.customerType !== "PRIVATE") return;
 
-    // ✅ si querés SOLO logger, borrá el console.log
-    console.log(`🔎 [updateReceipt:PRIVATE] ${message}`, data ?? "");
-    this.logger.log(
-      `[updateReceipt:PRIVATE] ${message}${data ? ` | ${JSON.stringify(data)}` : ""}`
-    );
+    this.logger.debug(`[updateReceipt:PRIVATE] ${message}`);
   };
 
   // =========================================================
@@ -290,7 +286,7 @@ async updateReceipt(
         numberInBox: apply,
       });
 
-      await this.receiptPaymentRepository.save(ownerPayment);
+      await queryRunner.manager.getRepository(ReceiptPayment).save(ownerPayment);
 
       const remainingDebt = ownerCurrentDebt - apply;
 
@@ -334,9 +330,9 @@ async updateReceipt(
     logPrivate(customer, "Inicio updateReceipt()", { receiptId, customerId });
 
     const receipt = !updateReceiptDto.barcode
-      ? await queryRunner.manager.findOne(Receipt, { where: { id: receiptId } })
+      ? await queryRunner.manager.findOne(Receipt, { where: { id: receiptId, customer: { id: customerId } } })
       : await queryRunner.manager.findOne(Receipt, {
-          where: { barcode: updateReceiptDto.barcode },
+          where: { barcode: updateReceiptDto.barcode, customer: { id: customerId } },
         });
 
     if (!receipt) throw new NotFoundException("Receipt not found");
@@ -446,7 +442,7 @@ async updateReceipt(
           sharedBoxList = await this.boxListsService.createBox({
             date: now,
             totalPrice: 0,
-          });
+          }, queryRunner.manager);
         }
       }
 
@@ -472,7 +468,7 @@ async updateReceipt(
             boxList = await this.boxListsService.createBox({
               date: now,
               totalPrice: 0,
-            });
+            }, queryRunner.manager);
           }
 
           const creditPayment = this.receiptPaymentRepository.create({
@@ -484,7 +480,7 @@ async updateReceipt(
             numberInBox: creditToApply,
           });
 
-          await this.receiptPaymentRepository.save(creditPayment);
+          await queryRunner.manager.getRepository(ReceiptPayment).save(creditPayment);
           await queryRunner.manager.update(Customer, { id: customer.id }, { credit: newCredit });
 
           receipt.price = newReceiptPrice;
@@ -516,7 +512,7 @@ async updateReceipt(
             boxListForThisPayment = await this.boxListsService.createBox({
               date: now,
               totalPrice: shouldAffectBox(payment.paymentType) ? total : 0,
-            });
+            }, queryRunner.manager);
           } else {
             if (shouldAffectBox(payment.paymentType)) {
               boxListForThisPayment.totalPrice += total;
@@ -540,7 +536,7 @@ async updateReceipt(
           numberInBox: payment.paymentType === "FIX" ? null : total,
         });
 
-        const saved = await this.receiptPaymentRepository.save(newPayment);
+        const saved = await queryRunner.manager.getRepository(ReceiptPayment).save(newPayment);
 
         if (payment.paymentType !== "FIX") {
           privatePaymentsCreatedForCompensation.push(saved);
@@ -657,7 +653,7 @@ async updateReceipt(
             boxList = await this.boxListsService.createBox({
               date: now,
               totalPrice: shouldAffectBox(payment.paymentType) ? total : 0,
-            });
+            }, queryRunner.manager);
           } else {
             if (shouldAffectBox(payment.paymentType)) {
               boxList.totalPrice += total;
@@ -679,7 +675,7 @@ async updateReceipt(
           numberInBox: payment.paymentType === "FIX" ? null : total,
         });
 
-        await this.receiptPaymentRepository.save(paymentOnAccount);
+        await queryRunner.manager.getRepository(ReceiptPayment).save(paymentOnAccount);
       }
 
       if (totalOnAccount < receipt.price) {
@@ -782,9 +778,10 @@ async cancelReceipt(receiptId: string, customerId: string) {
 
 
     const lastPaidReceipt = await queryRunner.manager.findOne(Receipt, {
-      where: { id: receiptId },
+      where: { id: receiptId, customer: { id: customerId } },
       relations: ["payments", "paymentHistoryOnAccount"],
     });
+    if (!lastPaidReceipt) throw new NotFoundException("Receipt not found");
 
     // ✅ Regla: OWNER no puede cancelar si tiene inquilino relacionado
     if (customer.customerType === "OWNER") {

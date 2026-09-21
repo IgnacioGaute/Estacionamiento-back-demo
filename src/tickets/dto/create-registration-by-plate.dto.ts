@@ -1,3 +1,4 @@
+import { Matches } from 'class-validator';
 import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { TICKET_TYPE, TicketType } from '../entities/ticket.entity';
 
@@ -7,7 +8,7 @@ export class CreateRegistrationByPlateDto {
   @IsOptional()
   licensePlate?: string;
 
-  @IsEnum(TICKET_TYPE)
+  @Matches(/^[A-Z][A-Z0-9_]{0,31}$/)
   @IsNotEmpty()
   vehicleType: TicketType;
 

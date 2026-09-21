@@ -7,6 +7,9 @@ export type PaymentType = (typeof PAYMENT_TYPE)[number];
 
 @Entity({ name: 'receipt_payments' })
 export class ReceiptPayment {
+  @Column('uuid', { nullable: true })
+  playaId: string | null;
+
   @PrimaryGeneratedColumn('uuid')
   id: string;
   

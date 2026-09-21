@@ -1,25 +1,10 @@
-import {
-    WebSocketGateway,
-    WebSocketServer,
-    SubscribeMessage,
-    OnGatewayConnection,
-    OnGatewayDisconnect,
-  } from '@nestjs/websockets';
-  import { Server, Socket } from 'socket.io';
-  
-  @WebSocketGateway({ cors: true })
-  export class TicketGateway implements OnGatewayConnection, OnGatewayDisconnect {
-    @WebSocketServer()
-    server: Server;
-  
-    handleConnection(client: Socket) {
-    }
-  
-    handleDisconnect(client: Socket) {
-    }
-  
-    emitNewRegistration(data: any) {
-      this.server.emit('new-registration', data);
-    }
-  }
-  
+import { WebSocketGateway, WebSocketServer, OnGatewayConnection } from '@nestjs/websockets';
+import { Server, Socket } from 'socket.io';
+import { TenantSocketAccess } from '../tenancy/tenant-socket';
+@WebSocketGateway({ cors: true })
+export class TicketGateway implements OnGatewayConnection {
+  @WebSocketServer() server: Server;
+  constructor(private readonly access: TenantSocketAccess) {}
+  handleConnection(client: Socket) { return this.access.connect(client); }
+  emitNewRegistration(data: any) { return this.access.emit(this.server, 'new-registration', data); }
+}

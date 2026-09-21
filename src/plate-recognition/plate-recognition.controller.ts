@@ -1,6 +1,5 @@
 import {
   Controller,
-  FileTypeValidator,
   ParseFilePipe,
   Post,
   UploadedFile,
@@ -11,6 +10,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
 import { PlateRecognitionService } from './plate-recognition.service';
+import { ImageSignatureValidator } from './image-signature.validator';
 
 @Controller('plate-recognition')
 @UseGuards(AuthOrTokenAuthGuard)
@@ -27,7 +27,7 @@ export class PlateRecognitionController {
   async scan(
     @UploadedFile(
       new ParseFilePipe({
-        validators: [new FileTypeValidator({ fileType: /^image\/(jpe?g|png|webp)$/ })],
+        validators: [new ImageSignatureValidator()],
         fileIsRequired: true,
       }),
     )

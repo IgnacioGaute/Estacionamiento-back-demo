@@ -20,6 +20,9 @@ export type CustomerType = (typeof CUSTOMER_TYPE)[number];
 
   @Entity({ name: 'customers' })
   export class Customer {
+  @Column('uuid', { nullable: true })
+  playaId: string | null;
+
     @PrimaryGeneratedColumn('uuid')
     id: string;
     

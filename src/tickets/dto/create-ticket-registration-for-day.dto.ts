@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Matches } from "class-validator";
+import { IsBoolean, IsEnum, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Matches } from "class-validator";
 import { TICKET_TIME_TYPE, TicketTimeType } from "../entities/ticket-price.entity";
 import { TICKET_TYPE, TicketType } from "../entities/ticket.entity";
 
@@ -11,11 +11,15 @@ export class CreateTicketRegistrationForDayDto {
     @IsNumber()
     @IsOptional()
     days: number;
-    
+
+    @IsNumber()
+    @IsOptional()
+    months: number;
+
     @IsEnum(TICKET_TIME_TYPE)
     ticketTimeType: TicketTimeType;
 
-    @IsEnum(TICKET_TYPE)
+    @Matches(/^[A-Z][A-Z0-9_]{0,31}$/)
     vehicleType: TicketType;
 
     @IsString()
@@ -23,11 +27,11 @@ export class CreateTicketRegistrationForDayDto {
     firstNameCustomer: string;
 
     @IsString()
-    @IsNotEmpty()
+    @IsOptional()
     lastNameCustomer: string;
 
     @IsString()
-    @IsOptional()
+    @IsNotEmpty()
     vehiclePlateCustomer: string;
 
     @IsBoolean()
@@ -37,6 +41,10 @@ export class CreateTicketRegistrationForDayDto {
     @IsBoolean()
     @IsOptional()
     retired: boolean;
+
+    @IsIn(['CASH', 'TRANSFER'])
+    @IsOptional()
+    paymentMetodo?: 'CASH' | 'TRANSFER';
 
 }
 
@@ -49,4 +57,8 @@ export class UpdateTicketStatusDto {
   @IsOptional()
   @IsBoolean()
   retired?: boolean;
+
+  @IsOptional()
+  @IsIn(['CASH', 'TRANSFER'])
+  paymentMetodo?: 'CASH' | 'TRANSFER';
 }

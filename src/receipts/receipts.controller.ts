@@ -5,6 +5,7 @@ import { CustomerType } from 'src/customers/entities/customer.entity';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
 
 @Controller('receipts')
+@UseGuards(AuthOrTokenAuthGuard)
 export class ReceiptsController {
     constructor(private readonly receiptsService: ReceiptsService) {}
  

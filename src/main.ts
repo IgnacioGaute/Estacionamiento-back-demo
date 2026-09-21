@@ -3,7 +3,6 @@ import { AppModule } from './app.module';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
-import { join } from 'path';
 import { NestExpressApplication } from '@nestjs/platform-express';
 
 
@@ -25,7 +24,7 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
-  app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads' });
+  // Local files must never bypass authentication and tenant authorization.
 
   const port = configService.get('app.port');
   await app.listen(port, '0.0.0.0');

@@ -16,6 +16,8 @@ import { CreateVerificationTokenDto } from './dto/create-verification-token.dto'
 import { UsersService } from 'src/users/users.service';
 import { CustomUnauthorizedException } from 'src/libs/helpers/custom-excepcions';
 import * as crypto from 'crypto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { limitLogin } from './login-limiter';
 
 @Injectable()
 export class AuthService {
@@ -50,14 +52,13 @@ export class AuthService {
           email: true,
           password: true,
           role: true,
+          authVersion: true,
           createdAt: true,
           updatedAt: true,
         },
       });
 
-      if (!user) {
-        throw new NotFoundException(`Invalid credentials`);
-      }
+      if (!user?.password) throw new UnauthorizedException('Email o contraseña incorrectos.');
 
       const passwordsMatch = await bcrypt.compare(
         loginUserDto.password,
@@ -65,9 +66,12 @@ export class AuthService {
       );
 
       if (!passwordsMatch) {
-        throw new CustomUnauthorizedException('Invalid username/email or password');
+        throw new UnauthorizedException('Email o contraseña incorrectos.');
       }
-      
+      if (user.role !== 'SUPER_ADMIN') {
+        const current = await this.userRepository.findOne({ where: { id: user.id }, relations: ['empresa'] });
+        if (current?.empresa?.estado !== 'ACTIVA') throw new UnauthorizedException('La cuenta no tiene acceso a una empresa activa.');
+      }
 
       const { password, ...userWithoutPassword } = user; // eslint-disable-line
 
@@ -101,6 +105,20 @@ export class AuthService {
     }
   }
 
+  async resetPassword(dto: ResetPasswordDto) {
+    return this.userRepository.manager.transaction(async manager => {
+      const tokens = manager.getRepository(PasswordResetToken);
+      const token = await tokens.findOne({ where: { token: dto.token }, lock: { mode: 'pessimistic_write' } });
+      if (!token || token.expiresAt.getTime() <= Date.now()) throw new UnauthorizedException('El enlace no es válido o venció.');
+      const users = manager.getRepository(User);
+      const user = await users.findOne({ where: { email: token.email }, lock: { mode: 'pessimistic_write' } });
+      if (!user) throw new UnauthorizedException('El enlace no es válido o venció.');
+      await users.update(user.id, { password: await bcrypt.hash(dto.password, 10) });
+      await tokens.delete(token.id);
+      return { success: true };
+    });
+  }
+
   async getVerificationTokenByToken(token: string): Promise<VerificationToken> {
     try {
       const verificationToken = await this.verificationTokenRepository.findOne({
@@ -108,7 +126,7 @@ export class AuthService {
       });
 
       if (!verificationToken) {
-        throw new NotFoundException(`Verification token ${token} not found`);
+        throw new NotFoundException('Verification token not found');
       }
 
       return verificationToken;
@@ -130,7 +148,7 @@ export class AuthService {
         });
 
       if (!passwordResetToken) {
-        throw new NotFoundException(`Password reset token ${token} not found`);
+        throw new NotFoundException('Password reset token not found');
       }
 
       return passwordResetToken;
@@ -202,6 +220,7 @@ export class AuthService {
   async createPasswordResetToken(
     createPasswordResetTokenDto: CreatePasswordResetTokenDto,
   ): Promise<PasswordResetToken> {
+    limitLogin('password-reset', createPasswordResetTokenDto.email);
     try {
       const existingPasswordResetToken =
         await this.passwordResetTokenRepository.findOne({

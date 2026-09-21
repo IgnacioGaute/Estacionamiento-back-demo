@@ -12,6 +12,7 @@ import { AuthService } from './auth.service';
 import { LoginUserDto } from './dto/login-user';
 import { CreatePasswordResetTokenDto } from './dto/create-password-reset-token.dto';
 import { CreateVerificationTokenDto } from './dto/create-verification-token.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -20,6 +21,11 @@ export class AuthController {
   @Post('login')
   async login(@Body() loginUserDto: LoginUserDto) {
     return this.authService.login(loginUserDto);
+  }
+
+  @Post('reset-password')
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto);
   }
 
   @Get('verification-token')
@@ -42,7 +48,6 @@ export class AuthController {
     @Query('token') token: string | undefined,
     @Query('email') email: string | undefined,
   ) {
-    console.log('Query params:', { token, email });
     if (token) {
       return this.authService.getPasswordResetTokenByToken(token);
     }

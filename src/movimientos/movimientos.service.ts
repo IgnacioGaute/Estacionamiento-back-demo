@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Movimiento } from './entities/movimiento.entity';
 import { CreateMovimientoDto } from './dto/create-movimiento.dto';
 import { TurnosService } from 'src/turnos/turnos.service';
@@ -23,14 +23,15 @@ export class MovimientosService {
   // uno abierto se lo asocia igual, si no, el movimiento se crea sin turno (turno: null) en
   // vez de bloquear el cobro. Para retomar la exigencia, volver a llamar
   // turnosService.getOpenTurno (que tira NO_OPEN_TURNO) en vez de findOpenTurnoOrNull.
-  async create(dto: CreateMovimientoDto & { usuarioId: string }): Promise<Movimiento> {
+  async create(dto: CreateMovimientoDto & { usuarioId: string }, manager?: EntityManager): Promise<Movimiento> {
     if ((dto.tipo === 'AJUSTE' || dto.tipo === 'CORTESIA') && !dto.motivo?.trim()) {
       throw new BadRequestException('El motivo es obligatorio para un ajuste o una cortesía.');
     }
 
-    const turno = await this.turnosService.findOpenTurnoOrNull(dto.usuarioId);
+    const turno = await this.turnosService.findOpenTurnoOrNull(dto.usuarioId, manager);
+    const repository = manager ? manager.getRepository(Movimiento) : this.movimientoRepository;
 
-    const movimiento = this.movimientoRepository.create({
+    const movimiento = repository.create({
       ticketRegistration: dto.ticketRegistrationId ? ({ id: dto.ticketRegistrationId } as any) : null,
       monto: dto.monto,
       metodo: dto.metodo,
@@ -41,7 +42,7 @@ export class MovimientosService {
       motivo: dto.motivo ?? null,
     });
 
-    return this.movimientoRepository.save(movimiento);
+    return repository.save(movimiento);
   }
 
   async findByRegistration(ticketRegistrationId: string): Promise<Movimiento[]> {
@@ -52,8 +53,9 @@ export class MovimientosService {
     });
   }
 
-  async sumByRegistration(ticketRegistrationId: string): Promise<number> {
-    const movimientos = await this.findByRegistration(ticketRegistrationId);
-    return movimientos.reduce((total, m) => total + m.monto, 0);
+  async sumByRegistration(ticketRegistrationId: string, manager?: EntityManager): Promise<number> {
+    const repository = manager ? manager.getRepository(Movimiento) : this.movimientoRepository;
+    const movimientos = await repository.find({ where: { ticketRegistration: { id: ticketRegistrationId } } });
+    return movimientos.reduce((total, m) => total + (m.tipo === 'CORTESIA' ? 0 : m.monto), 0);
   }
 }

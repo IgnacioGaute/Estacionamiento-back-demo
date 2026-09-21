@@ -1,4 +1,6 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { tenantContext } from '../tenancy/tenant-context';
+import { UsuarioPlaya } from '../tenancy/entities/usuario-playa.entity';
+import { BadRequestException, ForbiddenException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { User } from './entities/user.entity';
@@ -42,9 +44,16 @@ export class UsersService {
         user.password = hashedPassword;
       }
 
-      return await this.userRepository.save(user);
+      return await this.userRepository.manager.transaction(async manager => {
+        const saved = await manager.getRepository(User).save(user);
+        const scope = tenantContext.getStore();
+        if (scope) await manager.getRepository(UsuarioPlaya).save({ usuarioId: saved.id, playaId: scope.playaId, rolPlaya: saved.role === 'ADMIN' ? 'ENCARGADO' : 'OPERADOR' });
+        const { password, ...publico } = saved;
+        return publico;
+      });
     } catch (error: any) {
       this.logger.error(error.message, error.stack);
+      throw error;
     }
   }
 
@@ -62,6 +71,7 @@ export class UsersService {
       });
     } catch (error: any) {
       this.logger.error(error.message, error.stack);
+      throw error;
     }
   }
 
@@ -69,13 +79,16 @@ export class UsersService {
     try {
       const user = await this.userRepository.findOne({
         where: { id },
+        relations: ['empresa'],
       });
 
       if (!user) {
         throw new NotFoundException('User not found');
       }
 
-      return user;
+      if (user.role !== 'SUPER_ADMIN' && user.empresa?.estado !== 'ACTIVA') throw new ForbiddenException('Tu empresa no está activa.');
+      const { empresa, ...publicUser } = user;
+      return publicUser;
     } catch (error: any) {
       if (!(error instanceof NotFoundException)) {
         this.logger.error(error.message, error.stack);
@@ -91,6 +104,8 @@ export class UsersService {
       if (!user) {
         throw new NotFoundException('User not found');
       }
+
+      if (user.role === 'SUPER_ADMIN') throw new ForbiddenException('Esta cuenta se administra fuera del panel de usuarios de empresa.');
 
       const fieldsToUpdate = Object.entries(updateUserDto).reduce(
         (acc, [key, value]) => {
@@ -125,7 +140,8 @@ export class UsersService {
       const result = await this.userRepository.save(updatedUser);
 
       this.logger.log(`User "${result.email}" updated successfully`);
-      return result;
+      const { password, ...publicUser } = result;
+      return publicUser;
     } catch (error: any) {
       if (
         !(
@@ -147,6 +163,7 @@ export class UsersService {
         throw new NotFoundException('User not found');
       }
 
+      if (user.role === 'SUPER_ADMIN') throw new ForbiddenException('No se puede eliminar la cuenta de la plataforma desde esta sección.');
       await this.userRepository.remove(user);
 
       return { message: 'User removed successfully' };
@@ -177,7 +194,7 @@ export class UsersService {
         throw new NotFoundException('User not found');
       }
 
-      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      const isMatch = !!user.password && await bcrypt.compare(currentPassword, user.password);
 
       if (!isMatch) {
         throw new BadRequestException({
@@ -189,7 +206,9 @@ export class UsersService {
       const hashedPassword = await bcrypt.hash(newPassword, 10);
       user.password = hashedPassword;
 
-      return this.userRepository.save(user);
+      const saved = await this.userRepository.save(user);
+      const { password, ...publicUser } = saved;
+      return publicUser;
     } catch (error: any) {
       if (
         !(

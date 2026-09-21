@@ -58,6 +58,7 @@ export class NotesService {
           id: notificationId,
           type: 'NEW_NOTE',
           noteId: note.id,
+          authorId: userId,
         });
     
         return note;
@@ -70,10 +71,10 @@ export class NotesService {
   async findAll(query: PaginateQuery): Promise<Paginated<Note>> {
     try {
       return await paginate(query, this.noteRepository, {
-        sortableColumns: ['id', 'date'],
+        sortableColumns: ['id', 'date', 'createdAt'],
         nullSort: 'last',
         defaultSortBy: [['createdAt', 'DESC']],
-        searchableColumns: ['date'],
+        searchableColumns: ['date', 'description'],
         filterableColumns: {
           date: [FilterOperator.ILIKE, FilterOperator.EQ],
         },
@@ -149,6 +150,26 @@ export class NotesService {
       throw error;
     }
   }
+  async unread(userId: string) {
+    const notes = await this.noteRepository.createQueryBuilder('n')
+      .leftJoin('n.user', 'author')
+      .select('n.id', 'id')
+      .where('(author.id IS NULL OR author.id != :userId)', { userId })
+      .andWhere('NOT (:userId = ANY(n."readBy"))', { userId })
+      .getRawMany<{ id: string }>();
+    return notes.map(note => note.id);
+  }
+
+  async markRead(id: string, userId: string) {
+    await this.findOne(id); // Tenant-scoped existence check before updating.
+    await this.noteRepository.createQueryBuilder().update(Note)
+      .set({ readBy: () => 'array_append("readBy", :userId::uuid)' })
+      .where('id = :id', { id })
+      .andWhere('NOT (:userId::uuid = ANY("readBy"))', { userId })
+      .execute();
+    return { success: true };
+  }
+
   async getTodayNotes(userId: string) {
     const today = new Date();
     today.setHours(0, 0, 0, 0); // Establecer la fecha de inicio del día

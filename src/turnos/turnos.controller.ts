@@ -25,12 +25,26 @@ export class TurnosController {
 
   @Patch(':id/close')
   close(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: CloseTurnoDto) {
-    return this.turnosService.close(id, requireUserId(req), dto);
+    return this.turnosService.close(id, requireUserId(req), dto, req.user?.role);
   }
 
+  @Get('caja')
+  getCashContext() { return this.turnosService.getCashContext(); }
+
   @Get()
-  findAll(@Query('estado') estado?: 'ABIERTO' | 'CERRADO') {
-    return this.turnosService.findAll(estado);
+  findAll(
+    @Query('estado') estado?: 'ABIERTO' | 'CERRADO',
+    @Query('desde') desde?: string,
+    @Query('hasta') hasta?: string,
+    @Query('usuarioId') usuarioId?: string,
+    @Query('fechaPor') fechaPor?: 'APERTURA' | 'CIERRE',
+  ) {
+    return this.turnosService.findAll({ estado, desde, hasta, usuarioId, fechaPor });
+  }
+
+  @Get('operadores')
+  findOperadores() {
+    return this.turnosService.findOperadores();
   }
 
   @Get('mine/open')

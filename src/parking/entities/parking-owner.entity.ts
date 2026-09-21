@@ -1,12 +1,15 @@
 import {
-    Entity,
-    Column,
-    ManyToOne,
-    PrimaryGeneratedColumn,
-    DeleteDateColumn,
-    OneToMany,
-    UpdateDateColumn,
-  } from 'typeorm';
+  Column,
+  DeleteDateColumn,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  OneToMany,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
+import { Playa } from 'src/tenancy/entities/playa.entity';
   import { Customer } from 'src/customers/entities/customer.entity';
 import { OwnerParkingType } from './owner-parking-type.entity';
 import { ParkingRenter } from './parking-renter.entity';
@@ -14,6 +17,14 @@ import { ParkingRenter } from './parking-renter.entity';
   export class ParkingOwner {
     @PrimaryGeneratedColumn('uuid')
     id: string;
+
+  @Index()
+  @Column('uuid', { nullable: true })
+  playaId: string | null;
+
+  @ManyToOne(() => Playa, { nullable: true })
+  @JoinColumn({ name: 'playaId' })
+  playa: Playa | null;
 
     @Column('varchar',{nullable:true})
     garageNumber: string;

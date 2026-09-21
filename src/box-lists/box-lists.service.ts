@@ -1,11 +1,15 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CreateBoxListDto } from './dto/create-box-list.dto';
 import { UpdateBoxListDto } from './dto/update-box-list.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, DataSource, EntityManager, Repository } from 'typeorm';
+import { Between, DataSource, EntityManager, In, Repository } from 'typeorm';
 import { BoxList } from './entities/box-list.entity';
 import { CreateOtherPaymentDto } from './dto/create-other-payment.dto';
 import { OtherPayment } from './entities/other-payment.entity';
+import { CashEntry } from 'src/turnos/entities/cash-entry.entity';
+import { Turno } from 'src/turnos/entities/turno.entity';
+import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
+import { tenantContext } from 'src/tenancy/tenant-context';
 
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
@@ -32,46 +36,41 @@ export class BoxListsService {
       
     ) {}
 
-async createBox(createBoxListDto: CreateBoxListDto) {
-  const queryRunner = this.dataSource.createQueryRunner();
-
-  await queryRunner.connect();
-  await queryRunner.startTransaction();
-
-  try {
-    const repo = queryRunner.manager.getRepository(BoxList);
-
-    // Bloquea el último boxNumber para evitar condiciones de carrera
-    const lastBox = await repo
-      .createQueryBuilder("box")
-      .setLock("pessimistic_write") // bloquea la fila para escritura
-      .orderBy("box.boxNumber", "DESC") // obtener el mayor boxNumber
-      .getOne();
-
-    let newBoxNumber = 1;
-    if (lastBox?.boxNumber) {
-      newBoxNumber = lastBox.boxNumber + 1;
-    }
-
-    const box = repo.create({
-      ...createBoxListDto,
-      boxNumber: newBoxNumber,
-    });
-
-    const savedBox = await repo.save(box);
-    await queryRunner.commitTransaction();
-
-    return savedBox;
-  } catch (error: any) {
-    await queryRunner.rollbackTransaction();
-    this.logger.error(error.message, error.stack);
-    throw error;
-  } finally {
-    await queryRunner.release();
-  }
+async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
+  return manager ? this.applyTicketPayment(dto.date, dto.totalPrice, manager)
+    : this.dataSource.transaction(tx => this.applyTicketPayment(dto.date, dto.totalPrice, tx));
 }
 
-    
+  private async recordCash(boxId: string, amount: number, manager: EntityManager, description = 'Movimiento de efectivo') {
+    if (!amount) return;
+    const turno = await manager.getRepository(Turno).findOne({ where: { estado: 'ABIERTO', cashVersion: 2 } });
+    if (!turno && await manager.getRepository(Turno).exists({ where: { cashVersion: 2 } })) {
+      throw new BadRequestException('Abrí el siguiente turno antes de registrar efectivo en caja.');
+    }
+    await manager.getRepository(CashEntry).save({ boxId, amount, description, turnoId: turno?.id ?? null });
+  }
+
+
+  async applyTicketPayment(date: string, amount: number, manager: EntityManager) {
+    // También protege el caso de la primera caja: bloquear una fila inexistente no alcanza.
+    await manager.query('SELECT pg_advisory_xact_lock(718904)');
+    const repository = manager.getRepository(BoxList);
+    let box = await repository.findOne({ where: { date }, lock: { mode: 'pessimistic_write' } });
+    if (!box) {
+      const last = await repository.findOne({ where: {}, order: { boxNumber: 'DESC' } });
+      box = repository.create({ date, boxNumber: (last?.boxNumber ?? 0) + 1, totalPrice: amount });
+      box = await repository.save(box);
+      await this.recordCash(box.id, amount, manager);
+      return box;
+    }
+    if (amount !== 0) {
+      await repository.increment({ id: box.id }, 'totalPrice', amount);
+      box.totalPrice += amount;
+      await this.recordCash(box.id, amount, manager);
+    }
+    return box;
+  }
+
   async getAllboxes(){
     try{
 
@@ -168,31 +167,96 @@ async createBox(createBoxListDto: CreateBoxListDto) {
       throw error;
     }
   }
-  async updateBox(id: string, updateBoxListDto: UpdateBoxListDto, manager?: EntityManager) {
-    try {
-      const repo = manager ? manager.getRepository(BoxList) : this.boxListRepository;
-  
-      const box = await repo.findOne({ where: { id } });
-  
-      if (!box) {
-        throw new NotFoundException('Box not found');
-      }
-  
-      const updateBox = repo.merge(box, updateBoxListDto);
-      const savedBox = await repo.save(updateBox); 
-  
-      return savedBox;
-    } catch (error: any) {
-      this.logger.error(error.message, error.stack);
-      throw error;
-    }
+  async updateBox(id: string, dto: UpdateBoxListDto, manager?: EntityManager) {
+    const operation = async (tx: EntityManager) => {
+      await tx.query('SELECT pg_advisory_xact_lock(718904)');
+      const repo = tx.getRepository(BoxList);
+      const box = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+      if (!box) throw new NotFoundException('Caja no encontrada.');
+      const delta = dto.totalPrice === undefined ? 0 : dto.totalPrice - box.totalPrice;
+      await this.recordCash(box.id, delta, tx, 'Ajuste de efectivo');
+      return repo.save(repo.merge(box, dto));
+    };
+    return manager ? operation(manager) : this.dataSource.transaction(operation);
+  }
+
+  // Los anticipos pertenecen al día del movimiento aunque la estadía se cierre otro día.
+  private async withTicketMovements(box: BoxList, manager?: EntityManager) {
+    const start = dayjs.tz(`${box.date} 00:00:00`, 'America/Argentina/Buenos_Aires');
+    const ticketMovements = await (manager ?? this.dataSource.manager).getRepository(Movimiento)
+      .createQueryBuilder('m')
+      .innerJoinAndSelect('m.ticketRegistration', 'registration')
+      .where('m.fechaHora >= :start AND m.fechaHora < :end', { start: start.toDate(), end: start.add(1, 'day').toDate() })
+      .orderBy('m.sequence', 'ASC')
+      .getMany();
+    return Object.assign(box, { ticketMovements });
+  }
+
+  // Un turno no entra en un día: uno de 24 h cruza la medianoche y aparece en dos planillas, y
+  // un día puede tener varios turnos. La relación es de muchos a muchos y ya la expresa
+  // cash_entries, que lleva boxId y turnoId en cada fila. Lo que pertenece a este día es la
+  // porción de efectivo que cayó en él — el arqueo (contado, diferencia, retiro) es del turno
+  // entero y se mira en su historial, no acá, o quedaría mal repartido entre dos días.
+  private async withTurnos(box: BoxList, manager?: EntityManager) {
+    const repository = manager ?? this.dataSource.manager;
+    const start = dayjs.tz(`${box.date} 00:00:00`, 'America/Argentina/Buenos_Aires');
+    const end = start.add(1, 'day');
+
+    const rows = await repository.getRepository(CashEntry)
+      .createQueryBuilder('c')
+      .select('c.turnoId', 'turnoId')
+      .addSelect('COALESCE(SUM(c.amount), 0)', 'efectivoDelDia')
+      .addSelect('COUNT(*)', 'movimientos')
+      .addSelect('MIN(c.createdAt)', 'desde')
+      .addSelect('MAX(c.createdAt)', 'hasta')
+      .where('c.boxId = :boxId', { boxId: box.id })
+      .groupBy('c.turnoId')
+      .getRawMany<{ turnoId: string | null; efectivoDelDia: string; movimientos: string; desde: Date; hasta: Date }>();
+
+    const ids = rows.map((r) => r.turnoId).filter((id): id is string => !!id);
+    const turnos = ids.length
+      ? await repository.getRepository(Turno).find({ where: { id: In(ids) }, relations: ['usuarioApertura', 'usuarioCierre'] })
+      : [];
+    const porId = new Map(turnos.map((t) => [t.id, t]));
+
+    const turnosDelDia = rows
+      .map((row) => {
+        // turno null = efectivo registrado antes de adoptar la caja por turnos. Se muestra
+        // aparte para que la suma de los turnos siga cuadrando con el total del día.
+        const turno = row.turnoId ? porId.get(row.turnoId) ?? null : null;
+        const abrioAntes = !!turno && dayjs(turno.fechaApertura).isBefore(start);
+        const cierraDespues = !!turno && (!turno.fechaCierre || dayjs(turno.fechaCierre).isAfter(end));
+        return {
+          turnoId: row.turnoId,
+          turno: turno && tenantContext.getStore()?.role === 'USER' ? {
+            id: turno.id, nombre: turno.nombre, estado: turno.estado,
+            fechaApertura: turno.fechaApertura, fechaCierre: turno.fechaCierre,
+            usuarioApertura: turno.usuarioApertura ? {
+              firstName: turno.usuarioApertura.firstName, lastName: turno.usuarioApertura.lastName,
+            } : null,
+          } : turno,
+          efectivoDelDia: Number(row.efectivoDelDia),
+          movimientos: Number(row.movimientos),
+          desde: row.desde,
+          hasta: row.hasta,
+          // Avisa a la interfaz que el arqueo de ese turno no le corresponde sólo a este día.
+          abarcaOtrosDias: abrioAntes || cierraDespues,
+        };
+      })
+      .sort((a, b) => {
+        if (!a.turnoId) return 1;
+        if (!b.turnoId) return -1;
+        return new Date(a.desde).getTime() - new Date(b.desde).getTime();
+      });
+
+    return Object.assign(box, { turnosDelDia });
   }
 
   async findBoxByDate(date: string, manager?: EntityManager): Promise<BoxList | null> {
     try {
+      if (manager) await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const repo = manager ? manager.getRepository(BoxList) : this.boxListRepository;
 
-      
       const boxList = await repo.findOne({
         where: { date: date},
         relations: [
@@ -227,7 +291,7 @@ async createBox(createBoxListDto: CreateBoxListDto) {
         return null;
       }
   
-      return boxList;
+      return this.withTurnos(await this.withTicketMovements(boxList, manager), manager);
     } catch (error: any) {
       this.logger.error(`Error buscando BoxList por fecha: ${error.message}`, error.stack);
       throw error;
@@ -239,12 +303,12 @@ async createBox(createBoxListDto: CreateBoxListDto) {
     try{
       const boxListWithRegistrations = await this.boxListRepository.findOne({
         where: { id: boxListId },
-        relations: ['ticketRegistrations', 'receipts', 'ticketRegistrationForDays','otherPayments', 'receipts.customer.parkingRenters', 'receipts.customer.parkingOwners'],
+        relations: ['ticketRegistrations', 'ticketRegistrations.movimientos', 'receipts', 'ticketRegistrationForDays','otherPayments', 'receipts.customer.parkingRenters', 'receipts.customer.parkingOwners'],
       });
       if(!boxListWithRegistrations){
         throw new NotFoundException('Box list not found')
       }
-      return boxListWithRegistrations;
+      return this.withTurnos(await this.withTicketMovements(boxListWithRegistrations));
     } catch (error: any) {
       if (!(error instanceof NotFoundException)) {
         this.logger.error(error.message, error.stack);
@@ -254,22 +318,15 @@ async createBox(createBoxListDto: CreateBoxListDto) {
   }
 
   async removeBox(id: string) {
-    try{
-      const owner = await this.boxListRepository.findOne({where:{id:id}})
-
-      if(!owner){
-        throw new NotFoundException('Box list not found')
-      }
-
-      await this.boxListRepository.remove(owner);
-
-      return {message: 'Box list removed successfully'}
-    } catch (error: any) {
-      if (!(error instanceof NotFoundException)) {
-        this.logger.error(error.message, error.stack);
-      }
-      throw error;
-    }
+    return this.dataSource.transaction(async manager => {
+      await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      const repo = manager.getRepository(BoxList);
+      const box = await repo.findOneBy({ id });
+      if (!box) throw new NotFoundException('Caja no encontrada.');
+      if (await manager.getRepository(CashEntry).exists({ where: { boxId: id } })) throw new BadRequestException('Una caja con movimientos de efectivo no se puede eliminar.');
+      await repo.remove(box);
+      return { message: 'Caja eliminada.' };
+    });
   }
 
   // Solo lo que efectivamente queda en la caja física (efectivo) afecta el totalPrice.
@@ -278,78 +335,30 @@ async createBox(createBoxListDto: CreateBoxListDto) {
     return type === 'EGRESOS' ? -price : price;
   }
 
-  async createOtherPayment(createOtherPaymentDto: CreateOtherPaymentDto) {
-    try{
-      const otherPayment = this.otherPaymentepository.create(createOtherPaymentDto);
-
-      const argentinaTime = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day');
-      const now = argentinaTime.format('YYYY-MM-DD')
-
-
-      otherPayment.dateNow = now;
-      const boxListDate = now;
-      const affectsBox = createOtherPaymentDto.paymentMethod !== 'TRANSFER';
-      const delta = affectsBox ? this.computeBoxDelta(createOtherPaymentDto.type, otherPayment.price) : 0;
-      let boxList = await this.findBoxByDate(boxListDate);
-
-      if (!boxList) {
-          boxList = await this.createBox({
-              date: boxListDate,
-              totalPrice: delta,
-          });
-      } else {
-        boxList.totalPrice += delta;
-
-          await this.updateBox(boxList.id, {
-              totalPrice: boxList.totalPrice,
-          });
-      }
-
-      otherPayment.boxList = { id: boxList.id } as BoxList;
-
-      const savedOtherPayment = await this.otherPaymentepository.save(otherPayment);
-
-      return savedOtherPayment;
-    } catch (error: any) {
-      this.logger.error(error.message, error.stack);
-    }
+  async createOtherPayment(dto: CreateOtherPaymentDto) {
+    return this.dataSource.transaction(async manager => {
+      const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+      const amount = dto.paymentMethod === 'TRANSFER' ? 0 : this.computeBoxDelta(dto.type, dto.price);
+      const box = await this.applyTicketPayment(date, amount, manager);
+      return manager.getRepository(OtherPayment).save(manager.getRepository(OtherPayment).create({ ...dto, dateNow: date, boxList: { id: box.id } }));
+    });
   }
 
-    async updateOtherPayment(id: string, updateOtherPaymentDto: UpdateOtherPaymentDto) {
-    try{
-      const expense = await this.otherPaymentepository.findOne({where:{id:id}, relations:['boxList']})
-
-      if(!expense){
-        throw new NotFoundException('Expense not found')
-      }
-
-      const boxList = await this.boxListRepository.findOne({where:{id:expense.boxList.id}})
-
-      // Revertir el impacto anterior en caja (si el pago viejo era en efectivo)
-      if (expense.paymentMethod !== 'TRANSFER') {
-        boxList.totalPrice -= this.computeBoxDelta(expense.type, expense.price);
-      }
-
-      const otherPayment = this.otherPaymentepository.merge(expense, updateOtherPaymentDto);
-
-      // Aplicar el nuevo impacto en caja (si el pago actualizado es en efectivo)
-      if (otherPayment.paymentMethod !== 'TRANSFER') {
-        boxList.totalPrice += this.computeBoxDelta(otherPayment.type, otherPayment.price);
-      }
-
-      // otherPayment.boxList tiene cascade:true — si queda apuntando a la relación
-      // vieja (con el totalPrice desactualizado), guardar otherPayment pisa el
-      // totalPrice recién actualizado. Se sincroniza la referencia antes de guardar.
-      otherPayment.boxList = boxList;
-
-      await this.boxListRepository.save(boxList);
-
-      const savedOtherPayment = await this.otherPaymentepository.save(otherPayment);
-
-      return savedOtherPayment;
-    } catch (error: any) {
-      this.logger.error(error.message, error.stack);
-    }
+  async updateOtherPayment(id: string, dto: UpdateOtherPaymentDto) {
+    return this.dataSource.transaction(async manager => {
+      await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      const repo = manager.getRepository(OtherPayment);
+      const old = await repo.findOne({ where: { id }, relations: ['boxList'] });
+      if (!old) throw new NotFoundException('Movimiento no encontrado.');
+      const before = old.paymentMethod === 'TRANSFER' ? 0 : this.computeBoxDelta(old.type, old.price);
+      const updated = repo.merge(old, dto);
+      const after = updated.paymentMethod === 'TRANSFER' ? 0 : this.computeBoxDelta(updated.type, updated.price);
+      const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+      if (old.dateNow !== date) throw new BadRequestException('Los movimientos de días anteriores se corrigen con un movimiento nuevo.');
+      const box = await this.applyTicketPayment(date, after - before, manager);
+      updated.boxList = { id: box.id } as BoxList;
+      return repo.save(updated);
+    });
   }
   async findAllOtherPayment() {
     try {
@@ -367,30 +376,19 @@ async createBox(createBoxListDto: CreateBoxListDto) {
   }
   
 
-    async removeOtherPayment(id: string) {
-    try{
-      const expense = await this.otherPaymentepository.findOne({where:{id:id},relations:['boxList']})
-
-      if(!expense){
-        throw new NotFoundException('Expense not found')
-      }
-
-      if (expense.paymentMethod !== 'TRANSFER') {
-        expense.boxList.totalPrice -= this.computeBoxDelta(expense.type, expense.price);
-        await this.boxListRepository.save(expense.boxList);
-      }
-
-      await this.otherPaymentepository.remove(expense);
-
-      return {message: 'Expense removed successfully'}
-    } catch (error: any) {
-      if (!(error instanceof NotFoundException)) {
-        this.logger.error(error.message, error.stack);
-      }
-      throw error;
-    }
+  async removeOtherPayment(id: string) {
+    return this.dataSource.transaction(async manager => {
+      await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      const repo = manager.getRepository(OtherPayment);
+      const payment = await repo.findOne({ where: { id } });
+      if (!payment) throw new NotFoundException('Movimiento no encontrado.');
+      const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+      if (payment.dateNow !== date) throw new BadRequestException('Los movimientos de días anteriores se corrigen con un movimiento nuevo.');
+      if (payment.paymentMethod !== 'TRANSFER') await this.applyTicketPayment(date, -this.computeBoxDelta(payment.type, payment.price), manager);
+      await repo.remove(payment);
+      return { message: 'Movimiento eliminado.' };
+    });
   }
-
 
   async updateBoxByDate(date: string, totalPrice: number) {
     try {

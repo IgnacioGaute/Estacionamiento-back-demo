@@ -3,6 +3,9 @@ import { Customer } from './customer.entity';
 
 @Entity({ name: 'interest_settings' })
 export class InterestSettings {
+  @Column('uuid', { nullable: true })
+  playaId: string | null;
+
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

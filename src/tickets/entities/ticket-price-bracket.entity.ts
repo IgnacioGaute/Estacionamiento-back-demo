@@ -1,12 +1,21 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
-import { TICKET_DAY_TYPE, TicketDayType, TICKET_TYPE, TicketType } from './ticket.entity';
+import { Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { Playa } from 'src/tenancy/entities/playa.entity';
+import { TICKET_DAY_TYPE, TicketDayType, TICKET_TYPE, TicketType } from './ticket.constants';
 
 @Entity({ name: 'ticket_price_brackets' })
 export class TicketPriceBracket {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column('enum', { enum: TICKET_TYPE })
+  @Index()
+  @Column('uuid', { nullable: true })
+  playaId: string | null;
+
+  @ManyToOne(() => Playa, { nullable: true })
+  @JoinColumn({ name: 'playaId' })
+  playa: Playa | null;
+
+  @Column('varchar', { length: 32 })
   vehicleType: TicketType;
 
   // null = aplica sin importar día/noche (recomendado para franjas largas).
@@ -30,6 +39,9 @@ export class TicketPriceBracket {
 
   @Column('int', { nullable: true })
   recurringUnitMinutes: number | null;
+
+  @Column('varchar', { default: 'DERIVED' })
+  recurringPriceMode: 'FIXED' | 'DERIVED';
 
   @CreateDateColumn()
   createdAt: Date;

@@ -1,7 +1,9 @@
+import { CreateVehicleTypeDto, UpdateVehicleTypeDto } from './dto/vehicle-type.dto';
 import { Controller, Get, Post, Body, Patch, Param, Query, Delete, UseGuards, Req, UnauthorizedException } from '@nestjs/common';
 import { AuthenticatedRequest } from 'src/types/request';
 import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate.dto';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
+import { PreviewPriceDto, SimulatePriceDto } from './dto/preview-price.dto';
 import { TicketsService } from './tickets.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
@@ -17,6 +19,7 @@ import { UpdateTicketPriceBracketDto } from './dto/update-ticket-price-bracket.d
 import { AdvancePaymentTicketRegistrationDto } from './dto/advance-payment-ticket-registration.dto';
 import { TicketRegistrationForDay } from './entities/ticket-registration-for-day.entity';
 import { UpdateTicketScheduleDto } from './dto/update-ticket-schedule.dto';
+import { CreateTicketRegistrationForDayDto, UpdateTicketStatusDto } from './dto/create-ticket-registration-for-day.dto';
 
 @Controller('tickets')
 @UseGuards(AuthOrTokenAuthGuard)
@@ -27,6 +30,15 @@ export class TicketsController {
   create(@Body() createTicketDto: CreateTicketDto) {
     return this.ticketsService.create(createTicketDto);
   }
+
+  @Get('vehicle-types')
+  getVehicleTypes() { return this.ticketsService.getVehicleTypes(); }
+
+  @Post('vehicle-types')
+  createVehicleType(@Body() dto: CreateVehicleTypeDto) { return this.ticketsService.createVehicleType(dto); }
+
+  @Patch('vehicle-types/:code')
+  updateVehicleType(@Param('code') code: string, @Body() dto: UpdateVehicleTypeDto) { return this.ticketsService.updateVehicleType(code, dto); }
 
   @Get('schedule-settings')
   getSchedule() {
@@ -50,6 +62,35 @@ export class TicketsController {
   @Get('registrationForDays/summary')
   getTicketRegistrationForDaysSummary(@Query('from') from?: string, @Query('to') to?: string) {
     return this.ticketsService.getTicketRegistrationForDaysSummary(from, to);
+  }
+
+  @Post('registrationForDays')
+  createRegistrationForDay(
+    @Req() req: AuthenticatedRequest,
+    @Body() createTicketRegistrationForDayDto: CreateTicketRegistrationForDayDto,
+  ) {
+    if (!req.user?.userId) {
+      throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    }
+    return this.ticketsService.createRegistrationForDay(createTicketRegistrationForDayDto);
+  }
+
+  // Va antes de `registrationForDays/:id/status` para que "retire-many" no entre como un id.
+  @Patch('registrationForDays/retire-many')
+  retireRegistrationsForDay(@Body('ids') ids: string[]) {
+    return this.ticketsService.retireRegistrationsForDay(ids);
+  }
+
+  @Patch('registrationForDays/:id/status')
+  updateTicketStatus(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdateTicketStatusDto,
+  ) {
+    if (!req.user?.userId) {
+      throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    }
+    return this.ticketsService.updateTicketStatus(id, dto);
   }
 
   @Patch(':id')
@@ -97,6 +138,16 @@ export class TicketsController {
   @Delete('ticketsPrice/:id')
   removeTicketPrice(@Param('id') id: string) {
     return this.ticketsService.removeTicketPrice(id);
+  }
+
+  @Post('priceBrackets/simulate')
+  simulatePrice(@Body() dto: SimulatePriceDto) {
+    return this.ticketsService.previewPrice(dto.vehicleType, dto.ticketDayType, dto.elapsedMinutes, dto.entryAt, dto.pricingOptions);
+  }
+
+  @Get('priceBrackets/preview')
+  previewPrice(@Query() query: PreviewPriceDto) {
+    return this.ticketsService.previewPrice(query.vehicleType, query.ticketDayType, Number(query.elapsedMinutes), query.entryAt);
   }
 
   @Post('priceBrackets')

@@ -3,10 +3,12 @@ import {
   CreateDateColumn,
   Entity,
   Generated,
+  Index,
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import { Playa } from 'src/tenancy/entities/playa.entity';
 import { TicketRegistration } from 'src/tickets/entities/ticket-registration.entity';
 import { User } from 'src/users/entities/user.entity';
 import { Turno } from 'src/turnos/entities/turno.entity';
@@ -24,6 +26,14 @@ export type MovimientoTipo = (typeof MOVIMIENTO_TIPO)[number];
 export class Movimiento {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  @Index()
+  @Column('uuid', { nullable: true })
+  playaId: string | null;
+
+  @ManyToOne(() => Playa, { nullable: true })
+  @JoinColumn({ name: 'playaId' })
+  playa: Playa | null;
 
   // Orden inequívoco de inserción — un uuid no garantiza orden, y la futura cadena de hash
   // (hashAnterior/hash) necesita saber con certeza cuál es "el movimiento anterior".

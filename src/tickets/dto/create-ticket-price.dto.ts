@@ -1,3 +1,4 @@
+import { Matches } from 'class-validator';
 import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from "class-validator";
 import { TICKET_TIME_TYPE, TicketTimeType, VEHICLE_TYPE, VehicleType } from "../entities/ticket-price.entity";
 import { TICKET_DAY_TYPE, TicketDayType } from "../entities/ticket.entity";
@@ -16,7 +17,7 @@ export class CreateTicketPriceDto {
     @IsOptional()
     ticketDayType: TicketDayType;
 
-    @IsEnum(VEHICLE_TYPE)
+    @Matches(/^[A-Z][A-Z0-9_]{0,31}$/)
     @IsOptional()
     vehicleType: VehicleType;
 

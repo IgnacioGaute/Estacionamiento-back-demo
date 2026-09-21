@@ -1,4 +1,4 @@
-import { IsArray, IsDate, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Matches } from "class-validator"
+import { IsArray, IsDate, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Matches, Min } from "class-validator"
 import { PAYMENT_METHOD, PAYMENT_TYPE, PaymentMethod, PaymentType } from "../entities/other-payment.entity";
 
 export class CreateOtherPaymentDto {
@@ -16,6 +16,7 @@ export class CreateOtherPaymentDto {
     paymentMethod: PaymentMethod;
 
     @IsNumber()
+    @Min(0)
     @IsNotEmpty()
     price: number
 }

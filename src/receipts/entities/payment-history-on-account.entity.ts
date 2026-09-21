@@ -7,6 +7,9 @@ export type PaymentType = (typeof PAYMENT_TYPE)[number];
 
 @Entity({ name: 'payments_history_on_account' })
 export class PaymentHistoryOnAccount {
+  @Column('uuid', { nullable: true })
+  playaId: string | null;
+
   @PrimaryGeneratedColumn('uuid')
   id: string;
   

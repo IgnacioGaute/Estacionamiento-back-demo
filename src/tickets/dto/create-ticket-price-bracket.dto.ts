@@ -1,8 +1,9 @@
-import { IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
+import { Matches } from 'class-validator';
+import { IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
 import { TICKET_DAY_TYPE, TicketDayType, TICKET_TYPE, TicketType } from '../entities/ticket.entity';
 
 export class CreateTicketPriceBracketDto {
-  @IsEnum(TICKET_TYPE)
+  @Matches(/^[A-Z][A-Z0-9_]{0,31}$/)
   @IsNotEmpty()
   vehicleType: TicketType;
 
@@ -30,4 +31,8 @@ export class CreateTicketPriceBracketDto {
   @Min(1)
   @IsOptional()
   recurringUnitMinutes?: number;
+
+  @IsIn(['FIXED', 'DERIVED'])
+  @IsOptional()
+  recurringPriceMode?: 'FIXED' | 'DERIVED';
 }

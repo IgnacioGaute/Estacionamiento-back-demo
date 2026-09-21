@@ -15,6 +15,10 @@ export class AdvancePaymentTicketRegistrationDto {
   @IsOptional()
   metodo?: MovimientoMetodo;
 
+  @IsString()
+  @IsOptional()
+  adjustmentReason?: string;
+
   // Duración que el operador avisó que el cliente iba a quedarse (nombre de la franja
   // elegida en el form) y su tope en minutos, para poder avisar si la estadía real la supera.
   @IsString()

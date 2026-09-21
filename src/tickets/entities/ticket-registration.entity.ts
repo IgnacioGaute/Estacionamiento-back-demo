@@ -10,13 +10,41 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { Ticket, TICKET_TYPE, TicketType } from './ticket.entity';
+import { Playa } from 'src/tenancy/entities/playa.entity';
+import { Ticket } from './ticket.entity';
+import { TICKET_TYPE, TicketType } from './ticket.constants';
 import { BoxList } from 'src/box-lists/entities/box-list.entity';
+import { PricingSnapshot, PricingDayType, PricingLine } from '../pricing/pricing.types';
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
 @Entity({ name: 'ticket_registrations' })
 export class TicketRegistration {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  @Index()
+  @Column('uuid', { nullable: true })
+  playaId: string | null;
+
+  @ManyToOne(() => Playa, { nullable: true })
+  @JoinColumn({ name: 'playaId' })
+  playa: Playa | null;
+
+  @Column('jsonb', { nullable: true })
+  pricingBreakdown: PricingLine[] | null;
+
+  @Column('jsonb', { nullable: true })
+  pricingSnapshot: PricingSnapshot | null;
+
+  // Saldo inicial de registros anteriores al libro de movimientos, sin inventar un cobro nuevo.
+  @Column('int', { nullable: true })
+  legacyCollectedOffset: number | null;
+
+  @Column('varchar', { nullable: true })
+  appliedPricingDayType: PricingDayType | null;
+
+  @Column('varchar', { nullable: true })
+  entryMode: 'BARCODE' | 'PLATE' | null;
+
   
   @Column('varchar', { length: 255 })
   description: string;
@@ -81,7 +109,7 @@ export class TicketRegistration {
 
   // Tipo de vehículo para los registros del flujo por patente (sin Ticket/código de barras
   // del que leerlo) — los del flujo por escaneo lo siguen leyendo de `ticket.vehicleType`.
-  @Column('enum', { enum: TICKET_TYPE, nullable: true })
+  @Column('varchar', { length: 32, nullable: true })
   vehicleType: TicketType | null;
 
   // Motivo obligatorio cuando se fuerza un alta con una patente que ya tiene un ingreso activo.

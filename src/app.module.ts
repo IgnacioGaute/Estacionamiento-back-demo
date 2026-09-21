@@ -1,3 +1,7 @@
+import { DataSource } from 'typeorm';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { installTenantConnections } from './tenancy/tenant-context';
+import { TenantGuard, TenantInterceptor } from './tenancy/tenant-access';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AppConfig, DatabaseConfig } from './config';
@@ -15,6 +19,9 @@ import { ParkingModule } from './parking/parking.module';
 import { TurnosModule } from './turnos/turnos.module';
 import { MovimientosModule } from './movimientos/movimientos.module';
 import { PlateRecognitionModule } from './plate-recognition/plate-recognition.module';
+import { TenancyModule } from './tenancy/tenancy.module';
+import { SaasModule } from './saas/saas.module';
+import { AssistantModule } from './assistant/assistant.module';
 
 @Module({
   imports: [ConfigModule.forRoot({
@@ -28,6 +35,11 @@ import { PlateRecognitionModule } from './plate-recognition/plate-recognition.mo
       ...configService.get('database'),
     }),
     inject: [ConfigService],
+    dataSourceFactory: async (options) => {
+      const ds = await new DataSource(options).initialize();
+      installTenantConnections(ds);
+      return ds;
+    },
   }),
   ScheduleModule.forRoot(),
   ReceiptsModule,
@@ -41,9 +53,12 @@ import { PlateRecognitionModule } from './plate-recognition/plate-recognition.mo
   ParkingModule,
   TurnosModule,
   MovimientosModule,
-  PlateRecognitionModule
+  PlateRecognitionModule,
+  TenancyModule,
+  SaasModule,
+  AssistantModule
 ],
   controllers: [],
-  providers: [],
+  providers: [{ provide: APP_GUARD, useClass: TenantGuard }, { provide: APP_INTERCEPTOR, useClass: TenantInterceptor }],
 })
 export class AppModule {}

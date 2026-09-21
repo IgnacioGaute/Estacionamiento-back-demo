@@ -4,11 +4,12 @@ import { TicketRegistration } from 'src/tickets/entities/ticket-registration.ent
 import {
   Column,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
-  OneToMany,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import { Playa } from 'src/tenancy/entities/playa.entity';
 import { BoxList } from './box-list.entity';
 
 export const PAYMENT_TYPE = ['EGRESOS', 'INGRESOS'] as const;
@@ -21,6 +22,14 @@ export type PaymentMethod = (typeof PAYMENT_METHOD)[number];
 export class OtherPayment {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  @Index()
+  @Column('uuid', { nullable: true })
+  playaId: string | null;
+
+  @ManyToOne(() => Playa, { nullable: true })
+  @JoinColumn({ name: 'playaId' })
+  playa: Playa | null;
 
   @Column('varchar')
   description: string;

@@ -1,17 +1,17 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { VehicleTypeEntity } from './entities/vehicle-type.entity';
+import { CreateVehicleTypeDto, UpdateVehicleTypeDto } from './dto/vehicle-type.dto';
+import { assertPricingCoverage, calculateStayPrice, validatePricingOptions } from './pricing/stay-pricing';
+import { defaultPricingOptions, PricingOptions } from './pricing/pricing.types';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, IsNull, Repository } from 'typeorm';
 import { Ticket } from './entities/ticket.entity';
 import { TicketRegistration } from './entities/ticket-registration.entity';
 import { CreateTicketDto } from './dto/create-ticket.dto';
-import { ScannerService } from '../scanner/scanner.service';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
-import { format } from 'date-fns';
 import { BoxListsService } from 'src/box-lists/box-lists.service';
-import { CreateTicketRegistrationDto } from './dto/create-ticket-registration.dto';
 import { BoxList } from 'src/box-lists/entities/box-list.entity';
 import { TicketGateway } from './register-gateway';
-import { UpdateTicketRegistrationDto } from './dto/update-ticket-registration.dto';
 import { FilterOperator, paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
 import { TicketRegistrationForDay } from './entities/ticket-registration-for-day.entity';
 import dayjs from 'dayjs';
@@ -33,10 +33,14 @@ import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate
 import { CloseRegistrationDto } from './dto/close-registration.dto';
 import { normalizePlate, toSearchKey } from './utils/license-plate.util';
 import { Brackets } from 'typeorm';
+import { calculatePrice, resolveDayType, selectBrackets, validateBracket } from './pricing/pricing';
+import { PricingSnapshot } from './pricing/pricing.types';
+import { CreateTicketRegistrationForDayDto, UpdateTicketStatusDto } from './dto/create-ticket-registration-for-day.dto';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
 dayjs.extend(isBetween);
+
 @Injectable()
 export class TicketsService {
   private readonly logger = new Logger(TicketsService.name);
@@ -57,9 +61,11 @@ export class TicketsService {
     private readonly boxListsService: BoxListsService,
     private readonly ticketGateway: TicketGateway,
     private readonly movimientosService: MovimientosService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async createTicketPrice(createTicketPriceDto: CreateTicketPriceDto) {
+    if (createTicketPriceDto.vehicleType) await this.assertVehicleType(createTicketPriceDto.vehicleType);
     try {
 
       if(createTicketPriceDto.vehicleType && createTicketPriceDto.ticketDayType){
@@ -112,6 +118,7 @@ export class TicketsService {
   }
 
 async updateTicketPrice(id: string, updateTicketPriceDto: UpdateTicketPriceDto) {
+    if (updateTicketPriceDto.vehicleType) await this.assertVehicleType(updateTicketPriceDto.vehicleType);
   try{
     const ticketPrice = await this.ticketPriceRepository.findOne({where:{id:id}})
     if(updateTicketPriceDto.vehicleType && updateTicketPriceDto.ticketTimeType === null){
@@ -181,51 +188,114 @@ async removeTicketPrice(id: string) {
 }
 
 
-  private readonly defaultTicketSchedule = { dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, barcodeTicketsEnabled: true };
+  private readonly defaultTicketSchedule = { dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, barcodeTicketsEnabled: true, pricingDayTypeBasis: 'EXIT' as const };
 
-  async getSchedule(): Promise<{ dayStartHour: number; dayEndHour: number; graceMinutes: number; barcodeTicketsEnabled: boolean }> {
-    try {
-      const [latest] = await this.ticketScheduleSettingsRepository.find({
-        order: { updatedAt: 'DESC' },
-        take: 1,
-      });
-      return latest ?? this.defaultTicketSchedule;
-    } catch (error: any) {
-      this.logger.error(error.message, error.stack);
-      throw error;
+  async getSchedule(manager?: EntityManager) {
+    const repository = manager ? manager.getRepository(TicketScheduleSettings) : this.ticketScheduleSettingsRepository;
+    const [latest] = await repository.find({ order: { updatedAt: 'DESC' }, take: 1 });
+    const storedOptions = latest?.pricingOptions ?? defaultPricingOptions();
+    // La permanencia se retiró de la configuración actual. Las copias guardadas en
+    // estadías abiertas siguen intactas; ninguna entrada nueva usa reglas ocultas.
+    return { ...(latest ?? this.defaultTicketSchedule), pricingOptions: { ...storedOptions, stay: { ...storedOptions.stay, enabled: false } } };
+  }
+
+  async updateSchedule(dto: UpdateTicketScheduleDto) {
+    return this.dataSource.transaction(async manager => {
+      await manager.query('SELECT pg_advisory_xact_lock(718903)');
+      if (dto.pricingOptions) {
+        dto.pricingOptions = { ...dto.pricingOptions, stay: { ...dto.pricingOptions.stay, enabled: false } };
+        validatePricingOptions(dto.pricingOptions);
+        const activeTypes = await manager.getRepository(VehicleTypeEntity).find({ where: { enabled: true } });
+        const options = dto.pricingOptions;
+        for (const vehicle of activeTypes) {
+          if (options.charging.enabled && !options.charging.rates.some(r => r.vehicleType === vehicle.code)) throw new BadRequestException(`Falta el precio por unidad para ${vehicle.name}.`);
+          if (options.stay.enabled && options.stay.capEnabled && !options.stay.caps.some(r => r.vehicleType === vehicle.code)) throw new BadRequestException(`Falta el tope para ${vehicle.name}.`);
+        }
+      }
+      const repository = manager.getRepository(TicketScheduleSettings);
+      const [current] = await repository.find({ order: { updatedAt: 'DESC' }, take: 1 });
+      const merged = { ...this.defaultTicketSchedule, ...current, ...dto };
+      if (merged.pricingOptions) merged.pricingOptions = { ...merged.pricingOptions, stay: { ...merged.pricingOptions.stay, enabled: false } };
+      if (merged.dayStartHour === merged.dayEndHour) throw new BadRequestException('El inicio y el fin del horario diurno deben ser diferentes.');
+      return repository.save(repository.create(merged));
+    });
+  }
+
+  private async capturePricing(vehicleType: string, manager?: EntityManager, opening = true): Promise<PricingSnapshot> {
+    if (manager) await manager.query('SELECT pg_advisory_xact_lock_shared(718903)');
+    if (opening) await this.assertVehicleType(vehicleType, manager);
+    const schedule = await this.getSchedule(manager);
+    const repository = manager ? manager.getRepository(TicketPriceBracket) : this.ticketPriceBracketRepository;
+    const brackets = await repository.find({ where: { vehicleType: vehicleType as any } });
+    const snapshot: PricingSnapshot = {
+      version: 1, capturedAt: new Date().toISOString(),
+      schedule: { dayStartHour: schedule.dayStartHour, dayEndHour: schedule.dayEndHour, graceMinutes: schedule.graceMinutes, pricingDayTypeBasis: schedule.pricingDayTypeBasis ?? 'EXIT', pricingOptions: schedule.pricingOptions },
+      brackets,
+    };
+    const dayType = resolveDayType(snapshot.schedule, dayjs().tz('America/Argentina/Buenos_Aires').hour());
+    if (opening) assertPricingCoverage(snapshot, vehicleType, dayType);
+    if (opening && (snapshot.schedule.pricingDayTypeBasis === 'EXIT' || snapshot.schedule.pricingOptions?.crossing.enabled)) {
+      assertPricingCoverage(snapshot, vehicleType, 'DAY');
+      assertPricingCoverage(snapshot, vehicleType, 'NIGHT');
     }
+    return snapshot;
   }
 
-  async updateSchedule(updateTicketScheduleDto: UpdateTicketScheduleDto) {
-    try {
-      await this.ticketScheduleSettingsRepository.clear();
-      const schedule = this.ticketScheduleSettingsRepository.create(updateTicketScheduleDto);
-      return await this.ticketScheduleSettingsRepository.save(schedule);
-    } catch (error: any) {
-      this.logger.error(error.message, error.stack);
-      throw error;
-    }
+  private async priceRegistration(registration: TicketRegistration, manager?: EntityManager) {
+    const vehicle = registration.vehicleType ?? registration.ticket?.vehicleType;
+    if (!vehicle) throw new BadRequestException('El registro no tiene tipo de vehículo.');
+    const snapshot = registration.pricingSnapshot ?? await this.capturePricing(vehicle, manager, false);
+    const entry = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', 'America/Argentina/Buenos_Aires');
+    return { ...calculateStayPrice(snapshot, vehicle, entry.toDate(), new Date()), tariffSnapshotUsed: !!registration.pricingSnapshot };
   }
 
-  private resolveTicketDayType(
-    schedule: { dayStartHour: number; dayEndHour: number },
-    hour: number,
-  ): TicketDayType {
-    const { dayStartHour, dayEndHour } = schedule;
-    const isDay =
-      dayStartHour < dayEndHour
-        ? hour >= dayStartHour && hour < dayEndHour
-        : hour >= dayStartHour || hour < dayEndHour;
-    return isDay ? 'DAY' : 'NIGHT';
+  async previewPrice(vehicleType: string, ticketDayType: 'DAY' | 'NIGHT', elapsedMinutes: number, entryAt?: string, options?: PricingOptions) {
+    return this.dataSource.transaction(async manager => {
+      const snapshot = await this.capturePricing(vehicleType, manager, false);
+      await this.assertVehicleType(vehicleType, manager);
+      if (options) {
+        const liveOptions = { ...options, stay: { ...options.stay, enabled: false } };
+        validatePricingOptions(liveOptions);
+        snapshot.schedule.pricingOptions = liveOptions;
+      }
+      const hour = ticketDayType === 'NIGHT' ? snapshot.schedule.dayEndHour : snapshot.schedule.dayStartHour;
+      const entry = entryAt ? dayjs(entryAt) : dayjs().tz('America/Argentina/Buenos_Aires').startOf('day').hour(hour);
+      return calculateStayPrice(snapshot, vehicleType, entry.toDate(), entry.add(elapsedMinutes, 'minute').toDate());
+    });
   }
 
-  private async resolveCurrentTicketDayType(): Promise<TicketDayType> {
-    const schedule = await this.getSchedule();
-    const currentHour = dayjs().tz('America/Argentina/Buenos_Aires').hour();
-    return this.resolveTicketDayType(schedule, currentHour);
+  async getVehicleTypes() {
+    return this.dataSource.getRepository(VehicleTypeEntity).find({ order: { code: 'ASC' } });
+  }
+
+  private async assertVehicleType(code: string, manager?: EntityManager) {
+    const vehicle = await (manager ?? this.dataSource.manager).getRepository(VehicleTypeEntity).findOneBy({ code, enabled: true });
+    if (!vehicle) throw new BadRequestException('El tipo de vehículo no existe o está desactivado.');
+  }
+
+  async createVehicleType(dto: CreateVehicleTypeDto) {
+    return this.dataSource.transaction(async manager => {
+      await manager.query('SELECT pg_advisory_xact_lock(718903)');
+      const repo = manager.getRepository(VehicleTypeEntity);
+      if (await repo.exists({ where: { code: dto.code } })) throw new BadRequestException('Ya existe ese código de vehículo.');
+      if (!dto.name.trim()) throw new BadRequestException('Ingresá el nombre del vehículo.');
+      return repo.save(repo.create({ ...dto, name: dto.name.trim(), enabled: true }));
+    });
+  }
+
+  async updateVehicleType(code: string, dto: UpdateVehicleTypeDto) {
+    return this.dataSource.transaction(async manager => {
+      await manager.query('SELECT pg_advisory_xact_lock(718903)');
+      const repo = manager.getRepository(VehicleTypeEntity);
+      const vehicle = await repo.findOneBy({ code });
+      if (!vehicle) throw new NotFoundException('Tipo de vehículo no encontrado.');
+      if (dto.name !== undefined && !dto.name.trim()) throw new BadRequestException('Ingresá el nombre del vehículo.');
+      return repo.save(repo.merge(vehicle, { ...dto, ...(dto.name !== undefined ? { name: dto.name.trim() } : {}) }));
+    });
   }
 
   async create(createTicketDto: CreateTicketDto) {
+    await this.assertVehicleType(createTicketDto.vehicleType);
     try {
       const ticket = this.ticketRepository.create(createTicketDto);
       const savedTicket = await this.ticketRepository.save(ticket);
@@ -254,6 +324,7 @@ async removeTicketPrice(id: string) {
     }
 
   async update(id: string, updateTicketDto: UpdateTicketDto) {
+    if (updateTicketDto.vehicleType) await this.assertVehicleType(updateTicketDto.vehicleType);
     try{
       const ticket = await this.ticketRepository.findOne({where:{id:id}})
 
@@ -303,60 +374,153 @@ async removeTicketPrice(id: string) {
   }
 
   async createRegistration(ticketId?: string) {
-    try {
+    if (!ticketId) throw new BadRequestException('Falta el identificador del ticket.');
+    const result = await this.dataSource.transaction(async manager => {
+      const ticket = await manager.getRepository(Ticket).findOne({ where: { id: ticketId }, lock: { mode: 'pessimistic_write' } });
+      if (!ticket) throw new NotFoundException('Ticket no encontrado.');
+      const repository = manager.getRepository(TicketRegistration);
+      const existing = await repository.findOne({ where: { ticket: { id: ticketId }, departureTime: IsNull() }, relations: ['ticket'] });
+      // El segundo escaneo prepara el cierre; nunca registra un cobro implícito.
+      if (existing) return { registration: existing, requiresClose: true };
+      const pricingSnapshot = await this.capturePricing(ticket.vehicleType, manager);
+      const now = dayjs(pricingSnapshot.capturedAt).tz('America/Argentina/Buenos_Aires');
+      const registration = await repository.save(repository.create({
+        description: `Registro de ticket para vehículo tipo ${ticket.vehicleType}`, price: 0,
+        entryDay: now.format('YYYY-MM-DD'), entryTime: now.format('HH:mm:ss'),
+        ticket, vehicleType: ticket.vehicleType as any, codeBarTicket: ticket.codeBar,
+        pricingSnapshot, entryMode: 'BARCODE',
+      }));
+      return { registration, requiresClose: false };
+    });
+    if (!result.requiresClose) this.ticketGateway.emitNewRegistration(result.registration);
+    return result;
+  }
 
-        const ticket = await this.ticketRepository.findOne({ where: { id: ticketId } });
+// Nombre en español de cada tipo de duración — se usa tanto en la descripción del abono como
+// en el mensaje de error cuando falta cargar la tarifa correspondiente en Tarifas.
+private readonly ticketTimeTypeLabel: Record<string, string> = {
+  DIA: 'día/s',
+  SEMANA: 'semana/s',
+  MES: 'mes/es',
+  SEMANA_Y_DIA: 'semana/s y día/s',
+  MES_Y_DIA: 'mes/es y día/s',
+};
 
-        if (!ticket) {
-            this.logger.warn(`No se encontró un ticket con ID: ${ticketId}`);
-            return null;
-        }
-
-        await this.ensureBracketsConfigured(ticket.vehicleType);
-
-        const existingRegistration = await this.ticketRegistrationRepository.findOne({
-            where: { ticket: { id: ticketId } },
-            relations: ['ticket'],
-        });
-
-
-        if (!existingRegistration) {
-            const argentinaTime = (dayjs().tz('America/Argentina/Buenos_Aires') as dayjs.Dayjs);
-  
-            const createTicketRegistrationDto: CreateTicketRegistrationDto = {
-                description: `Registro de ticket para vehículo tipo ${ticket.vehicleType}`,
-                price: 0,
-                entryDay: argentinaTime.format('YYYY-MM-DD'),
-                entryTime: argentinaTime.format('HH:mm:ss'),
-                departureDay: null,
-                departureTime: null,
-                dateNow: null
-            };
-
-            const newRegistration = this.ticketRegistrationRepository.create({
-                ...createTicketRegistrationDto,
-                ticket,
-            });
-
-            const savedTicket = await this.ticketRegistrationRepository.save(newRegistration);
-            this.ticketGateway.emitNewRegistration(savedTicket);
-            return savedTicket;
-        } else {
-          const argentinaTime = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day');
-          const now = argentinaTime.format('YYYY-MM-DD')
-            return await this.updateRegistration(existingRegistration, now, ticket);
-        }
-    } catch (error: any) {
-        if (!(error instanceof NotFoundException) && !(error instanceof BadRequestException)) {
-          this.logger.error(error.message, error.stack);
-        }
-        throw error;
-    }
+// Busca la tarifa por día/semana/mes cargada en Tarifas para ese tipo y vehículo — si no está
+// configurada, corta el alta con un error que nombra exactamente cuál falta (día, semana o
+// mes), en vez de dejar pasar un precio en $0 o uno de los dos términos de una franja combinada.
+private async getTicketTimePriceOrThrow(
+  ticketTimeType: 'DIA' | 'SEMANA' | 'MES',
+  vehicleType: string,
+) {
+  const ticketPrice = await this.ticketPriceRepository.findOne({
+    where: { ticketTimeType: ticketTimeType as any, vehicleType: vehicleType as any },
+  });
+  if (!ticketPrice) {
+    throw new NotFoundException({
+      code: 'TICKET_PRICE_NOT_FOUND',
+      message: `No hay una tarifa por ${this.ticketTimeTypeLabel[ticketTimeType]} configurada para ${vehicleType}. Pedile al admin que la cargue en Tarifas antes de registrar este abono.`,
+    });
+  }
+  return ticketPrice;
 }
+
+async createRegistrationForDay(createTicketRegistrationForDayDto: CreateTicketRegistrationForDayDto) {
+  await this.assertVehicleType(createTicketRegistrationForDayDto.vehicleType);
+  return this.dataSource.transaction(async manager => {
+  try {
+    const { ticketTimeType, vehicleType, days, weeks, months } = createTicketRegistrationForDayDto;
+    const ticket = manager.getRepository(TicketRegistrationForDay).create(createTicketRegistrationForDayDto);
+
+    let time = '';
+    if (ticketTimeType === 'DIA') {
+      time = `${days} día/s`;
+    } else if (ticketTimeType === 'SEMANA') {
+      time = `${weeks} semana/s`;
+    } else if (ticketTimeType === 'MES') {
+      time = `${months} mes/es`;
+    } else if (ticketTimeType === 'SEMANA_Y_DIA') {
+      time = `${weeks} semana/s y ${days} día/s`;
+    } else if (ticketTimeType === 'MES_Y_DIA') {
+      time = `${months} mes/es y ${days} día/s`;
+    }
+
+    ticket.description = `Tipo: ${vehicleType}, ${this.ticketTimeTypeLabel[ticketTimeType]}, Tiempo: ${time}`;
+
+    const argentinaTime = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day');
+    const now = argentinaTime.format('YYYY-MM-DD');
+    ticket.dateNow = now;
+
+    if (ticketTimeType === 'DIA' || ticketTimeType === 'SEMANA' || ticketTimeType === 'MES') {
+      const ticketPrice = await this.getTicketTimePriceOrThrow(ticketTimeType, vehicleType);
+      const qty = ticketTimeType === 'DIA' ? days : ticketTimeType === 'MES' ? months : weeks;
+      ticket.price = ticketPrice.ticketTimePrice * qty;
+    } else if (ticketTimeType === 'SEMANA_Y_DIA') {
+      const semanaPrice = await this.getTicketTimePriceOrThrow('SEMANA', vehicleType);
+      const diaPrice = await this.getTicketTimePriceOrThrow('DIA', vehicleType);
+      ticket.price = semanaPrice.ticketTimePrice * (weeks ?? 0) + diaPrice.ticketTimePrice * (days ?? 0);
+    } else if (ticketTimeType === 'MES_Y_DIA') {
+      const mesPrice = await this.getTicketTimePriceOrThrow('MES', vehicleType);
+      const diaPrice = await this.getTicketTimePriceOrThrow('DIA', vehicleType);
+      ticket.price = mesPrice.ticketTimePrice * (months ?? 0) + diaPrice.ticketTimePrice * (days ?? 0);
+    }
+
+    // La caja solo se toca si el abono se cobra en el momento: si queda pendiente de pago, el
+    // registro existe pero no suma nada a la planilla del día hasta que se marque pagado.
+    const cash = createTicketRegistrationForDayDto.paid && createTicketRegistrationForDayDto.paymentMetodo !== 'TRANSFER' ? ticket.price : 0;
+    const boxList = await this.boxListsService.applyTicketPayment(now, cash, manager);
+
+    ticket.boxList = { id: boxList.id } as BoxList;
+
+    const savedTicket = await manager.getRepository(TicketRegistrationForDay).save(ticket);
+    return savedTicket;
+  } catch (error: any) {
+    if (!(error instanceof NotFoundException)) {
+      this.logger.error(error.message, error.stack);
+    }
+    throw error;
+  }
+  });
+}
+
+ async updateTicketStatus(id: string, dto: UpdateTicketStatusDto) {
+    return this.dataSource.transaction(async manager => {
+      await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      const repo = manager.getRepository(TicketRegistrationForDay);
+      const ticket = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+      if (!ticket) throw new NotFoundException('Abono no encontrado');
+      const before = ticket.paid && ticket.paymentMetodo !== 'TRANSFER' ? ticket.price : 0;
+      const paid = dto.paid ?? ticket.paid;
+      const method = dto.paymentMetodo ?? ticket.paymentMetodo;
+      const after = paid && method !== 'TRANSFER' ? ticket.price : 0;
+      if (before !== after || paid !== ticket.paid) {
+        const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+        const box = await this.boxListsService.applyTicketPayment(date, after - before, manager);
+        ticket.boxList = { id: box.id } as BoxList;
+      }
+      ticket.paid = paid;
+      ticket.paymentMetodo = method;
+      if (dto.retired !== undefined) ticket.retired = dto.retired;
+      return repo.save(ticket);
+    });
+  }
+
+  // Limpieza masiva del panel "Día/Sem/Mes": solo marca `retired` (los saca de la lista de
+  // ocupación), nunca toca `paid` / la caja — eso es una acción separada e independiente.
+  async retireRegistrationsForDay(ids: string[]) {
+    if (!ids || ids.length === 0) {
+      return { affected: 0 };
+    }
+    const result = await this.ticketRegistrationForDayRepository.update(
+      { id: In(ids) },
+      { retired: true },
+    );
+    return { affected: result.affected ?? 0 };
+  }
 
     async findAllRegistrationForDay() {
       try {
-        const ticketsDays = await this.ticketRegistrationForDayRepository.find()
+        const ticketsDays = await this.ticketRegistrationForDayRepository.find({ relations: ['boxList'] })
         return ticketsDays;
       } catch (error: any) {
         this.logger.error(error.message, error.stack);
@@ -404,285 +568,58 @@ async removeTicketPrice(id: string) {
       }
     }
 
-    async removeRegistrationForDay(id: string) {
-    try{
-      const ticket = await this.ticketRegistrationForDayRepository.findOne({where:{id:id}})
-      let boxList = await this.boxListsService.findBoxByDate(ticket.dateNow);
-  
-      if (!boxList) {
-        throw new NotFoundException('Box list not found');
+  async removeRegistrationForDay(id: string) {
+    return this.dataSource.transaction(async manager => {
+      await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      const repo = manager.getRepository(TicketRegistrationForDay);
+      const ticket = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+      if (!ticket) throw new NotFoundException('Abono no encontrado');
+      if (ticket.paid && ticket.paymentMetodo !== 'TRANSFER') {
+        const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+        await this.boxListsService.applyTicketPayment(date, -ticket.price, manager);
       }
-      if(ticket.paid === true){
-        boxList.totalPrice -= ticket.price;
-        await this.boxListsService.updateBox(boxList.id, {
-          totalPrice: boxList.totalPrice,
-        });
-      }
-
-
-
-      if(!ticket){
-        throw new NotFoundException('Ticket list not found')
-      }
-
-      await this.ticketRegistrationForDayRepository.remove(ticket);
-
-      return {message: 'Ticket list removed successfully'}
-    } catch (error: any) {
-      if (!(error instanceof NotFoundException)) {
-        this.logger.error(error.message, error.stack);
-      }
-      throw error;
-    }
-  }
-
-
-
-
-// Corta el escaneo (entrada o salida) si todavía no hay ninguna franja de precio cargada
-// para ese tipo de vehículo — sin tarifas no hay forma de cobrar la estadía después.
-private async ensureBracketsConfigured(vehicleType: string): Promise<void> {
-  const count = await this.ticketPriceBracketRepository.count({ where: { vehicleType: vehicleType as any } });
-  if (count === 0) {
-    throw new NotFoundException({
-      code: 'TICKET_PRICE_BRACKET_NOT_FOUND',
-      message: `No hay tarifas configuradas para el tipo de vehículo ${vehicleType}. Pedile al admin que cargue al menos una franja de precio en Tarifas antes de escanear.`,
-    });
-  }
-}
-
-// Resuelve el precio final de una estadía según el tiempo transcurrido, buscando en la
-// escalera de franjas configuradas (TicketPriceBracket) la primera que todavía cubre ese
-// tiempo (con la tolerancia de graceMinutes antes de saltar a la franja siguiente). Si el
-// tiempo transcurrido supera todas las franjas configuradas, se cobra la más alta (nunca se
-// bloquea la salida) y se marca usedFallback para advertir al operador y quedar en el log.
-private async resolveExitPrice(
-  vehicleType: string,
-  ticketDayType: TicketDayType,
-  elapsedMinutes: number,
-): Promise<{ price: number; label: string; usedFallback: boolean }> {
-  const brackets = await this.ticketPriceBracketRepository.find({
-    where: [
-      { vehicleType: vehicleType as any, ticketDayType: ticketDayType as any },
-      { vehicleType: vehicleType as any, ticketDayType: IsNull() },
-    ],
-  });
-
-  if (brackets.length === 0) {
-    throw new NotFoundException({
-      code: 'TICKET_PRICE_BRACKET_NOT_FOUND',
-      message: `No hay tarifas configuradas para el tipo de vehículo ${vehicleType}. Pedile al admin que cargue al menos una franja de precio en Tarifas antes de registrar salidas.`,
+      await repo.remove(ticket);
+      return { message: 'Abono eliminado.' };
     });
   }
 
-  const sorted = [...brackets].sort((a, b) => {
-    if (a.uptoMinutes === null) return 1;
-    if (b.uptoMinutes === null) return -1;
-    return a.uptoMinutes - b.uptoMinutes;
+async createPriceBracket(dto: CreateTicketPriceBracketDto) {
+  await this.assertVehicleType(dto.vehicleType);
+  return this.dataSource.transaction(async manager => {
+    await manager.query('SELECT pg_advisory_xact_lock(718903)');
+    const repository = manager.getRepository(TicketPriceBracket);
+    const bracket = repository.create({ ...dto, uptoMinutes: dto.uptoMinutes ?? null, ticketDayType: dto.ticketDayType ?? null, recurringUnitMinutes: dto.recurringUnitMinutes ?? null, recurringPriceMode: dto.recurringPriceMode ?? 'FIXED' });
+    validateBracket(bracket, await repository.find());
+    return repository.save(bracket);
   });
-
-  const schedule = await this.getSchedule();
-  const graceMinutes = schedule.graceMinutes ?? 5;
-  const lastBracket = sorted[sorted.length - 1];
-
-  let previous: TicketPriceBracket | null = null;
-  for (const bracket of sorted) {
-    if (bracket.uptoMinutes === null) {
-      return { ...this.priceBracketAmount(bracket, elapsedMinutes, previous), usedFallback: false };
-    }
-    // La tolerancia solo tiene sentido como gracia antes de saltar a la franja SIGUIENTE.
-    // La última franja con techo no tiene una franja siguiente a la que "no saltar todavía",
-    // así que ahí no se aplica: pasarse de su "hasta", aunque sea por poco, ya cuenta como
-    // estadía sin cobertura y dispara el aviso (antes la tolerancia lo tapaba en silencio).
-    const isLastWithCeiling = bracket === lastBracket;
-    const threshold = isLastWithCeiling ? bracket.uptoMinutes : bracket.uptoMinutes + graceMinutes;
-    if (elapsedMinutes <= threshold) {
-      return { price: bracket.price, label: bracket.label, usedFallback: false };
-    }
-    previous = bracket;
-  }
-
-  this.logger.warn(
-    `Estadía de ${elapsedMinutes} min (${vehicleType}/${ticketDayType}) superó todas las franjas configuradas; se cobró la última ("${lastBracket.label}"). Conviene dejar la última franja de Tarifas sin "hasta".`,
-  );
-  return { ...this.priceBracketAmount(lastBracket, elapsedMinutes, previous), usedFallback: true };
-}
-
-// Si la franja es de tarifa recurrente (sin límite + recurringUnitMinutes seteado), el precio
-// es ACUMULATIVO: se cobra el precio de la última franja con techo (si hay una antes) más
-// `price` por cada bloque de recurringUnitMinutes que pasó DESDE ese punto en adelante — no
-// se recalcula el tiempo total desde cero. Si no hay franja anterior, cuenta desde el minuto 0.
-// Sin recurringUnitMinutes, es un monto fijo único como cualquier franja.
-private priceBracketAmount(
-  bracket: TicketPriceBracket,
-  elapsedMinutes: number,
-  previous: TicketPriceBracket | null,
-): { price: number; label: string } {
-  if (bracket.uptoMinutes !== null || !bracket.recurringUnitMinutes) {
-    return { price: bracket.price, label: bracket.label };
-  }
-  const baseMinutes = previous?.uptoMinutes ?? 0;
-  const basePrice = previous?.price ?? 0;
-  const overageMinutes = Math.max(0, elapsedMinutes - baseMinutes);
-  const units = Math.max(1, Math.ceil(overageMinutes / bracket.recurringUnitMinutes));
-  const total = basePrice + bracket.price * units;
-  const label = previous
-    ? `${bracket.label} ($${basePrice} + ${units} × $${bracket.price})`
-    : `${bracket.label} (${units} × $${bracket.price})`;
-  return { price: total, label };
-}
-
-async updateRegistration(existingRegistration: TicketRegistration, formattedDay: string, ticket: Ticket) {
-    try {
-
-      const entryAt = dayjs.tz(
-        `${existingRegistration.entryDay} ${existingRegistration.entryTime}`,
-        'YYYY-MM-DD HH:mm:ss',
-        'America/Argentina/Buenos_Aires',
-      );
-
-      if (!entryAt.isValid()) {
-        throw new BadRequestException('Invalid entryDay/entryTime');
-      }
-
-      const argentinaTime = dayjs().tz('America/Argentina/Buenos_Aires');
-      // Minutos desde la entrada (usa entryDay + entryTime juntos, no solo la hora, para que
-      // una estadía que cruza la medianoche o dura varios días se calcule bien).
-      const minutesPassed = argentinaTime.diff(entryAt, 'minute');
-
-      const ticketDayType = await this.resolveCurrentTicketDayType();
-      const { price: finalPrice, label: bracketLabel, usedFallback } = await this.resolveExitPrice(
-        ticket.vehicleType,
-        ticketDayType,
-        minutesPassed,
-      );
-      const amountDue = Math.max(0, finalPrice - (existingRegistration.advancePaidAmount ?? 0));
-
-      // Si el operador había avisado una duración esperada (ej. "3 días" al cobrar por
-      // adelantado), marcamos si la estadía real se pasó de ese tope.
-      const exceededExpectedStay =
-        existingRegistration.expectedUptoMinutes != null && minutesPassed > existingRegistration.expectedUptoMinutes;
-
-      ticket.price = finalPrice;
-
-        const updateTicketRegistrationDto: UpdateTicketRegistrationDto = {
-            description: `Tipo: ${existingRegistration.ticket.vehicleType}, Ent: ${existingRegistration.entryTime}, Sal: ${argentinaTime.format('HH:mm:ss')}`,
-            price: finalPrice ,
-            codeBarTicket: ticket.codeBar,
-            entryDay: existingRegistration.entryDay,
-            entryTime: existingRegistration.entryTime,
-            departureDay: argentinaTime.format('YYYY-MM-DD'),
-            departureTime: argentinaTime.format('HH:mm:ss'),
-            dateNow: formattedDay,
-            priceBracketLabel: bracketLabel,
-            priceBracketFallbackUsed: usedFallback,
-            exceededExpectedStay,
-        };
-
-        const updatedRegistration = this.ticketRegistrationRepository.create({
-            ...existingRegistration,
-            ...updateTicketRegistrationDto,
-            ticket,
-        });
-
-        const savedTicket = await this.ticketRegistrationRepository.save(updatedRegistration);
-
-        const boxListDate = formattedDay;
-        let boxList = await this.boxListsService.findBoxByDate(boxListDate);
-
-        if (!boxList) {
-            boxList = await this.boxListsService.createBox({
-                date: boxListDate,
-                totalPrice: amountDue
-            });
-        } else {
-            boxList.totalPrice += amountDue;
-
-            await this.boxListsService.updateBox(boxList.id, {
-                totalPrice: boxList.totalPrice,
-            });
-        }
-
-        savedTicket.boxList = { id: boxList.id } as BoxList;
-        savedTicket.ticket = null;
-        await this.ticketRegistrationRepository.save(savedTicket);
-        this.ticketGateway.emitNewRegistration(savedTicket);
-
-        return savedTicket;
-    } catch (error: any) {
-        if (!(error instanceof NotFoundException) && !(error instanceof BadRequestException)) {
-          this.logger.error(error.message, error.stack);
-        }
-        throw error;
-    }
 }
 
 async addAdvancePayment(id: string, dto: AdvancePaymentTicketRegistrationDto, usuarioId: string) {
-  try {
-    const registration = await this.ticketRegistrationRepository.findOne({
-      where: { id },
-      relations: ['ticket'],
-    });
-
-    if (!registration) {
-      throw new NotFoundException('Registro no encontrado');
+  const saved = await this.dataSource.transaction(async manager => {
+    const repository = manager.getRepository(TicketRegistration);
+    const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+    if (!registration) throw new NotFoundException('Registro no encontrado.');
+    if (registration.departureTime) throw new BadRequestException('El ticket ya está cerrado.');
+    const collected = await this.collectedAmount(registration, manager);
+    const target = dto.advancePaidAmount ?? collected;
+    const delta = target - collected;
+    if (delta !== 0) {
+      if (!dto.metodo) throw new BadRequestException('Elegí el medio de pago o devolución.');
+      if (delta < 0 && !dto.adjustmentReason?.trim()) throw new BadRequestException('Para reducir un anticipo, ingresá el motivo de la devolución.');
+      await this.movimientosService.create({ ticketRegistrationId: id, monto: delta, metodo: dto.metodo, tipo: delta > 0 ? 'ANTICIPO' : 'AJUSTE', motivo: dto.adjustmentReason, usuarioId }, manager);
+      await this.linkToTodaysBoxList(registration, dto.metodo === 'CASH' ? delta : 0, manager);
     }
-
-    // Antes esto exigía `registration.ticket` (solo tickets por código de barras) — un
-    // registro por patente nunca lo tiene, así que quedaba afuera sin razón real: lo único
-    // que importa acá es que la entrada siga activa.
-    if (registration.departureTime) {
-      throw new BadRequestException('Solo se puede cobrar por adelantado una entrada activa, sin salida registrada.');
-    }
-
-    const previousAdvance = registration.advancePaidAmount ?? 0;
-    const newAdvance = dto.advancePaidAmount ?? previousAdvance;
-    const delta = newAdvance - previousAdvance;
-
-    registration.advancePaidAmount = newAdvance;
+    registration.advancePaidAmount = target;
     if (dto.firstNameCustomer !== undefined) registration.firstNameCustomer = dto.firstNameCustomer;
     if (dto.lastNameCustomer !== undefined) registration.lastNameCustomer = dto.lastNameCustomer;
     if (dto.vehiclePlateCustomer !== undefined) registration.vehiclePlateCustomer = dto.vehiclePlateCustomer;
     if (dto.expectedBracketLabel !== undefined) registration.expectedBracketLabel = dto.expectedBracketLabel;
     if (dto.expectedUptoMinutes !== undefined) registration.expectedUptoMinutes = dto.expectedUptoMinutes;
-
-    // El anticipo cobrado ahora es plata real entrando a caja — tiene que pasar por
-    // MovimientosService.create() como todo lo demás (ver el comentario en esa clase), no
-    // sumarse a mano al total de la caja. Eso hacía la versión anterior de este método: el
-    // anticipo nunca quedaba registrado como movimiento del ticket, así que al cerrar (que sí
-    // suma sus movimientos) el sistema volvía a pedir el precio completo — cobro duplicado.
-    // Si el monto bajó (corrección), no se genera movimiento — reducir un anticipo ya cobrado
-    // necesita un AJUSTE con motivo, que este formulario todavía no pide.
-    if (delta > 0) {
-      await this.movimientosService.create({
-        ticketRegistrationId: id,
-        monto: delta,
-        metodo: dto.metodo ?? 'CASH',
-        tipo: 'ANTICIPO',
-        usuarioId,
-      });
-      await this.linkToTodaysBoxList(registration, delta);
-    }
-
-    const savedRegistration = await this.ticketRegistrationRepository.save(registration);
-    this.ticketGateway.emitNewRegistration(savedRegistration);
-    return savedRegistration;
-  } catch (error: any) {
-    if (!(error instanceof NotFoundException) && !(error instanceof BadRequestException)) {
-      this.logger.error(error.message, error.stack);
-    }
-    throw error;
-  }
-}
-
-async createPriceBracket(createTicketPriceBracketDto: CreateTicketPriceBracketDto) {
-  try {
-    const bracket = this.ticketPriceBracketRepository.create(createTicketPriceBracketDto);
-    return await this.ticketPriceBracketRepository.save(bracket);
-  } catch (error: any) {
-    this.logger.error(error.message, error.stack);
-    throw error;
-  }
+    await repository.save(registration);
+    return repository.findOne({ where: { id }, relations: ['ticket'] });
+  });
+  this.ticketGateway.emitNewRegistration(saved);
+  return saved;
 }
 
 async findAllPriceBrackets(vehicleType?: string) {
@@ -697,38 +634,27 @@ async findAllPriceBrackets(vehicleType?: string) {
   }
 }
 
-async updatePriceBracket(id: string, updateTicketPriceBracketDto: UpdateTicketPriceBracketDto) {
-  try {
-    const bracket = await this.ticketPriceBracketRepository.findOne({ where: { id } });
-    if (!bracket) {
-      throw new NotFoundException('Franja de precio no encontrada');
-    }
-    const updated = this.ticketPriceBracketRepository.merge(bracket, updateTicketPriceBracketDto);
-    return await this.ticketPriceBracketRepository.save(updated);
-  } catch (error: any) {
-    if (!(error instanceof NotFoundException)) {
-      this.logger.error(error.message, error.stack);
-    }
-    throw error;
-  }
+async updatePriceBracket(id: string, dto: UpdateTicketPriceBracketDto) {
+  if (dto.vehicleType) await this.assertVehicleType(dto.vehicleType);
+  return this.dataSource.transaction(async manager => {
+    await manager.query('SELECT pg_advisory_xact_lock(718903)');
+    const repository = manager.getRepository(TicketPriceBracket);
+    const bracket = await repository.findOne({ where: { id } });
+    if (!bracket) throw new NotFoundException('Franja de precio no encontrada.');
+    const updated = repository.merge(bracket, dto);
+    validateBracket(updated, await repository.find());
+    return repository.save(updated);
+  });
 }
 
 async removePriceBracket(id: string) {
-  try {
-    const bracket = await this.ticketPriceBracketRepository.findOne({ where: { id } });
-    if (!bracket) {
-      throw new NotFoundException('Franja de precio no encontrada');
-    }
-    await this.ticketPriceBracketRepository.remove(bracket);
+  return this.dataSource.transaction(async manager => {
+    await manager.query('SELECT pg_advisory_xact_lock(718903)');
+    const result = await manager.getRepository(TicketPriceBracket).delete(id);
+    if (!result.affected) throw new NotFoundException('Franja de precio no encontrada.');
     return { message: 'Franja de precio eliminada correctamente' };
-  } catch (error: any) {
-    if (!(error instanceof NotFoundException)) {
-      this.logger.error(error.message, error.stack);
-    }
-    throw error;
-  }
+  });
 }
-
 
   async findAllRegistrations() {
     try{
@@ -862,7 +788,8 @@ async removePriceBracket(id: string) {
   }
 
   async createRegistrationByPlate(dto: CreateRegistrationByPlateDto) {
-    try {
+    const saved = await this.dataSource.transaction(async manager => {
+      const repository = manager.getRepository(TicketRegistration);
       if (dto.noPlate && !dto.lastNameCustomer?.trim()) {
         throw new BadRequestException('El apellido es obligatorio cuando no hay patente.');
       }
@@ -880,7 +807,9 @@ async removePriceBracket(id: string) {
         licensePlateNormalized = normalizePlate(licensePlateOriginal);
         licensePlateSearch = toSearchKey(licensePlateNormalized);
 
-        const existing = await this.ticketRegistrationRepository.findOne({
+        if (!licensePlateNormalized) throw new BadRequestException('La patente debe contener letras o números.');
+        await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`plate:${licensePlateNormalized}`]);
+        const existing = await repository.findOne({
           where: { licensePlateNormalized, departureTime: IsNull() },
         });
 
@@ -898,9 +827,10 @@ async removePriceBracket(id: string) {
         }
       }
 
-      const argentinaTime = dayjs().tz('America/Argentina/Buenos_Aires');
-
-      const registration = this.ticketRegistrationRepository.create({
+      const pricingSnapshot = await this.capturePricing(dto.vehicleType, manager);
+      const argentinaTime = dayjs(pricingSnapshot.capturedAt).tz('America/Argentina/Buenos_Aires');
+      const registration = repository.create({
+        pricingSnapshot, entryMode: 'PLATE',
         description: `Registro por patente para vehículo tipo ${dto.vehicleType}`,
         price: 0,
         entryDay: argentinaTime.format('YYYY-MM-DD'),
@@ -919,15 +849,10 @@ async removePriceBracket(id: string) {
         duplicateOfRegistrationId,
       });
 
-      const saved = await this.ticketRegistrationRepository.save(registration);
-      this.ticketGateway.emitNewRegistration(saved);
-      return saved;
-    } catch (error: any) {
-      if (!(error instanceof BadRequestException)) {
-        this.logger.error(error.message, error.stack);
-      }
-      throw error;
-    }
+      return repository.save(registration);
+    });
+    this.ticketGateway.emitNewRegistration(saved);
+    return saved;
   }
 
   async searchActiveRegistrations(q: string) {
@@ -950,7 +875,8 @@ async removePriceBracket(id: string) {
           qb2
             .where('r.licensePlateSearch ILIKE :plateKey', { plateKey: `%${plateKey}%` })
             .orWhere('r.casilleroNumber ILIKE :raw', { raw: `%${raw}%` })
-            .orWhere('r.lastNameCustomer ILIKE :raw', { raw: `%${raw}%` });
+            .orWhere('r.lastNameCustomer ILIKE :raw', { raw: `%${raw}%` })
+            .orWhere('ticket.codeBar ILIKE :raw', { raw: `%${raw}%` });
         }),
       );
     }
@@ -958,147 +884,85 @@ async removePriceBracket(id: string) {
     return qb.orderBy('r.entryDay', 'ASC').addOrderBy('r.entryTime', 'ASC').getMany();
   }
 
+  private async collectedAmount(registration: TicketRegistration, manager?: EntityManager) {
+    const amount = await this.movimientosService.sumByRegistration(registration.id, manager);
+    if (registration.pricingSnapshot) return amount;
+    registration.legacyCollectedOffset ??= Math.max(0, (registration.advancePaidAmount ?? 0) - amount);
+    return amount + registration.legacyCollectedOffset;
+  }
+
   async getCloseSummary(id: string) {
-    const registration = await this.ticketRegistrationRepository.findOne({ where: { id } });
-    if (!registration) {
-      throw new NotFoundException('Registro no encontrado');
-    }
-    if (registration.ticket) {
-      throw new BadRequestException('Este ticket se cierra escaneando el código de barras, no desde acá.');
-    }
-    if (registration.departureTime) {
-      throw new BadRequestException('Este ticket ya está cerrado.');
-    }
-
-    const elapsedMinutes = this.minutesSinceEntry(registration.entryDay!, registration.entryTime!);
-    const ticketDayType = await this.resolveCurrentTicketDayType();
-    const preview = await this.resolveExitPrice(registration.vehicleType!, ticketDayType, elapsedMinutes);
-
-    const totalCollectedSoFar = await this.movimientosService.sumByRegistration(id);
-    const saldoACobrar = Math.max(0, preview.price - totalCollectedSoFar);
-    const cambioARetornar = Math.max(0, totalCollectedSoFar - preview.price);
-
-    return {
-      registration,
-      elapsedMinutes,
-      previewBracket: preview,
-      totalCollectedSoFar,
-      saldoACobrar,
-      cambioARetornar,
-    };
+    const registration = await this.ticketRegistrationRepository.findOne({ where: { id }, relations: ['ticket'] });
+    if (!registration) throw new NotFoundException('Registro no encontrado.');
+    if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
+    const preview = await this.priceRegistration(registration);
+    const totalCollectedSoFar = await this.collectedAmount(registration);
+    return { registration, elapsedMinutes: preview.elapsedMinutes, previewBracket: preview,
+      totalCollectedSoFar, saldoACobrar: Math.max(0, preview.price - totalCollectedSoFar),
+      cambioARetornar: Math.max(0, totalCollectedSoFar - preview.price),
+      pricingDayType: preview.ticketDayType, pricingDayTypeBasis: preview.pricingDayTypeBasis, tariffSnapshotUsed: preview.tariffSnapshotUsed };
   }
 
-  // Vincula el registro a la caja del día de hoy (Argentina) y, si corresponde, suma el monto
-  // efectivamente cobrado ahora al total de esa caja. Antes esto solo pasaba en el cierre por
-  // código de barras (updateRegistration) — el flujo por patente (hoy el principal) nunca
-  // vinculaba nada, así que sus cobros (anticipos y saldo final) no aparecían en ninguna caja
-  // ni en la planilla, aunque el movimiento sí quedaba registrado en la tabla de movimientos.
-  private async linkToTodaysBoxList(registration: TicketRegistration, amountCollectedNow: number) {
-    const boxListDate = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
-
-    let boxList = await this.boxListsService.findBoxByDate(boxListDate);
-    if (!boxList) {
-      boxList = await this.boxListsService.createBox({ date: boxListDate, totalPrice: amountCollectedNow });
-    } else if (amountCollectedNow > 0) {
-      boxList.totalPrice += amountCollectedNow;
-      await this.boxListsService.updateBox(boxList.id, { totalPrice: boxList.totalPrice });
-    }
-
-    registration.dateNow = boxListDate;
-    registration.boxList = { id: boxList.id } as BoxList;
+  private async linkToTodaysBoxList(registration: TicketRegistration, amount: number, manager: EntityManager) {
+    const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+    const box = await this.boxListsService.applyTicketPayment(date, amount, manager);
+    registration.dateNow = date;
+    registration.boxList = { id: box.id } as BoxList;
   }
 
+  // Ambas identificaciones usan una operación atómica; reintentar un cierre no vuelve a cobrar.
   async closeRegistrationByPlate(id: string, dto: CloseRegistrationDto, usuarioId: string) {
-    try {
-      const registration = await this.ticketRegistrationRepository.findOne({ where: { id } });
-      if (!registration) {
-        throw new NotFoundException('Registro no encontrado');
+    const saved = await this.dataSource.transaction(async manager => {
+      const repository = manager.getRepository(TicketRegistration);
+      const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+      if (!registration) throw new NotFoundException('Registro no encontrado.');
+      if (registration.departureTime) return registration;
+      const withTicket = await repository.findOne({ where: { id }, relations: ['ticket'] });
+      registration.ticket = withTicket!.ticket;
+      const preview = await this.priceRegistration(registration, manager);
+      const collected = await this.collectedAmount(registration, manager);
+      if (dto.expectedPrice !== preview.price || dto.expectedCollected !== collected) {
+        throw new ConflictException({ code: 'TICKET_PRICE_CHANGED', message: 'El importe cambió. Revisá el resumen actualizado antes de confirmar.' });
       }
-      if (registration.ticket) {
-        throw new BadRequestException('Este ticket se cierra escaneando el código de barras, no desde acá.');
-      }
-      if (registration.departureTime) {
-        throw new BadRequestException('Este ticket ya está cerrado.');
-      }
-
-      const elapsedMinutes = this.minutesSinceEntry(registration.entryDay!, registration.entryTime!);
-      const ticketDayType = await this.resolveCurrentTicketDayType();
-      const { price: finalPrice, label: bracketLabel, usedFallback } = await this.resolveExitPrice(
-        registration.vehicleType!,
-        ticketDayType,
-        elapsedMinutes,
-      );
-
-      const totalCollectedSoFar = await this.movimientosService.sumByRegistration(id);
-      const saldo = Math.max(0, finalPrice - totalCollectedSoFar);
-
-      const exceededExpectedStay =
-        registration.expectedUptoMinutes != null && elapsedMinutes > registration.expectedUptoMinutes;
-
+      const saldo = Math.max(0, preview.price - collected);
+      const refund = Math.max(0, collected - preview.price);
+      let cashDelta = 0;
       if (dto.closeType === 'PAYMENT') {
-        if (saldo <= 0) {
-          throw new BadRequestException('No queda saldo por cobrar — usá "cerrar sin cobro".');
-        }
-        if (!dto.metodo) {
-          throw new BadRequestException('Elegí el medio de pago.');
-        }
-        await this.movimientosService.create({
-          ticketRegistrationId: id,
-          monto: saldo,
-          metodo: dto.metodo,
-          tipo: 'SALDO',
-          referencia: dto.referencia,
-          usuarioId,
-        });
+        if (saldo <= 0) throw new BadRequestException('No queda saldo por cobrar.');
+        if (!dto.metodo) throw new BadRequestException('Elegí el medio de pago.');
+        await this.movimientosService.create({ ticketRegistrationId: id, monto: saldo, metodo: dto.metodo, tipo: 'SALDO', referencia: dto.referencia, usuarioId }, manager);
+        cashDelta = dto.metodo === 'CASH' ? saldo : 0;
       } else if (dto.closeType === 'NO_CHARGE') {
-        if (saldo > 0) {
-          throw new BadRequestException('Todavía queda saldo por cobrar.');
-        }
+        if (saldo > 0) throw new BadRequestException('Todavía queda saldo por cobrar.');
       } else if (dto.closeType === 'COURTESY') {
-        if (!dto.motivo?.trim()) {
-          throw new BadRequestException('El motivo es obligatorio para una cortesía.');
-        }
-        if (saldo > 0) {
-          await this.movimientosService.create({
-            ticketRegistrationId: id,
-            monto: saldo,
-            metodo: dto.metodo ?? 'CASH',
-            tipo: 'CORTESIA',
-            motivo: dto.motivo,
-            usuarioId,
-          });
-        }
+        if (!dto.motivo?.trim()) throw new BadRequestException('El motivo es obligatorio para una cortesía.');
+        if (saldo > 0) await this.movimientosService.create({ ticketRegistrationId: id, monto: saldo, metodo: dto.metodo ?? 'CASH', tipo: 'CORTESIA', motivo: dto.motivo, usuarioId }, manager);
+      } else throw new BadRequestException('Tipo de cierre inválido.');
+      if (refund > 0) {
+        if (!dto.refundMetodo) throw new BadRequestException('Confirmá el medio de devolución del excedente.');
+        await this.movimientosService.create({ ticketRegistrationId: id, monto: -refund, metodo: dto.refundMetodo, tipo: 'AJUSTE', motivo: 'Devolución de anticipo excedente al cerrar la estadía', usuarioId }, manager);
+        if (dto.refundMetodo === 'CASH') cashDelta -= refund;
       }
-
-      const argentinaTime = dayjs().tz('America/Argentina/Buenos_Aires');
-      registration.departureDay = argentinaTime.format('YYYY-MM-DD');
-      registration.departureTime = argentinaTime.format('HH:mm:ss');
-      registration.price = finalPrice;
-      registration.priceBracketLabel = bracketLabel;
-      registration.priceBracketFallbackUsed = usedFallback;
-      registration.exceededExpectedStay = exceededExpectedStay;
-      registration.description = `Patente: ${registration.licensePlateOriginal ?? 'sin patente'}, Ent: ${registration.entryTime}, Sal: ${argentinaTime.format('HH:mm:ss')}`;
-
-      const amountCollectedNow = dto.closeType === 'PAYMENT' ? saldo : 0;
-      await this.linkToTodaysBoxList(registration, amountCollectedNow);
-
-      const saved = await this.ticketRegistrationRepository.save(registration);
-      this.ticketGateway.emitNewRegistration(saved);
-      return saved;
-    } catch (error: any) {
-      if (!(error instanceof BadRequestException) && !(error instanceof NotFoundException)) {
-        this.logger.error(error.message, error.stack);
-      }
-      throw error;
-    }
+      const now = dayjs().tz('America/Argentina/Buenos_Aires');
+      registration.entryMode ??= registration.ticket ? 'BARCODE' : 'PLATE';
+      registration.vehicleType ??= registration.ticket?.vehicleType as any;
+      registration.codeBarTicket = registration.ticket?.codeBar ?? registration.codeBarTicket;
+      registration.departureDay = now.format('YYYY-MM-DD');
+      registration.departureTime = now.format('HH:mm:ss');
+      registration.price = preview.price;
+      registration.pricingBreakdown = preview.breakdown;
+      registration.priceBracketLabel = preview.label;
+      registration.priceBracketFallbackUsed = preview.usedFallback;
+      registration.appliedPricingDayType = preview.ticketDayType === 'MIXED' ? null : preview.ticketDayType;
+      registration.exceededExpectedStay = registration.expectedUptoMinutes != null && preview.elapsedMinutes > registration.expectedUptoMinutes;
+      registration.description = `${registration.entryMode === 'BARCODE' ? 'Ticket: ' + registration.codeBarTicket : 'Patente: ' + (registration.licensePlateOriginal ?? 'sin patente')}, Ent: ${registration.entryTime}, Sal: ${registration.departureTime}`;
+      await this.linkToTodaysBoxList(registration, cashDelta, manager);
+      registration.ticket = null;
+      return repository.save(registration);
+    });
+    this.ticketGateway.emitNewRegistration(saved);
+    return saved;
   }
-
-  // ────────────────────────────────────────────────────────────────────────────────────────
-  // Historial de clientes frecuentes — se arma con una consulta sobre los tickets por patente
-  // ya cerrados, agrupados por patente. Sin tabla nueva: si el volumen crece y esto se pone
-  // lento, ahí conviene una tabla resumen actualizada al cerrar cada ticket, no antes.
-  // Quedan afuera los "sin patente" (no hay con qué agrupar).
-  // ────────────────────────────────────────────────────────────────────────────────────────
 
   async getFrequentCustomers(filters: { from?: string; to?: string; vehicleType?: string; minVisits?: number }) {
     const minVisits = filters.minVisits ?? 1;

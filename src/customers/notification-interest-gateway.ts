@@ -1,29 +1,10 @@
-import { WebSocketGateway, WebSocketServer, OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
+import { WebSocketGateway, WebSocketServer, OnGatewayConnection } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-
-@WebSocketGateway({
-  cors: {
-    origin: '*', // Permitir conexiones desde cualquier origen (cambiar en producción)
-    methods: ['GET', 'POST']
-  }
-})
-export class NotificationInterestGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer()
-  server: Server;
-
-  private logger = new Logger('NotificationGateway');
-
-  afterInit(server: Server) {
-  }
-
-  handleConnection(client: Socket) {
-  }
-
-  handleDisconnect(client: Socket) {
-  }
-
-  sendNotification(message: any) {
-    this.server.emit('notification-interest', message);
-  }
+import { TenantSocketAccess } from '../tenancy/tenant-socket';
+@WebSocketGateway({ cors: true })
+export class NotificationInterestGateway implements OnGatewayConnection {
+  @WebSocketServer() server: Server;
+  constructor(private readonly access: TenantSocketAccess) {}
+  handleConnection(client: Socket) { return this.access.connect(client); }
+  sendNotification(data: any) { return this.access.emit(this.server, 'notification-interest', data); }
 }

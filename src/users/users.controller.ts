@@ -41,7 +41,7 @@ export class UsersController {
   async updatePassword(
     @Param('id') id: string,
     @Body() updatePasswordDto: UpdatePasswordDto,
-  ): Promise<User> {
+  ) {
     return this.usersService.updatePassword(id, updatePasswordDto);
   }
 }
