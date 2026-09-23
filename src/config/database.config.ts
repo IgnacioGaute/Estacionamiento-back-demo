@@ -1,4 +1,6 @@
 import { TenantIsolation1790000001000 } from '../database/migrations/1790000001000-tenant-isolation';
+import { ParkingReceipts1790000004000 } from '../database/migrations/1790000004000-parking-receipts';
+import { RegistrationPhone1790000005000 } from '../database/migrations/1790000005000-registration-phone';
 import { AuthVersion1790000002000 } from '../database/migrations/1790000002000-auth-version';
 import { registerAs } from '@nestjs/config';
 import { NoteReaders1790000003000 } from '../database/migrations/1790000003000-note-readers';
@@ -41,7 +43,7 @@ export default registerAs(
       // runs on the very first boot of an empty database (see DB_BOOTSTRAP above).
       synchronize: bootstrap,
       logging: false,
-      migrations: [FlexibleVehicleTypes1790000000000, TenantIsolation1790000001000, AuthVersion1790000002000, NoteReaders1790000003000],
+      migrations: [FlexibleVehicleTypes1790000000000, TenantIsolation1790000001000, AuthVersion1790000002000, NoteReaders1790000003000, ParkingReceipts1790000004000, RegistrationPhone1790000005000],
       migrationsRun: !bootstrap,
       migrationsTableName: 'migrations',
     }) as TypeOrmModuleOptions,

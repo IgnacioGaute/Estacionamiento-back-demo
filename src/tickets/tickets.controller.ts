@@ -5,6 +5,9 @@ import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate
 import { CloseRegistrationDto } from './dto/close-registration.dto';
 import { PreviewPriceDto, SimulatePriceDto } from './dto/preview-price.dto';
 import { TicketsService } from './tickets.service';
+import { ParkingReceiptsService } from './parking-receipts.service';
+import { IssueParkingReceiptDto } from './dto/receipt-delivery.dto';
+import { ParseUUIDPipe } from '@nestjs/common';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
 import { Ticket } from './entities/ticket.entity';
@@ -24,7 +27,12 @@ import { CreateTicketRegistrationForDayDto, UpdateTicketStatusDto } from './dto/
 @Controller('tickets')
 @UseGuards(AuthOrTokenAuthGuard)
 export class TicketsController {
-  constructor(private readonly ticketsService: TicketsService) {}
+  constructor(private readonly ticketsService: TicketsService, private readonly parkingReceipts: ParkingReceiptsService) {}
+
+  @Post('registrations/:id/receipt')
+  issueParkingReceipt(@Param('id', ParseUUIDPipe) id: string, @Body() dto: IssueParkingReceiptDto) {
+    return this.parkingReceipts.issue(id, dto.kind);
+  }
 
   @Post()
   create(@Body() createTicketDto: CreateTicketDto) {

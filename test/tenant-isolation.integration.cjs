@@ -134,6 +134,7 @@ before(async () => {
       'TenantIsolation1790000001000',
     ))().up(migrationRunner);
     await new (load('database/migrations/1790000002000-auth-version', 'AuthVersion1790000002000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000004000-parking-receipts', 'ParkingReceipts1790000004000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -590,6 +591,7 @@ test('todos los endpoints rechazan acceso anónimo y el secreto interno no permi
       if (typeof handler !== 'function') continue;
       const method = methods[Reflect.getMetadata('method', handler)];
       if (!method || (ctor.name === 'AuthController' && name === 'login')) continue;
+      if (ctor.name === 'PublicParkingReceiptsController' && name === 'read') continue;
       const suffix = Reflect.getMetadata('path', handler);
       const route = ('/' + prefix + '/' + suffix).replace(/\/+/g, '/').replace(/:[^/]+/g, '11111111-1111-4111-8111-111111111111');
       await request(app.getHttpServer())[method](route).send({}).expect(401);
@@ -642,6 +644,91 @@ test('login y recuperación: sin hashes, consumo único del enlace y revocación
   await request(app.getHttpServer()).get('/tenant/context').set('Authorization', 'Bearer ' + token(adminB)).expect(403);
   await request(app.getHttpServer()).post('/auth/login').send({ identifier: user.email, password: 'admin-changed-pass' }).expect(401);
   await ds.getRepository(Empresa).update(b.empresaId, { estado: 'ACTIVA' });
+});
+
+test('comprobantes: permisos, aislamiento, entrega configurable y enlaces inmutables', async () => {
+  const http = (method, route, who = adminB, scope = b) => request(app.getHttpServer())[method](route)
+    .set('Authorization', 'Bearer ' + token(who)).set('X-Playa-Id', scope.playaId);
+  const settings = { whatsapp: true, qr: true, print: true, paperWidth: 58 };
+  const reg = await ds.getRepository(Registration).save({ playaId: b.playaId, description: 'Receipt test', price: 0,
+    licensePlateOriginal: 'ABC123', vehicleType: 'AUTO', entryDay: '2026-09-23', entryTime: '10:00:00' });
+  const path = `/tickets/registrations/${reg.id}/receipt`;
+  await http('post', path).send({ kind: 'ENTRY' }).expect(400);
+  await http('patch', '/tickets/schedule-settings').send({ receiptDelivery: settings }).expect(200);
+  const other = await http('get', '/tickets/schedule-settings', adminA, a).expect(200);
+  assert.equal(other.body.receiptDelivery.whatsapp, false);
+  await http('patch', '/tickets/schedule-settings').send({ receiptDelivery: { ...settings, qr: 'yes' } }).expect(400);
+  await http('patch', '/tickets/schedule-settings').send({ receiptDelivery: { ...settings, paperWidth: 10 } }).expect(400);
+  await http('post', path).send({ kind: 'EXIT' }).expect(400);
+  const operator = await ds.getRepository(User).save({ username: 'receiptOperator', email: 'receipt@example.test', firstName: 'Receipt', lastName: 'Operator', role: 'USER', empresaId: b.empresaId });
+  await ds.getRepository(load('tenancy/entities/usuario-playa.entity', 'UsuarioPlaya')).save({ usuarioId: operator.id, playaId: b.playaId, rolPlaya: 'OPERADOR' });
+  await http('patch', '/tickets/schedule-settings', operator).send({ receiptDelivery: settings }).expect(403);
+  const issued = await Promise.all([1, 2].map(() => http('post', path, operator).send({ kind: 'ENTRY' }).expect(201)));
+  assert.equal(issued[0].body.token, issued[1].body.token);
+  assert.match(issued[0].body.token, /^[a-f0-9]{64}$/);
+  const entryUrl = '/public/parking-receipts/' + issued[0].body.token;
+  const entry = await request(app.getHttpServer()).get(entryUrl).expect(200);
+  assert.equal(entry.body.plate, 'ABC123');
+  assert.equal(entry.body.total, null);
+  assert.equal(entry.body.playaId, undefined);
+  assert.equal(entry.body.registrationId, undefined);
+  assert.equal(entry.headers['cache-control'], 'no-store');
+  await http('patch', '/tickets/schedule-settings', adminA, a).send({ receiptDelivery: settings }).expect(200);
+  await http('post', path, adminA, a).send({ kind: 'ENTRY' }).expect(404);
+  const Receipt = load('tickets/entities/parking-receipt.entity', 'ParkingReceipt');
+  assert.equal(await scoped(a, () => ds.getRepository(Receipt).count()), 0);
+  await ds.getRepository(Registration).update(reg.id, { departureDay: '2026-09-23', departureTime: '11:00:00', price: 2500 });
+  await ds.getRepository(Movimiento).save([
+    { playaId: b.playaId, ticketRegistration: { id: reg.id }, usuario: { id: adminB.id }, monto: 700, tipo: 'ANTICIPO', metodo: 'CASH' },
+    { playaId: b.playaId, ticketRegistration: { id: reg.id }, usuario: { id: adminB.id }, monto: 1800, tipo: 'SALDO', metodo: 'TRANSFER' },
+    { playaId: b.playaId, ticketRegistration: { id: reg.id }, usuario: { id: adminB.id }, monto: -200, tipo: 'AJUSTE', metodo: 'CASH' },
+    { playaId: b.playaId, ticketRegistration: { id: reg.id }, usuario: { id: adminB.id }, monto: 200, tipo: 'CORTESIA', metodo: 'CASH' },
+  ]);
+  const exit = await http('post', path).send({ kind: 'EXIT' }).expect(201);
+  assert.notEqual(exit.body.token, issued[0].body.token);
+  assert.equal(exit.body.snapshot.total, 2500);
+  assert.equal(exit.body.snapshot.collected, 2300);
+  assert.deepEqual((await request(app.getHttpServer()).get(entryUrl).expect(200)).body, entry.body);
+  await request(app.getHttpServer()).get('/public/parking-receipts/' + '0'.repeat(64)).expect(404);
+  await request(app.getHttpServer()).get('/public/parking-receipts/' + reg.id).expect(404);
+  const daily = await ds.getRepository(RegistrationDay).save({ playaId: b.playaId, description: 'Daily receipt', price: 5000, paid: true, vehicleType: 'AUTO', vehiclePlateCustomer: 'DAY123', dateNow: '2026-09-23', ticketTimeType: 'DIA', days: 1, retired: false });
+  const dailyPath = `/tickets/registrations/${daily.id}/receipt`;
+  const dailyEntry = await http('post', dailyPath).send({ kind: 'ENTRY' }).expect(201);
+  assert.equal(dailyEntry.body.snapshot.plate, 'DAY123');
+  await http('post', dailyPath).send({ kind: 'EXIT' }).expect(400);
+  await ds.getRepository(RegistrationDay).update(daily.id, { retired: true, retiredAt: new Date('2026-09-23T18:00:00Z') });
+  const dailyExit = await http('post', dailyPath).send({ kind: 'EXIT' }).expect(201);
+  assert.equal(dailyExit.body.snapshot.departureTime, '15:00:00');
+  assert.equal(dailyExit.body.snapshot.collected, 5000);
+  await http('patch', '/tickets/schedule-settings').send({ receiptDelivery: { ...settings, whatsapp: false, qr: false, print: false } }).expect(200);
+  await http('post', path).send({ kind: 'EXIT' }).expect(400);
+  await request(app.getHttpServer()).get(entryUrl).expect(200);
+});
+
+test('telefono: primera entrada figura en frecuentes, normaliza, recupera contacto y no lo publica', async () => {
+  const http = (method, route) => request(app.getHttpServer())[method](route)
+    .set('Authorization', 'Bearer ' + token(adminB)).set('X-Playa-Id', b.playaId);
+  await http('post', '/tickets/registrations/by-plate').send({ licensePlate: 'PHONE1', vehicleType: 'AUTO', phoneCustomer: 'not a phone' }).expect(400);
+  const entry = await http('post', '/tickets/registrations/by-plate').send({ licensePlate: 'PHONE1', vehicleType: 'AUTO', phoneCustomer: '+54 9 (11) 1234-5678' }).expect(201);
+  assert.equal(entry.body.phoneCustomer, '5491112345678');
+  let customers = (await http('get', '/tickets/registrations/frequent?minVisits=2').expect(200)).body;
+  const contact = customers.find(row => row.licensePlateNormalized === 'PHONE1');
+  assert.ok(contact);
+  assert.equal(contact.visits, 1);
+  assert.equal(contact.phoneCustomer, '5491112345678');
+  assert.equal(contact.medianDurationMinutes, null);
+  const other = await scoped(a, () => app.get(TicketsService).getFrequentCustomers({ minVisits: 2 }));
+  assert.ok(!other.some(row => row.licensePlateNormalized === 'PHONE1'));
+  await http('patch', '/tickets/schedule-settings').send({ receiptDelivery: { whatsapp: true, qr: false, print: false, paperWidth: 80 } }).expect(200);
+  const receipt = await http('post', `/tickets/registrations/${entry.body.id}/receipt`).send({ kind: 'ENTRY' }).expect(201);
+  assert.equal(receipt.body.phoneCustomer, '5491112345678');
+  const publicReceipt = await request(app.getHttpServer()).get('/public/parking-receipts/' + receipt.body.token).expect(200);
+  assert.equal(publicReceipt.body.phoneCustomer, undefined);
+  assert.ok(!JSON.stringify(publicReceipt.body).includes('5491112345678'));
+  await ds.getRepository(Registration).update(entry.body.id, { departureDay: '2026-09-23', departureTime: '15:00:00' });
+  await http('post', '/tickets/registrations/by-plate').send({ licensePlate: 'PHONE1', vehicleType: 'AUTO', phoneCustomer: '+54 9 11 1111 1111' }).expect(201);
+  customers = (await http('get', '/tickets/registrations/frequent?minVisits=2').expect(200)).body;
+  assert.equal(customers.find(row => row.licensePlateNormalized === 'PHONE1').phoneCustomer, '5491111111111');
 });
 
 test('login limita intentos repetidos', async () => {

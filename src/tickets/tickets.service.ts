@@ -196,7 +196,7 @@ async removeTicketPrice(id: string) {
     const storedOptions = latest?.pricingOptions ?? defaultPricingOptions();
     // La permanencia se retiró de la configuración actual. Las copias guardadas en
     // estadías abiertas siguen intactas; ninguna entrada nueva usa reglas ocultas.
-    return { ...(latest ?? this.defaultTicketSchedule), pricingOptions: { ...storedOptions, stay: { ...storedOptions.stay, enabled: false } } };
+    return { ...(latest ?? this.defaultTicketSchedule), receiptDelivery: latest?.receiptDelivery ?? { whatsapp: false, qr: false, print: false, paperWidth: 80 as const }, pricingOptions: { ...storedOptions, stay: { ...storedOptions.stay, enabled: false } } };
   }
 
   async updateSchedule(dto: UpdateTicketScheduleDto) {
@@ -500,7 +500,11 @@ async createRegistrationForDay(createTicketRegistrationForDayDto: CreateTicketRe
       }
       ticket.paid = paid;
       ticket.paymentMetodo = method;
-      if (dto.retired !== undefined) ticket.retired = dto.retired;
+      if (dto.retired !== undefined) {
+        if (dto.retired && !ticket.retired) ticket.retiredAt = new Date();
+        if (!dto.retired) ticket.retiredAt = null;
+        ticket.retired = dto.retired;
+      }
       return repo.save(ticket);
     });
   }
@@ -844,6 +848,7 @@ async removePriceBracket(id: string) {
         licensePlateSearch,
         casilleroNumber: dto.casilleroNumber ?? null,
         lastNameCustomer: dto.lastNameCustomer ?? null,
+        phoneCustomer: dto.phoneCustomer?.trim().replace(/[\s()+-]/g, '') || null,
         noPlate: !!dto.noPlate,
         duplicatePlateOverrideReason: dto.duplicateOverride ? dto.duplicateOverrideReason ?? null : null,
         duplicateOfRegistrationId,
@@ -884,7 +889,7 @@ async removePriceBracket(id: string) {
     return qb.orderBy('r.entryDay', 'ASC').addOrderBy('r.entryTime', 'ASC').getMany();
   }
 
-  private async collectedAmount(registration: TicketRegistration, manager?: EntityManager) {
+  async collectedAmount(registration: TicketRegistration, manager?: EntityManager) {
     const amount = await this.movimientosService.sumByRegistration(registration.id, manager);
     if (registration.pricingSnapshot) return amount;
     registration.legacyCollectedOffset ??= Math.max(0, (registration.advancePaidAmount ?? 0) - amount);
@@ -975,6 +980,7 @@ async removePriceBracket(id: string) {
       .select('r.licensePlateNormalized', 'licensePlateNormalized')
       .addSelect('MAX(r.licensePlateOriginal)', 'licensePlateOriginal')
       .addSelect('MAX(r.lastNameCustomer)', 'lastNameCustomer')
+      .addSelect(`(ARRAY_AGG(r."phoneCustomer" ORDER BY r."createdAt" DESC, r.id DESC) FILTER (WHERE r."phoneCustomer" IS NOT NULL AND r."phoneCustomer" <> ''))[1]`, 'phoneCustomer')
       .addSelect('MAX(r.vehicleType)', 'vehicleType')
       .addSelect('COUNT(*)', 'visits')
       .addSelect('MIN(r.entryDay)', 'firstVisit')
@@ -984,8 +990,7 @@ async removePriceBracket(id: string) {
       .addSelect(`PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ${durationExpr})`, 'medianDurationMinutes')
       .addSelect(`MIN(${durationExpr})`, 'minDurationMinutes')
       .addSelect(`MAX(${durationExpr})`, 'maxDurationMinutes')
-      .where('r.departureTime IS NOT NULL')
-      .andWhere('r.licensePlateNormalized IS NOT NULL')
+      .where('r.licensePlateNormalized IS NOT NULL')
       .andWhere('r.noPlate = false')
       .groupBy('r.licensePlateNormalized');
 
@@ -993,7 +998,7 @@ async removePriceBracket(id: string) {
     if (filters.to) qb.andWhere('r.entryDay <= :to', { to: filters.to });
     if (filters.vehicleType) qb.andWhere('r.vehicleType = :vehicleType', { vehicleType: filters.vehicleType });
 
-    qb.having('COUNT(*) >= :minVisits', { minVisits });
+    qb.having(`COUNT(*) >= :minVisits OR BOOL_OR(r."phoneCustomer" IS NOT NULL AND r."phoneCustomer" <> '')`, { minVisits });
     qb.orderBy('visits', 'DESC');
 
     const rows = await qb.getRawMany();
@@ -1009,6 +1014,7 @@ async removePriceBracket(id: string) {
         licensePlateNormalized: row.licensePlateNormalized as string,
         licensePlateOriginal: row.licensePlateOriginal as string,
         lastNameCustomer: row.lastNameCustomer as string | null,
+        phoneCustomer: row.phoneCustomer as string | null,
         vehicleType: row.vehicleType as string,
         visits,
         firstVisit,

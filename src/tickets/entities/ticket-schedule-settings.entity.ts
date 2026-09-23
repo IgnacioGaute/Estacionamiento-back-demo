@@ -16,6 +16,9 @@ import { Playa } from 'src/tenancy/entities/playa.entity';
 @Index(['playaId'], { unique: true })
 @Entity({ name: 'ticket_schedule_settings' })
 export class TicketScheduleSettings {
+  @Column('jsonb', { default: () => `'{"whatsapp":false,"qr":false,"print":false,"paperWidth":80}'::jsonb` })
+  receiptDelivery: { whatsapp: boolean; qr: boolean; print: boolean; paperWidth: 58 | 80 };
+
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

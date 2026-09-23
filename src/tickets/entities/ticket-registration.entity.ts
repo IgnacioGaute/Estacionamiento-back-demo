@@ -81,6 +81,9 @@ export class TicketRegistration {
   @Column('varchar', { length: 100, nullable: true })
   lastNameCustomer: string | null;
 
+  @Column('varchar', { length: 15, nullable: true })
+  phoneCustomer: string | null;
+
   // @deprecated — reemplazado por licensePlateOriginal/Normalized/Search. Se deja de escribir
   // pero no se borra la columna (con synchronize:true, borrar el @Column borra los datos).
   @Column('varchar', { length: 50, nullable: true })

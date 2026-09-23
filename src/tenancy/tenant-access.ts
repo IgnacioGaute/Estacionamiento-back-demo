@@ -142,6 +142,7 @@ export class TenantGuard implements CanActivate {
     const req = context.switchToHttp().getRequest();
     const controller = context.getClass().name;
     const handler = context.getHandler().name;
+    if (controller === 'PublicParkingReceiptsController' && handler === 'read') return true;
     const serviceSecret = this.config.getOrThrow<string>('API_SECRET_TOKEN');
     if (controller === 'AuthController' && handler === 'login') {
       limitLogin(req.ip ?? req.socket?.remoteAddress ?? 'unknown', req.body?.identifier);
@@ -187,7 +188,7 @@ export class TenantInterceptor implements NestInterceptor {
     const req = context.switchToHttp().getRequest();
     const controller = context.getClass().name;
     if (
-      ['AuthController', 'TenancyController', 'TenantContextController'].includes(controller) ||
+      ['AuthController', 'TenancyController', 'TenantContextController', 'PublicParkingReceiptsController'].includes(controller) ||
       req.platformAccountService
     )
       return next.handle();
