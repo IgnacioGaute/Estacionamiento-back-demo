@@ -2,6 +2,7 @@ import { DataSource } from 'typeorm';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { installTenantConnections } from './tenancy/tenant-context';
 import { TenantGuard, TenantInterceptor } from './tenancy/tenant-access';
+import { AuditInterceptor } from './tenancy/audit-interceptor';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AppConfig, DatabaseConfig } from './config';
@@ -59,6 +60,11 @@ import { AssistantModule } from './assistant/assistant.module';
   AssistantModule
 ],
   controllers: [],
-  providers: [{ provide: APP_GUARD, useClass: TenantGuard }, { provide: APP_INTERCEPTOR, useClass: TenantInterceptor }],
+  providers: [
+    { provide: APP_GUARD, useClass: TenantGuard },
+    { provide: APP_INTERCEPTOR, useClass: TenantInterceptor },
+    // Después del de tenant: necesita el scope de empresa y playa ya resuelto.
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
+  ],
 })
 export class AppModule {}

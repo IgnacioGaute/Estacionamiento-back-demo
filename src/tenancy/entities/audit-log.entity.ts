@@ -38,6 +38,11 @@ export class AuditLog {
   @Column('varchar', { length: 100, nullable: true })
   entidadId: string | null;
 
+  // Qué cambió, ya resumido para mostrar: { precio: 1200, vehiculo: 'AUTO' }. No guarda el
+  // registro entero ni nada sensible (contraseñas, tokens): es para leer, no para restaurar.
+  @Column('jsonb', { nullable: true })
+  detalle: Record<string, unknown> | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   fecha: Date;
 }

@@ -15,6 +15,7 @@ import { DataSource, In, Repository } from 'typeorm';
 import { Empresa } from './entities/empresa.entity';
 import { Playa } from './entities/playa.entity';
 import { UsuarioPlaya } from './entities/usuario-playa.entity';
+import { AuditLog } from './entities/audit-log.entity';
 import { User } from 'src/users/entities/user.entity';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
@@ -237,7 +238,12 @@ export class TenancyService {
       );
       await manager.getRepository(Playa).delete(id);
     });
-    return { message: 'Playa eliminada.' };
+    // Devuelve a qué empresa pertenecía para que el controlador pueda auditar el borrado.
+    return {
+      message: 'Playa eliminada.',
+      empresaId: playa.empresaId,
+      nombre: playa.nombre,
+    };
   }
 
   private async contarOperacion(playaId: string): Promise<number> {
@@ -301,5 +307,335 @@ export class TenancyService {
       );
       return repo.save(filas);
     });
+  }
+
+  // audit_log estaba creada y vacía: nadie escribía en ella. La administración de la plataforma
+  // es lo primero que conviene registrar, porque son las acciones que nadie más puede deshacer
+  // (suspender una empresa, borrar una playa, dar de alta un usuario).
+  //
+  // Nunca hace fallar la operación que audita: si el registro no se puede escribir, la acción ya
+  // ocurrió y perderla sería peor que perder su rastro.
+  async registrarAuditoria(entrada: {
+    empresaId: string;
+    usuarioId?: string | null;
+    playaId?: string | null;
+    accion: string;
+    entidad: string;
+    entidadId?: string | null;
+  }) {
+    try {
+      await this.dataSource.getRepository(AuditLog).insert({
+        empresaId: entrada.empresaId,
+        usuarioId: entrada.usuarioId ?? null,
+        playaId: entrada.playaId ?? null,
+        accion: entrada.accion,
+        entidad: entrada.entidad,
+        entidadId: entrada.entidadId ?? null,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo registrar la auditoría ${entrada.accion}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
+  async empresaDeUsuario(usuarioId: string) {
+    const usuario = await this.userRepository.findOne({
+      where: { id: usuarioId },
+      withDeleted: true,
+    });
+    return usuario?.empresaId ?? null;
+  }
+
+  async actividadDeEmpresa(empresaId: string, limite = 40) {
+    const filas = await this.dataSource.query(
+      `SELECT a.accion, a.entidad, a."entidadId", a.fecha, a."playaId", a.detalle,
+              u."firstName", u."lastName", p.nombre AS playa
+       FROM audit_log a
+       LEFT JOIN users u ON u.id = a."usuarioId"
+       LEFT JOIN playas p ON p.id = a."playaId"
+       WHERE a."empresaId" = $1
+       ORDER BY a.fecha DESC
+       LIMIT $2`,
+      [empresaId, Math.min(Math.max(limite, 1), 200)],
+    );
+    return filas.map((f: any) => ({
+      accion: f.accion,
+      entidad: f.entidad,
+      entidadId: f.entidadId,
+      fecha: f.fecha,
+      detalle: f.detalle ?? null,
+      playa: f.playa ?? null,
+      usuario:
+        f.firstName || f.lastName
+          ? `${f.firstName ?? ''} ${f.lastName ?? ''}`.trim()
+          : null,
+    }));
+  }
+
+  // La ficha de una empresa. Misma forma que un elemento de findAllEmpresas, para que la página
+  // de detalle y el panel compartan tipos en el frontend.
+  async findEmpresa(id: string) {
+    const empresas = await this.findAllEmpresas();
+    const empresa = empresas.find((e) => e.id === id);
+    if (!empresa) throw new NotFoundException('Empresa no encontrada.');
+    return empresa;
+  }
+
+  // Métricas de toda la plataforma, agregadas por playa: el front las suma por empresa y por
+  // filtro. Son cuatro consultas agrupadas y no una por playa, porque el panel las pide en cada
+  // carga y una plataforma con decenas de playas haría decenas de queries.
+  //
+  // No pasa por el TenantInterceptor (TenancyController está excluido), así que la conexión
+  // conserva el rol dueño y ve todas las playas. Cualquier consulta que se agregue acá tiene que
+  // seguir siendo de solo lectura.
+  async metrics(dias: number) {
+    const ventana = Math.min(Math.max(Math.trunc(dias) || 30, 1), 365);
+    const desde = new Date(Date.now() - ventana * 24 * 60 * 60 * 1000);
+
+    const [cobros, estadias, turnos, tarifas] = await Promise.all([
+      // CORTESIA es una estadía bonificada: figura como movimiento pero no es plata cobrada.
+      this.dataSource.query(
+        `SELECT "playaId", COALESCE(SUM(monto), 0)::int AS cobrado, MAX("fechaHora") AS ultima
+         FROM movimientos WHERE tipo <> 'CORTESIA' AND "fechaHora" >= $1 AND "playaId" IS NOT NULL
+         GROUP BY "playaId"`,
+        [desde],
+      ),
+      this.dataSource.query(
+        `SELECT "playaId", COUNT(*)::int AS abiertas, MAX("createdAt") AS ultima
+         FROM ticket_registrations WHERE "departureDay" IS NULL AND "playaId" IS NOT NULL
+         GROUP BY "playaId"`,
+      ),
+      this.dataSource.query(
+        `SELECT "playaId", COUNT(*)::int AS abiertos FROM turnos
+         WHERE estado = 'ABIERTO' AND "playaId" IS NOT NULL GROUP BY "playaId"`,
+      ),
+      this.dataSource.query(
+        `SELECT "playaId", COUNT(*)::int AS brackets FROM ticket_price_brackets
+         WHERE "playaId" IS NOT NULL GROUP BY "playaId"`,
+      ),
+    ]);
+
+    const playas = await this.playaRepository.find({
+      order: { nombre: 'ASC' },
+    });
+    const porPlaya = (filas: any[], id: string) =>
+      filas.find((f) => f.playaId === id);
+    const masReciente = (a: Date | null, b: Date | null) =>
+      !a ? b : !b ? a : a > b ? a : b;
+
+    return {
+      desde: desde.toISOString(),
+      dias: ventana,
+      playas: playas.map((playa) => {
+        const cobro = porPlaya(cobros, playa.id);
+        const estadia = porPlaya(estadias, playa.id);
+        const ultima = masReciente(
+          cobro?.ultima ? new Date(cobro.ultima) : null,
+          estadia?.ultima ? new Date(estadia.ultima) : null,
+        );
+        return {
+          playaId: playa.id,
+          empresaId: playa.empresaId,
+          nombre: playa.nombre,
+          cobrado: cobro?.cobrado ?? 0,
+          estadiasAbiertas: estadia?.abiertas ?? 0,
+          turnosAbiertos: porPlaya(turnos, playa.id)?.abiertos ?? 0,
+          // Sin franjas de precio no se puede registrar una entrada: es el aviso más útil del panel.
+          tieneTarifas: (porPlaya(tarifas, playa.id)?.brackets ?? 0) > 0,
+          ultimaOperacion: ultima ? ultima.toISOString() : null,
+        };
+      }),
+    };
+  }
+
+  // El detalle que consume la pantalla de métricas: serie diaria contra el período anterior,
+  // reparto por medio de pago y actividad por hora y día de la semana. Todo en horario de
+  // Argentina, que es como lo lee el operador; `fechaHora` es timestamptz, así que la conversión
+  // la hace Postgres y no hay que recalcular nada acá.
+  async metricsDetalle(dias: number, empresaId?: string) {
+    const ventana = Math.min(Math.max(Math.trunc(dias) || 30, 1), 365);
+    const zona = 'America/Argentina/Buenos_Aires';
+    const desde = new Date(Date.now() - ventana * 24 * 60 * 60 * 1000);
+    const desdePrevio = new Date(
+      Date.now() - ventana * 2 * 24 * 60 * 60 * 1000,
+    );
+
+    // Un filtro por empresa se resuelve con las playas de esa empresa: los movimientos no
+    // guardan empresaId.
+    const playas = await this.playaRepository.find(
+      empresaId ? { where: { empresaId } } : {},
+    );
+    const ids = playas.map((p) => p.id);
+    if (!ids.length)
+      return {
+        dias: ventana,
+        serie: [],
+        anterior: [],
+        serieEstadias: [],
+        metodos: [],
+        empresas: [],
+        horas: [],
+        totales: { actual: 0, anterior: 0, estadias: 0, estadiasAnterior: 0 },
+      };
+
+    const [serie, metodos, horas, estadias, empresas, cierresDiarios] =
+      await Promise.all([
+        this.dataSource.query(
+          `SELECT ("fechaHora" AT TIME ZONE $3)::date AS dia, COALESCE(SUM(monto), 0)::int AS total
+         FROM movimientos
+         WHERE tipo <> 'CORTESIA' AND "playaId" = ANY($1) AND "fechaHora" >= $2
+         GROUP BY dia ORDER BY dia`,
+          [ids, desdePrevio, zona],
+        ),
+        this.dataSource.query(
+          `SELECT metodo, COALESCE(SUM(monto), 0)::int AS total
+         FROM movimientos
+         WHERE tipo <> 'CORTESIA' AND "playaId" = ANY($1) AND "fechaHora" >= $2
+         GROUP BY metodo`,
+          [ids, desde],
+        ),
+        this.dataSource.query(
+          `SELECT EXTRACT(ISODOW FROM ("createdAt" AT TIME ZONE $3))::int AS dia,
+                EXTRACT(HOUR FROM ("createdAt" AT TIME ZONE $3))::int AS hora,
+                COUNT(*)::int AS entradas
+         FROM ticket_registrations
+         WHERE "playaId" = ANY($1) AND "createdAt" >= $2
+         GROUP BY dia, hora`,
+          [ids, desde, zona],
+        ),
+        // Estadías cerradas del período y del anterior en una sola pasada: el KPI muestra la
+        // variación igual que el de cobrado, y sin la segunda cuenta no habría con qué comparar.
+        this.dataSource.query(
+          `SELECT COUNT(*) FILTER (WHERE "createdAt" >= $2)::int AS total,
+                COUNT(*) FILTER (WHERE "createdAt" < $2)::int AS anterior
+         FROM ticket_registrations
+         WHERE "playaId" = ANY($1) AND "departureDay" IS NOT NULL AND "createdAt" >= $3`,
+          [ids, desde, desdePrevio],
+        ),
+        // Comparativa por empresa: cobrado de este período y del anterior en una sola pasada, más
+        // las estadías que efectivamente se cerraron.
+        this.dataSource.query(
+          `SELECT p."empresaId", e.nombre,
+                COALESCE(SUM(m.monto) FILTER (WHERE m."fechaHora" >= $2), 0)::int AS cobrado,
+                COALESCE(SUM(m.monto) FILTER (WHERE m."fechaHora" < $2), 0)::int AS anterior
+         FROM movimientos m
+         JOIN playas p ON p.id = m."playaId"
+         JOIN empresas e ON e.id = p."empresaId"
+         WHERE m.tipo <> 'CORTESIA' AND m."playaId" = ANY($1) AND m."fechaHora" >= $3
+         GROUP BY p."empresaId", e.nombre
+         ORDER BY cobrado DESC`,
+          [ids, desde, desdePrevio],
+        ),
+        // Estadías cerradas por día: el sparkline del KPI dibuja su propia forma. Con la serie de
+        // dinero dibujaba otra cosa con el rótulo equivocado.
+        this.dataSource.query(
+          `SELECT ("createdAt" AT TIME ZONE $3)::date AS dia, COUNT(*)::int AS total
+         FROM ticket_registrations
+         WHERE "playaId" = ANY($1) AND "departureDay" IS NOT NULL AND "createdAt" >= $2
+         GROUP BY dia ORDER BY dia`,
+          [ids, desde, zona],
+        ),
+      ]);
+
+    const cerradasPorEmpresa = await this.dataSource.query(
+      `SELECT p."empresaId", COUNT(*)::int AS estadias
+       FROM ticket_registrations r
+       JOIN playas p ON p.id = r."playaId"
+       WHERE r."playaId" = ANY($1) AND r."departureDay" IS NOT NULL AND r."createdAt" >= $2
+       GROUP BY p."empresaId"`,
+      [ids, desde],
+    );
+
+    const corte = desde.toISOString().slice(0, 10);
+    const dia = (f: any) => new Date(f.dia).toISOString().slice(0, 10);
+    const actuales = serie.filter((f: any) => dia(f) >= corte);
+    const previos = serie.filter((f: any) => dia(f) < corte);
+    const sumar = (filas: any[]) =>
+      filas.reduce((total, f) => total + Number(f.total), 0);
+
+    return {
+      dias: ventana,
+      serie: actuales.map((f: any) => ({
+        dia: dia(f),
+        total: Number(f.total),
+      })),
+      anterior: previos.map((f: any) => ({
+        dia: dia(f),
+        total: Number(f.total),
+      })),
+      serieEstadias: cierresDiarios.map((f: any) => ({
+        dia: dia(f),
+        total: Number(f.total),
+      })),
+      metodos: metodos.map((f: any) => ({
+        metodo: f.metodo,
+        total: Number(f.total),
+      })),
+      // ISODOW: 1 = lunes … 7 = domingo.
+      horas: horas.map((f: any) => ({
+        dia: f.dia,
+        hora: f.hora,
+        entradas: f.entradas,
+      })),
+      empresas: empresas.map((e: any) => ({
+        empresaId: e.empresaId,
+        nombre: e.nombre,
+        cobrado: Number(e.cobrado),
+        anterior: Number(e.anterior),
+        estadias: Number(
+          cerradasPorEmpresa.find((c: any) => c.empresaId === e.empresaId)
+            ?.estadias ?? 0,
+        ),
+      })),
+      totales: {
+        actual: sumar(actuales),
+        anterior: sumar(previos),
+        estadias: Number(estadias[0]?.total ?? 0),
+        estadiasAnterior: Number(estadias[0]?.anterior ?? 0),
+      },
+    };
+  }
+
+  // Lo que el panel muestra ANTES de ofrecer el borrado: los mismos bloqueos que aplican
+  // removeEmpresa y removePlaya, para que el operador vea por qué no puede en lugar de recibir
+  // el rechazo después de confirmar.
+  async resumenEliminacionEmpresa(id: string) {
+    const empresa = await this.empresaRepository.findOne({
+      where: { id },
+      relations: ['playas'],
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada.');
+    const playas = empresa.playas ?? [];
+    const usuarios = await this.userRepository.count({
+      where: { empresaId: id },
+      withDeleted: true,
+    });
+    let registros = 0;
+    for (const playa of playas)
+      registros += await this.contarOperacion(playa.id);
+    return {
+      nombre: empresa.nombre,
+      estado: empresa.estado,
+      playas: playas.length,
+      usuarios,
+      registros,
+      puedeEliminar: playas.length === 0 && usuarios === 0,
+    };
+  }
+
+  async resumenEliminacionPlaya(id: string) {
+    const playa = await this.playaRepository.findOne({ where: { id } });
+    if (!playa) throw new NotFoundException('Playa no encontrada.');
+    const registros = await this.contarOperacion(id);
+    const usuarios = await this.usuarioPlayaRepository.count({
+      where: { playaId: id },
+    });
+    return {
+      nombre: playa.nombre,
+      registros,
+      usuarios,
+      puedeEliminar: registros === 0,
+    };
   }
 }
