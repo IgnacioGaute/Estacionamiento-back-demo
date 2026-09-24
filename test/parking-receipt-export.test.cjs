@@ -5,14 +5,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');
 const puppeteer = require('puppeteer');
-const { PDFDocument } = require('../../estacionamiento-front-demo/node_modules/pdf-lib');
+const { PDFDocument } = require('../../estacionamiento-comprobantes-demo/node_modules/pdf-lib');
 
 test('exporta entrada y salida a PNG y PDF sin recortar textos largos', async () => {
   const browser = await puppeteer.launch({ headless: true });
   try {
     const page = await browser.newPage();
-    await page.addScriptTag({ path: require.resolve('../../estacionamiento-front-demo/node_modules/pdf-lib/dist/pdf-lib.min.js') });
-    const source = fs.readFileSync(path.resolve(__dirname, '../../estacionamiento-front-demo/src/utils/parking-receipt-export.ts'), 'utf8');
+    await page.addScriptTag({ path: require.resolve('../../estacionamiento-comprobantes-demo/node_modules/pdf-lib/dist/pdf-lib.min.js') });
+    const source = fs.readFileSync(path.resolve(__dirname, '../../estacionamiento-comprobantes-demo/src/utils/parking-receipt-export.ts'), 'utf8');
     const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
     await page.addScriptTag({ content: 'var exports = {}; var require = () => window.PDFLib;' + js });
     const results = await page.evaluate(async () => {

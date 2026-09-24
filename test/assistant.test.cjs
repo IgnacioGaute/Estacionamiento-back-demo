@@ -8,6 +8,28 @@ const { tenantContext } = require('../dist/tenancy/tenant-context');
 const scope = { empresaId: 'company-a', playaId: 'beach-a', userId: 'user-a', role: 'USER' };
 const service = (ds = {}, config = { get: () => undefined }) => new AssistantService(config, ds, {}, {});
 
+test('fallo despues de una herramienta reinicia con respaldo sin filtrar firmas del modelo anterior', async () => {
+  const oldFetch = global.fetch;
+  const s = service({}, { get: key => key === 'GEMINI_API_KEY' ? 'test-key' : key === 'GEMINI_MODEL' ? 'primary' : key === 'GEMINI_FALLBACK_MODELS' ? 'backup' : undefined });
+  s.query = async () => ({ total: 3 });
+  let primaryCalls = 0;
+  const emitted = [];
+  global.fetch = async (url, init) => {
+    if (url.includes('/primary:')) {
+      if (++primaryCalls === 1) return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ functionCall: { name: 'active_vehicles', args: {} }, thoughtSignature: 'private-primary-signature' }] } }] }));
+      return new Response('', { status: 503, headers: { 'retry-after': '0' } });
+    }
+    assert.ok(!init.body.includes('private-primary-signature'));
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'Respuesta del respaldo.' }] } }] }));
+  };
+  try {
+    const result = await tenantContext.run(scope, () => s.chat({ message: 'Ayuda' }, event => emitted.push(event)));
+    assert.equal(result.answer, 'Respuesta del respaldo.');
+    assert.deepEqual(emitted, [{ texto: 'Respuesta del respaldo.' }]);
+    assert.equal(primaryCalls, 3);
+  } finally { global.fetch = oldFetch; }
+});
+
 test('tools reject missing tenant context and operator history access', async () => {
   await assert.rejects(service().query('active_vehicles', {}), e => e.getStatus() === 403);
   await tenantContext.run(scope, async () => {
@@ -24,6 +46,25 @@ test('ticket lookup pins the authenticated playa and never calculates unavailabl
     assert.deepEqual(criteria.where, { id, playaId: 'beach-a' });
   });
 });
+test('receipt settings are read only from the authenticated playa', async () => {
+  const receiptDelivery = { whatsapp: true, qr: false, print: true, paperWidth: 58 };
+  const s = service({ getRepository: () => ({
+    findOne: async q => {
+      assert.deepEqual(q.where, { playaId: scope.playaId });
+      assert.equal(q.select.receiptDelivery, true);
+      return { receiptDelivery };
+    },
+    findAndCount: async q => {
+      assert.deepEqual(q.where, { playaId: scope.playaId });
+      return [[], 0];
+    },
+  }) });
+  await tenantContext.run(scope, async () => {
+    const result = await s.query('pricing_settings', { playaId: 'other-playa' });
+    assert.deepEqual(result.schedule.receiptDelivery, receiptDelivery);
+  });
+});
+
 test('missing key fails safely without contacting provider', async () => {
   await tenantContext.run(scope, () => assert.rejects(service().chat({ message: 'Ayuda' }), e => e.getStatus() === 503));
 });
