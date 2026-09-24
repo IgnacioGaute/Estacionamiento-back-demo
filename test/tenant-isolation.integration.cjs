@@ -731,6 +731,28 @@ test('telefono: primera entrada figura en frecuentes, normaliza, recupera contac
   assert.equal(customers.find(row => row.licensePlateNormalized === 'PHONE1').phoneCustomer, '5491111111111');
 });
 
+test('configuracion: turnos desactivados permiten caja diaria y bloquean aperturas sin afectar otra playa', async () => {
+  const service = app.get(TicketsService);
+  const shifts = app.get(TurnosService);
+  await scoped(b, async () => {
+    await service.updateSchedule({ shiftsEnabled: false });
+    assert.equal((await service.getSchedule()).shiftsEnabled, false);
+    await assert.rejects(shifts.open(b.userId, { fondoInicial: 0 }), /desactivados/);
+    await app.get(BoxListsService).createBox({ date: '2026-09-24', totalPrice: 150 });
+    await service.updateSchedule({ shiftsEnabled: true });
+    const shift = await shifts.open(b.userId, { fondoInicial: 100 });
+    await assert.rejects(service.updateSchedule({ shiftsEnabled: false }), /Cerrá el turno/);
+    await shifts.close(shift.id, b.userId, { efectivoContado: 100, efectivoEsperado: 100, efectivoParaSiguiente: 100 }, 'ADMIN');
+    await service.updateSchedule({ shiftsEnabled: false });
+    // Hay historial v2, pero al desactivar no debe exigirse abrir otro turno.
+    await app.get(BoxListsService).createBox({ date: '2026-09-24', totalPrice: 250 });
+    const preserved = await ds.getRepository(Turno).findOneByOrFail({ id: shift.id });
+    assert.equal(preserved.efectivoParaSiguiente, 100);
+    assert.equal(preserved.estado, 'CERRADO');
+  });
+  await scoped(a, async () => assert.equal((await service.getSchedule()).shiftsEnabled, true));
+});
+
 test('login limita intentos repetidos', async () => {
   for (let i = 0; i < 15; i++) await request(app.getHttpServer()).post('/auth/login').send({ identifier: 'limit@example.test', password: 'wrong-password' }).expect(401);
   await request(app.getHttpServer()).post('/auth/login').send({ identifier: 'limit@example.test', password: 'wrong-password' }).expect(429);

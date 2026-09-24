@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull, Not, Repository } from 'typeorm';
 import { Turno } from './entities/turno.entity';
+import { TicketScheduleSettings } from 'src/tickets/entities/ticket-schedule-settings.entity';
 import { CashEntry } from './entities/cash-entry.entity';
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
 import { OpenTurnoDto } from './dto/open-turno.dto';
@@ -68,6 +69,8 @@ export class TurnosService {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const repo = manager.getRepository(Turno);
       if (await repo.exists({ where: { estado: 'ABIERTO' } })) throw new ConflictException('Ya hay un turno abierto en esta caja. Cerralo antes del relevo.');
+      const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
+      if (settings?.shiftsEnabled === false) throw new BadRequestException('Los turnos están desactivados. El administrador puede activarlos en Configuración.');
       const last = await repo.findOne({ where: { estado: 'CERRADO', efectivoParaSiguiente: Not(IsNull()), recibidoPorTurnoId: IsNull() }, order: { fechaCierre: 'DESC' } });
       const pending = last && !last.recibidoPorTurnoId ? last : null;
       if ((pending?.id ?? undefined) !== dto.turnoAnteriorId) throw new ConflictException('El relevo cambió. Actualizá la caja y confirmá el fondo que recibís.');

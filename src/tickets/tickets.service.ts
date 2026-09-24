@@ -188,7 +188,7 @@ async removeTicketPrice(id: string) {
 }
 
 
-  private readonly defaultTicketSchedule = { dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, barcodeTicketsEnabled: true, pricingDayTypeBasis: 'EXIT' as const };
+  private readonly defaultTicketSchedule = { dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, barcodeTicketsEnabled: true, shiftsEnabled: true, pricingDayTypeBasis: 'EXIT' as const };
 
   async getSchedule(manager?: EntityManager) {
     const repository = manager ? manager.getRepository(TicketScheduleSettings) : this.ticketScheduleSettingsRepository;
@@ -202,6 +202,11 @@ async removeTicketPrice(id: string) {
   async updateSchedule(dto: UpdateTicketScheduleDto) {
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
+      if (dto.shiftsEnabled === false) {
+        await manager.query('SELECT pg_advisory_xact_lock(718904)');
+        const open = await manager.query(`SELECT id FROM turnos WHERE estado = 'ABIERTO' LIMIT 1`);
+        if (open.length) throw new BadRequestException('Cerrá el turno abierto antes de desactivar los turnos.');
+      }
       if (dto.pricingOptions) {
         dto.pricingOptions = { ...dto.pricingOptions, stay: { ...dto.pricingOptions.stay, enabled: false } };
         validatePricingOptions(dto.pricingOptions);

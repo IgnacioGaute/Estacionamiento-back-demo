@@ -50,6 +50,9 @@ export class TicketScheduleSettings {
   @Column('boolean', { default: true })
   barcodeTicketsEnabled: boolean;
 
+  @Column('boolean', { default: true })
+  shiftsEnabled: boolean;
+
   @Column('jsonb', { nullable: true })
   pricingOptions: PricingOptions | null;
 

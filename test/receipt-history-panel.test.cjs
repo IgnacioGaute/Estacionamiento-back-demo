@@ -47,3 +47,9 @@ test('abonos conservan fecha de entrada y convierten salida a Argentina', () => 
 test('fecha sin movimientos muestra estado vacío', () => {
   assert.match(render({ today: '2026-09-25' }), /No hay comprobantes para esta fecha y búsqueda/);
 });
+
+test('buscador adapta el texto según tickets físicos habilitados', () => {
+  assert.match(render({ barcodeTicketsEnabled: false }), /Patente o apellido/);
+  assert.doesNotMatch(render({ barcodeTicketsEnabled: false }), /Patente, ticket o apellido/);
+  assert.match(render({ barcodeTicketsEnabled: true }), /Patente, ticket o apellido/);
+});

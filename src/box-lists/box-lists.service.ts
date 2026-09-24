@@ -8,6 +8,7 @@ import { CreateOtherPaymentDto } from './dto/create-other-payment.dto';
 import { OtherPayment } from './entities/other-payment.entity';
 import { CashEntry } from 'src/turnos/entities/cash-entry.entity';
 import { Turno } from 'src/turnos/entities/turno.entity';
+import { TicketScheduleSettings } from 'src/tickets/entities/ticket-schedule-settings.entity';
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
 import { tenantContext } from 'src/tenancy/tenant-context';
 
@@ -44,7 +45,8 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
   private async recordCash(boxId: string, amount: number, manager: EntityManager, description = 'Movimiento de efectivo') {
     if (!amount) return;
     const turno = await manager.getRepository(Turno).findOne({ where: { estado: 'ABIERTO', cashVersion: 2 } });
-    if (!turno && await manager.getRepository(Turno).exists({ where: { cashVersion: 2 } })) {
+    const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
+    if (settings?.shiftsEnabled !== false && !turno && await manager.getRepository(Turno).exists({ where: { cashVersion: 2 } })) {
       throw new BadRequestException('Abrí el siguiente turno antes de registrar efectivo en caja.');
     }
     await manager.getRepository(CashEntry).save({ boxId, amount, description, turnoId: turno?.id ?? null });

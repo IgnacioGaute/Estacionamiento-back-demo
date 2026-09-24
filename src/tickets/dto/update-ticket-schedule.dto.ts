@@ -32,6 +32,10 @@ export class UpdateTicketScheduleDto {
   @IsOptional()
   barcodeTicketsEnabled?: boolean;
 
+  @IsBoolean()
+  @IsOptional()
+  shiftsEnabled?: boolean;
+
   @IsIn(['ENTRY', 'EXIT'])
   @IsOptional()
   pricingDayTypeBasis?: 'ENTRY' | 'EXIT';
