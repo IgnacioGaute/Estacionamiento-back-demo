@@ -71,7 +71,7 @@ export class TicketRegistrationForDay {
   // Con qué se cobró el abono por día/semana/mes. Se completa al marcarlo pagado (o al crearlo
   // ya pagado); queda en null mientras siga pendiente de cobro.
   @Column('varchar', { length: 20, nullable: true })
-  paymentMetodo: 'CASH' | 'TRANSFER' | null;
+  paymentMetodo: 'CASH' | 'TRANSFER' | 'MERCADOPAGO' | null;
 
   @ManyToOne(() => BoxList, (boxList) => boxList.ticketRegistrationForDays, {onDelete: 'CASCADE'})
   boxList: BoxList;

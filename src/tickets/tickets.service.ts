@@ -473,7 +473,7 @@ async createRegistrationForDay(createTicketRegistrationForDayDto: CreateTicketRe
 
     // La caja solo se toca si el abono se cobra en el momento: si queda pendiente de pago, el
     // registro existe pero no suma nada a la planilla del día hasta que se marque pagado.
-    const cash = createTicketRegistrationForDayDto.paid && createTicketRegistrationForDayDto.paymentMetodo !== 'TRANSFER' ? ticket.price : 0;
+    const cash = createTicketRegistrationForDayDto.paid && this.esEfectivoDeAbono(createTicketRegistrationForDayDto.paymentMetodo) ? ticket.price : 0;
     const boxList = await this.boxListsService.applyTicketPayment(now, cash, manager);
 
     ticket.boxList = { id: boxList.id } as BoxList;
@@ -489,16 +489,35 @@ async createRegistrationForDay(createTicketRegistrationForDayDto: CreateTicketRe
   });
 }
 
- async updateTicketStatus(id: string, dto: UpdateTicketStatusDto) {
+/**
+ * Qué parte de un abono entra a la caja física.
+ *
+ * Se define por exclusión y no como `=== 'CASH'` a propósito: los abonos viejos se guardaron sin
+ * medio de pago y siempre contaron como efectivo. Cambiar ese criterio ahora movería el saldo de
+ * cajas ya cerradas. Lo único que hace falta es que los medios nuevos no se cuenten como plata en
+ * el cajón.
+ */
+private esEfectivoDeAbono(metodo?: string | null) {
+  return metodo !== 'TRANSFER' && metodo !== 'MERCADOPAGO';
+}
+
+/** Un abono puntual. Lo necesita el cobro con QR para saber cuánto cobrar. */
+async getRegistrationForDay(id: string) {
+  return this.ticketRegistrationForDayRepository.findOne({ where: { id } });
+}
+
+// El DTO de la ruta sólo acepta CASH y TRANSFER: MERCADOPAGO no se elige a mano, lo escribe la
+// acreditación automática del cobro con QR llamando a este método.
+async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMetodo'> & { paymentMetodo?: 'CASH' | 'TRANSFER' | 'MERCADOPAGO' }) {
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const repo = manager.getRepository(TicketRegistrationForDay);
       const ticket = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!ticket) throw new NotFoundException('Abono no encontrado');
-      const before = ticket.paid && ticket.paymentMetodo !== 'TRANSFER' ? ticket.price : 0;
+      const before = ticket.paid && this.esEfectivoDeAbono(ticket.paymentMetodo) ? ticket.price : 0;
       const paid = dto.paid ?? ticket.paid;
       const method = dto.paymentMetodo ?? ticket.paymentMetodo;
-      const after = paid && method !== 'TRANSFER' ? ticket.price : 0;
+      const after = paid && this.esEfectivoDeAbono(method) ? ticket.price : 0;
       if (before !== after || paid !== ticket.paid) {
         const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
         const box = await this.boxListsService.applyTicketPayment(date, after - before, manager);
@@ -584,7 +603,7 @@ async createRegistrationForDay(createTicketRegistrationForDayDto: CreateTicketRe
       const repo = manager.getRepository(TicketRegistrationForDay);
       const ticket = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!ticket) throw new NotFoundException('Abono no encontrado');
-      if (ticket.paid && ticket.paymentMetodo !== 'TRANSFER') {
+      if (ticket.paid && this.esEfectivoDeAbono(ticket.paymentMetodo)) {
         const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
         await this.boxListsService.applyTicketPayment(date, -ticket.price, manager);
       }

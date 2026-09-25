@@ -34,7 +34,7 @@ export class CobrosMercadoPagoController {
 
   @Post()
   crearCobro(@Body() dto: CrearCobroDto, @Req() req: any) {
-    return this.cobros.crear(dto.registrationId, this.usuario(req));
+    return this.cobros.crear(dto.registrationId, dto.tipo ?? 'HORA', this.usuario(req));
   }
 
   @Get(':id')

@@ -5,6 +5,7 @@ import { AuditDetalle1790000007000 } from '../database/migrations/1790000007000-
 import { AuditPermisos1790000008000 } from '../database/migrations/1790000008000-audit-permisos';
 import { MercadoPagoCuentas1790000009000 } from '../database/migrations/1790000009000-mercadopago-cuentas';
 import { CobrosMercadoPago1790000011000 } from '../database/migrations/1790000011000-cobros-mercadopago';
+import { CobrosAbonos1790000012000 } from '../database/migrations/1790000012000-cobros-abonos';
 import { OfflineSessions1790000010000 } from '../database/migrations/1790000010000-offline-sessions';
 import { OperationSettings1790000006000 } from '../database/migrations/1790000006000-operation-settings';
 import { AuthVersion1790000002000 } from '../database/migrations/1790000002000-auth-version';
@@ -49,7 +50,7 @@ export default registerAs(
       // runs on the very first boot of an empty database (see DB_BOOTSTRAP above).
       synchronize: bootstrap,
       logging: false,
-      migrations: [OfflineSessions1790000010000, FlexibleVehicleTypes1790000000000, TenantIsolation1790000001000, AuthVersion1790000002000, NoteReaders1790000003000, ParkingReceipts1790000004000, RegistrationPhone1790000005000, OperationSettings1790000006000, AuditDetalle1790000007000, AuditPermisos1790000008000, MercadoPagoCuentas1790000009000, CobrosMercadoPago1790000011000],
+      migrations: [OfflineSessions1790000010000, FlexibleVehicleTypes1790000000000, TenantIsolation1790000001000, AuthVersion1790000002000, NoteReaders1790000003000, ParkingReceipts1790000004000, RegistrationPhone1790000005000, OperationSettings1790000006000, AuditDetalle1790000007000, AuditPermisos1790000008000, MercadoPagoCuentas1790000009000, CobrosMercadoPago1790000011000, CobrosAbonos1790000012000],
       migrationsRun: !bootstrap,
       migrationsTableName: 'migrations',
     }) as TypeOrmModuleOptions,

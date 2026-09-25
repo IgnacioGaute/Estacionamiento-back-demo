@@ -42,15 +42,20 @@ export class CobrosMercadoPagoService {
     return scope;
   }
 
-  /** Genera el QR de una estadía por lo que falta cobrar. */
-  async crear(registrationId: string, usuarioId: string) {
+  /**
+   * Genera el QR de cobro. Sirve para los dos tipos de estadía: la que se cobra por hora al salir
+   * y el abono por día, semana o mes, que se paga por adelantado y vive en otra tabla.
+   */
+  async crear(
+    registrationId: string,
+    tipo: 'HORA' | 'ABONO',
+    usuarioId: string,
+  ) {
     const { empresaId, playaId } = this.scope();
-    const resumen = await this.tickets.getCloseSummary(registrationId);
-    const monto = resumen.saldoACobrar;
-    if (monto <= 0)
-      throw new BadRequestException(
-        'No queda saldo por cobrar en esta estadía.',
-      );
+    const { monto, patente } =
+      tipo === 'ABONO'
+        ? await this.datosDeAbono(registrationId)
+        : await this.datosDeEstadia(registrationId);
 
     // Un solo QR vivo por estadía: si había otro pendiente se cancela, para que no queden dos
     // códigos dando vueltas por el mismo auto.
@@ -65,6 +70,7 @@ export class CobrosMercadoPagoService {
       this.cobros.create({
         playaId,
         registrationId,
+        tipo,
         monto,
         estado: 'PENDIENTE',
         preferenceId: '',
@@ -75,8 +81,6 @@ export class CobrosMercadoPagoService {
     );
 
     try {
-      const patente =
-        resumen.registration?.licensePlateOriginal ?? 'Sin patente';
       const { preferenceId, initPoint } =
         await this.mercadoPago.crearPreferencia(empresaId, {
           monto,
@@ -97,6 +101,33 @@ export class CobrosMercadoPagoService {
     }
 
     return this.aVista(cobro);
+  }
+
+  /** Lo que falta cobrar de una estadía por hora, al salir. */
+  private async datosDeEstadia(registrationId: string) {
+    const resumen = await this.tickets.getCloseSummary(registrationId);
+    if (resumen.saldoACobrar <= 0)
+      throw new BadRequestException(
+        'No queda saldo por cobrar en esta estadía.',
+      );
+    return {
+      monto: resumen.saldoACobrar,
+      patente: resumen.registration?.licensePlateOriginal ?? 'Sin patente',
+    };
+  }
+
+  /** El precio de un abono por día, semana o mes, que se cobra entero y por adelantado. */
+  private async datosDeAbono(registrationId: string) {
+    const abono = await this.tickets.getRegistrationForDay(registrationId);
+    if (!abono) throw new NotFoundException('Abono no encontrado.');
+    if (abono.paid)
+      throw new BadRequestException('Este abono ya figura pagado.');
+    if (abono.price <= 0)
+      throw new BadRequestException('Este abono no tiene importe para cobrar.');
+    return {
+      monto: abono.price,
+      patente: abono.vehiclePlateCustomer || 'Sin patente',
+    };
   }
 
   /**
@@ -152,15 +183,24 @@ export class CobrosMercadoPagoService {
     if (!tomado.affected) return this.aVista(await this.cobros.findOneBy({ id: cobro.id }));
 
     try {
-      // Se registra lo que MercadoPago dice que entró, no lo que habíamos pedido: si por lo que
-      // fuera difieren, el libro tiene que reflejar la plata real.
-      await this.tickets.registrarPagoExterno(
-        cobro.registrationId,
-        pago.monto || cobro.monto,
-        'MERCADOPAGO',
-        `MercadoPago ${pago.id}`,
-        cobro.creadoPor ?? '',
-      );
+      if (cobro.tipo === 'ABONO') {
+        // El abono no pasa por el libro de movimientos: se marca pagado, igual que cuando se
+        // cobra en efectivo, y con el medio puesto no suma a la caja física.
+        await this.tickets.updateTicketStatus(cobro.registrationId, {
+          paid: true,
+          paymentMetodo: 'MERCADOPAGO',
+        });
+      } else {
+        // Se registra lo que MercadoPago dice que entró, no lo que habíamos pedido: si por lo que
+        // fuera difieren, el libro tiene que reflejar la plata real.
+        await this.tickets.registrarPagoExterno(
+          cobro.registrationId,
+          pago.monto || cobro.monto,
+          'MERCADOPAGO',
+          `MercadoPago ${pago.id}`,
+          cobro.creadoPor ?? '',
+        );
+      }
     } catch (error) {
       // Se devuelve el cobro a pendiente para que el próximo intento pueda registrarlo: quedaría
       // cobrado en MercadoPago y sin asentar en el libro, que es lo peor que puede pasar acá.

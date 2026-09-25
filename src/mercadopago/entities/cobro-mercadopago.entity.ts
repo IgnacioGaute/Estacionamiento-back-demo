@@ -23,8 +23,13 @@ export class CobroMercadoPago {
   @Column('uuid', { nullable: true })
   playaId: string | null;
 
+  // Apunta a ticket_registrations o a ticket_registration_for_days según `tipo`. Sin FK, por eso:
+  // son dos tablas destino posibles. Igual que parking_receipts.
   @Column('uuid')
   registrationId: string;
+
+  @Column('varchar', { length: 10, default: 'HORA' })
+  tipo: 'HORA' | 'ABONO';
 
   // Congelado al generar el QR. La tarifa sigue corriendo mientras el cliente paga, así que el
   // importe que se cobra es el que se le mostró, y la diferencia —si la hay— queda como saldo.
