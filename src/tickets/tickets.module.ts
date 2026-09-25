@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ParkingReceiptsService } from './parking-receipts.service';
 import { PublicParkingReceiptsController } from './public-parking-receipts.controller';
 import { TicketsService } from './tickets.service';
+import { OfflineService } from './offline.service';
 import { TicketsController } from './tickets.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Ticket } from './entities/ticket.entity';
@@ -17,7 +18,7 @@ import { MovimientosModule } from 'src/movimientos/movimientos.module';
 @Module({
   imports: [TypeOrmModule.forFeature([Ticket, TicketRegistration, TicketRegistrationForDay, TicketPrice, TicketPriceBracket, TicketScheduleSettings]), BoxListsModule, MovimientosModule],
   controllers: [TicketsController, PublicParkingReceiptsController],
-  providers: [TicketsService, TicketGateway, ParkingReceiptsService],
+  providers: [TicketsService, TicketGateway, ParkingReceiptsService, OfflineService],
   exports: [TicketsService]
 })
 export class TicketsModule {}

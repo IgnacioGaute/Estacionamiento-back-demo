@@ -5,6 +5,8 @@ import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate
 import { CloseRegistrationDto } from './dto/close-registration.dto';
 import { PreviewPriceDto, SimulatePriceDto } from './dto/preview-price.dto';
 import { TicketsService } from './tickets.service';
+import { OfflineService } from './offline.service';
+import { OfflineDeviceDto, OfflineOperationDto, OfflineFinishDto } from './dto/offline.dto';
 import { ParkingReceiptsService } from './parking-receipts.service';
 import { IssueParkingReceiptDto } from './dto/receipt-delivery.dto';
 import { ParseUUIDPipe } from '@nestjs/common';
@@ -27,7 +29,14 @@ import { CreateTicketRegistrationForDayDto, UpdateTicketStatusDto } from './dto/
 @Controller('tickets')
 @UseGuards(AuthOrTokenAuthGuard)
 export class TicketsController {
-  constructor(private readonly ticketsService: TicketsService, private readonly parkingReceipts: ParkingReceiptsService) {}
+  constructor(private readonly ticketsService: TicketsService, private readonly parkingReceipts: ParkingReceiptsService, private readonly offline: OfflineService) {}
+
+  @Post('offline/prepare')
+  prepareOffline(@Body() dto: OfflineDeviceDto) { return this.offline.prepare(dto.deviceId); }
+  @Post('offline/sync')
+  syncOffline(@Body() dto: OfflineOperationDto) { return this.offline.synchronize(dto); }
+  @Post('offline/finish')
+  finishOffline(@Body() dto: OfflineFinishDto) { return this.offline.finish(dto); }
 
   @Post('registrations/:id/receipt')
   issueParkingReceipt(@Param('id', ParseUUIDPipe) id: string, @Body() dto: IssueParkingReceiptDto) {

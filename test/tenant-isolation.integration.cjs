@@ -135,6 +135,7 @@ before(async () => {
     ))().up(migrationRunner);
     await new (load('database/migrations/1790000002000-auth-version', 'AuthVersion1790000002000'))().up(migrationRunner);
     await new (load('database/migrations/1790000004000-parking-receipts', 'ParkingReceipts1790000004000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000010000-offline-sessions', 'OfflineSessions1790000010000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -751,6 +752,35 @@ test('configuracion: turnos desactivados permiten caja diaria y bloquean apertur
     assert.equal(preserved.estado, 'CERRADO');
   });
   await scoped(a, async () => assert.equal((await service.getSchedule()).shiftsEnabled, true));
+});
+
+test('offline: dispositivo exclusivo, reintentos idempotentes y cobro con horario original', async () => {
+  const offline = app.get(load('tickets/offline.service', 'OfflineService'));
+  const uuid = require('node:crypto').randomUUID;
+  const deviceId = uuid();
+  let session, entryOp;
+  await scoped({ ...b, role: 'ADMIN' }, async () => {
+    await app.get(TicketsService).updateSchedule({ shiftsEnabled: false });
+    session = await offline.prepare(deviceId);
+    await assert.rejects(offline.prepare(uuid()), /Otro dispositivo/);
+    const now = Math.floor(Date.now() / 1000) * 1000;
+    entryOp = { deviceId, sessionId: session.sessionId, id: uuid(), registrationId: uuid(), kind: 'ENTRY', occurredAt: new Date(now - 60000).toISOString(), plate: 'OFF123', vehicleType: 'AUTO' };
+    await offline.synchronize(entryOp);
+    await offline.synchronize(entryOp);
+    assert.equal(await ds.getRepository(Registration).countBy({ id: entryOp.registrationId }), 1);
+    await assert.rejects(offline.synchronize({ ...entryOp, plate: 'DIFFERENT' }), /otros datos/);
+    const expected = load('tickets/pricing/stay-pricing', 'calculateStayPrice')(session.pricing, 'AUTO', new Date(entryOp.occurredAt), new Date(now));
+    const exit = { deviceId, sessionId: session.sessionId, id: uuid(), registrationId: entryOp.registrationId, kind: 'EXIT', occurredAt: new Date(now).toISOString(), expectedPrice: expected.price, expectedCollected: 0, method: 'CASH' };
+    await assert.rejects(offline.synchronize({ ...exit, expectedPrice: expected.price + 1 }), /importe/);
+    await Promise.all([offline.synchronize(exit), offline.synchronize(exit)]);
+    const rows = await ds.getRepository(Movimiento).find({ where: { ticketRegistration: { id: entryOp.registrationId } } });
+    assert.equal(rows.length, expected.price > 0 ? 1 : 0);
+    const saved = await ds.getRepository(Registration).findOneByOrFail({ id: entryOp.registrationId });
+    assert.equal(saved.departureTime, dayjs(now).tz('America/Argentina/Buenos_Aires').format('HH:mm:ss'));
+    await assert.rejects(offline.synchronize({ ...exit, id: uuid() }), /Otro operador/);
+    await offline.finish({ sessionId: session.sessionId, deviceId });
+  });
+  await scoped({ ...a, role: 'ADMIN' }, async () => assert.rejects(offline.synchronize(entryOp), /otro usuario/));
 });
 
 test('login limita intentos repetidos', async () => {

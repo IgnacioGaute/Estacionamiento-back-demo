@@ -1,31 +1,38 @@
-# PWA y contingencia: estado de implementación
+# Modo operativo sin conexión
 
-## Disponible
+Reemplaza la interfaz de Consulta sin conexión. Esta entrega admite entradas por patente y salidas/cobros de estadías por hora, en una playa con turnos desactivados. Día/Sem/Mes, cortesías, devoluciones y registros históricos sin snapshot no están habilitados offline.
 
-- Manifiesto instalable en móvil/escritorio; acceso de instalación en el menú de usuario.
-- Service worker de alcance `/` que guarda únicamente una lista fija de archivos públicos de consulta offline. Nunca guarda HTML autenticado, RSC, API, tokens o mutaciones. No reintenta POST/PATCH/DELETE.
-- Fallback de navegación ante falla de red o respuesta 5xx, con enlace para recuperar la aplicación. Errores 401/403/redirecciones no se sustituyen por contenido privado guardado.
-- Consulta sin conexión desde la pantalla de operación: solicita una instantánea nueva al backend con la sesión y la playa autorizadas. No reemplaza la copia si falla alguna consulta.
-- Una copia por navegador, cifrada con AES-GCM y clave derivada de una frase local de mínimo 12 caracteres (PBKDF2/SHA-256). La frase no se guarda ni se envía al servidor. Incluye identificación del vehículo, ingreso, tipo y tabla de tarifas de referencia; no incluye teléfonos, contraseñas, tokens ni caja.
-- Vencimiento de 24 horas, bloqueo al ocultar la página o tras cinco minutos y eliminación explícita. Es consulta: las tarifas no son un cálculo de saldo y la copia puede quedar desactualizada inmediatamente.
+## Uso
+1. Con conexión y la sesión de la playa activa: Modo sin conexión → Activar este equipo. Guardar la frase local de acceso.
+2. Una sola combinación dispositivo/usuario queda reservada por playa. Otro equipo no puede preparar una contingencia simultánea.
+3. Abrir modo operativo, ingresar la frase, registrar entradas y salidas. Confirmación local solo después de completar la transacción IndexedDB.
+4. Las operaciones pendientes se sincronizan en orden al volver la conexión, al desbloquear y periódicamente mientras la pantalla está abierta. También existe Sincronizar ahora. Requiere sesión vigente del mismo usuario/playa.
+5. Finalizar contingencia, online y sin pendientes, libera el equipo. Preparar una nueva jornada renueva la autorización de 24 horas.
 
-La copia es optativa y permanece cifrada aunque se cierre sesión. Quien conozca la frase puede abrirla localmente; una revocación remota no puede verificarse sin red. No usar en dispositivos compartidos no confiables. El reloj local y el almacenamiento del navegador no son una barrera contra un atacante con control del dispositivo. Borrar datos del navegador elimina la copia.
+No borrar almacenamiento, olvidar la frase, cambiar de usuario/playa ni cambiar de dispositivo con pendientes. No se garantiza sincronización en segundo plano con la app cerrada. Una actualización del service worker espera a que se cierren las ventanas anteriores; si sigue apareciendo Consulta sin conexión, cerrar todas las ventanas y reabrir con red.
 
-## Pendiente: no habilitar cobros offline todavía
+## Persistencia y sincronización
+- Los pendientes no vencen ni se eliminan al vencer la autorización de nuevas operaciones. La frase deriva AES-GCM con PBKDF2; no se envía al servidor. No se guardan tokens de sesión.
+- Una revisión atómica en IndexedDB rechaza escrituras desde pestañas que leyeron una versión vieja.
+- El servidor conserva snapshot de preparación, propietario, dispositivo y fechas autorizadas. No confía en tarifas enviadas por el navegador.
+- Cada operación tiene UUID y huella de contenido. Operación, movimiento, caja e idempotencia se guardan en la misma transacción.
+- Repetir un UUID con los mismos datos devuelve el resultado; cambiar su contenido produce conflicto.
+- Entrada duplicada, salida ya cerrada o anticipo cambiado no se sobrescriben. Se conserva el pendiente con el error y se detiene la cola. La resolución administrativa de esos casos es manual; hay exportación de respaldo sin cifrar. No descartar ni volver a cobrar un pendiente para resolverlo.
+- Caja diaria usa la fecha original de la salida. El movimiento conserva referencia con hora offline y fecha de recepción en el servidor. No altera arqueos de turnos cerrados.
+- El admin remoto recibe los registros sincronizados. No puede conocer operaciones que todavía estén en un dispositivo sin red.
+- El motor de precios del navegador es generado desde el mismo código de pricing del backend, no una fórmula alternativa. Regenerar después de cambios de tarifas con `node scripts/build-offline-pricing.cjs`.
+- El desbloqueo local no verifica revocaciones remotas; la sincronización sí exige autorización vigente. Los usuarios con control del dispositivo pueden manipular el reloj local, pero el servidor valida rango temporal, precios, anticipos y propiedad.
+- No se generan enlaces públicos antes de sincronizar. La impresión local y la integración de abonos/turnos quedan fuera de esta entrega.
 
-1. Registro servidor del único dispositivo de contingencia por playa, con asignación/revocación exclusiva del admin y tratamiento explícito de autorizaciones desconectadas.
-2. Base local de operaciones persistentes con IDs de idempotencia, referencias entre ingresos/salidas y estado pendiente, enviado o conflicto. Nunca afirmar que el servidor confirmó antes de recibir su respuesta.
-3. Cálculo local equivalente al motor real usando snapshots de tarifas por estadía, anticipos y reglas. Pruebas de equivalencia con horarios, tolerancia, días, fracciones y cortesía.
-4. Endpoint de sincronización transaccional y aislado por playa: validar cada operación, autor, reloj y versión; no duplicar cobros al repetir un lote o perder una respuesta. Resolver entrada duplicada y doble cierre sin sobrescribir silenciosamente.
-5. Mostrar conflictos al admin y distinguir operaciones pendientes de dinero confirmado. El admin remoto no puede saber qué operaciones existen aún en un equipo desconectado.
-6. Comprobantes locales provisionales e impresión; enlaces públicos disponibles luego de la sincronización. Cobertura de turnos, tickets físicos y Día/Sem/Mes antes de anunciar soporte completo.
+## Despliegue
+Aplicar la migración `1790000010000-offline-sessions` al iniciar el backend. Mantener frontend y backend en la misma versión de pricing. El archivo público `sw.js` no debe cachearse por CDN. Solo se almacenan archivos del shell público en Cache Storage: nunca API, HTML autenticado, RSC o mutaciones.
 
-## Despliegue y prueba
+HTTPS es necesario salvo localhost para desarrollo. HTTP por IP local no sirve para probar desde celulares. Referencia: [Service Worker API](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API).
 
-Requiere HTTPS, salvo localhost para desarrollo; HTTP por IP de red local no sirve para comprobar una instalación real en un celular. Ver [contextos seguros para service workers](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API).
+## Pruebas
+- `pnpm build`
+- `node --test test/tenant-isolation.integration.cjs`: DB temporal, RLS, dispositivo único, propietario, huella, reintentos concurrentes, saldo y fecha original.
+- `node --test test/pwa-offline.test.cjs`: Chromium con red deshabilitada, recarga con pendiente, entrada, salida, copia cifrada, respuesta de sync perdida, reintento, conflicto de revisión entre pestañas, anchos móviles y equivalencia del motor browser/backend.
+- Frontend: `pnpm exec tsc --noEmit`.
 
-Desplegar los archivos públicos y `/sw.js` junto al frontend. Incrementar la versión de caché al cambiar el shell. El worker nuevo espera hasta que se cierren sus clientes; no se fuerza una actualización mientras se opera. Si se agregan operaciones pendientes, nunca eliminar su almacenamiento al cambiar la versión del shell.
-
-`node --test test/pwa-offline.test.cjs`: navegador Chromium real y servidor temporal, sin `.env` ni base de negocio. Comprueba recarga con red deshabilitada, ausencia de caché privada, cifrado, contraseña incorrecta, consulta, bloqueo, vencimiento, borrado y anchos móviles.
-
-Validar además instalación real en Android/iOS y escritorio con el dominio HTTPS del despliegue. Esta etapa no reserva un dispositivo de contingencia ni permite registrar cobros sin conexión.
+Validar además el dominio HTTPS real y cada equipo antes de usar la contingencia en producción. Si se pierde el almacenamiento local con una sesión activa, no liberar automáticamente ni reemplazarla: requiere revisar si existen cobros sin sincronizar.

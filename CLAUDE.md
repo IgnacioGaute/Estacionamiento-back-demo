@@ -41,7 +41,8 @@ Requires a Postgres database. `docker-compose.yaml` provides one (postgres:16.2,
 db/user/password `estacionamiento_demo`/`admin`/`admin`). Env vars read at boot: `PORT` (default 3030),
 `ALLOWED_ORIGINS` (comma-separated), `POSTGRES_{HOST,PORT,NAME,USER,PASSWORD}`, `DB_BOOTSTRAP`, `NEXTAUTH_SECRET`,
 `API_SECRET_TOKEN`, `CLOUDINARY_{NAME,API_KEY,API_SECRET}`, `PLATE_RECOGNIZER_API_KEY`,
-`GEMINI_{API_KEY,MODEL,FALLBACK_MODELS}`.
+`GEMINI_{API_KEY,MODEL,FALLBACK_MODELS}`,
+`MERCADOPAGO_TOKEN_KEY` (32 bytes en hex, `openssl rand -hex 32`; cifra los tokens de MercadoPago de cada empresa).
 
 `scripts/start-compiled.cjs` registers `tsconfig-paths` before `dist/main` — sources import each other as
 `src/...`, so plain `node dist/main` only works where those paths resolve.
