@@ -13,4 +13,7 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
   NotesController: ['create', 'findAll', 'findOne', 'update', 'remove', 'getTodayNotes', 'unread', 'markRead'],
   TurnosController: ['open', 'close', 'getCashContext', 'getMyOpenTurno'],
   TenantContextController: ['context'],
+  // El cajero genera y consulta el QR de cobro. Conectar o desconectar la cuenta NO está acá:
+  // eso es del administrador (MercadoPagoController queda, por omisión, sólo para administradores).
+  CobrosMercadoPagoController: ['crearCobro', 'consultarCobro', 'cancelarCobro'],
 };

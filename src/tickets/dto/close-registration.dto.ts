@@ -1,5 +1,5 @@
 import { IsEnum, IsIn, IsInt, Min, IsNotEmpty, IsOptional, IsString } from 'class-validator';
-import { MOVIMIENTO_METODO, MovimientoMetodo } from 'src/movimientos/entities/movimiento.entity';
+import { MOVIMIENTO_METODO_MANUAL, MovimientoMetodoManual } from 'src/movimientos/entities/movimiento.entity';
 
 export const CLOSE_TYPE = ['PAYMENT', 'NO_CHARGE', 'COURTESY'] as const;
 export type CloseType = (typeof CLOSE_TYPE)[number];
@@ -13,18 +13,18 @@ export class CloseRegistrationDto {
   @Min(0)
   expectedCollected: number;
 
-  @IsEnum(MOVIMIENTO_METODO)
+  @IsEnum(MOVIMIENTO_METODO_MANUAL)
   @IsOptional()
-  refundMetodo?: MovimientoMetodo;
+  refundMetodo?: MovimientoMetodoManual;
 
   @IsIn(CLOSE_TYPE)
   @IsNotEmpty()
   closeType: CloseType;
 
   // Obligatorio cuando closeType es PAYMENT (verificado en el servicio).
-  @IsEnum(MOVIMIENTO_METODO)
+  @IsEnum(MOVIMIENTO_METODO_MANUAL)
   @IsOptional()
-  metodo?: MovimientoMetodo;
+  metodo?: MovimientoMetodoManual;
 
   @IsString()
   @IsOptional()

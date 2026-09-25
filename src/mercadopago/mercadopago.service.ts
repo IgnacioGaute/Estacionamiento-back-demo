@@ -215,6 +215,98 @@ export class MercadoPagoService {
     }
   }
 
+  /**
+   * Crea el pedido de pago y devuelve la URL a la que va a llegar el cliente. Esa URL es lo único
+   * que hace falta: se dibuja como QR en el mostrador y se manda por WhatsApp sin cambiarle nada.
+   *
+   * `external_reference` es el id de nuestro cobro, y es lo que después permite preguntar por ese
+   * pago puntual en vez de adivinar por importe y hora.
+   */
+  async crearPreferencia(
+    empresaId: string,
+    datos: {
+      monto: number;
+      referencia: string;
+      descripcion: string;
+      expiraEl: Date;
+      volverA: string;
+    },
+  ): Promise<{ preferenceId: string; initPoint: string }> {
+    const token = await this.tokenDeEmpresa(empresaId);
+    const respuesta = await this.llamar(`${API}/checkout/preferences`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        items: [
+          {
+            title: datos.descripcion,
+            quantity: 1,
+            currency_id: 'ARS',
+            unit_price: datos.monto,
+          },
+        ],
+        external_reference: datos.referencia,
+        // Que MercadoPago también lo venza evita que un QR viejo, sacado de una foto, se pueda
+        // pagar días después.
+        expires: true,
+        expiration_date_to: datos.expiraEl.toISOString(),
+        back_urls: {
+          success: datos.volverA,
+          pending: datos.volverA,
+          failure: datos.volverA,
+        },
+      }),
+    });
+    const datosMp = (await respuesta.json()) as {
+      id?: string | number;
+      init_point?: string;
+      sandbox_init_point?: string;
+    };
+    // Con credenciales de prueba la URL que sirve es la de sandbox.
+    const initPoint = datosMp.init_point ?? datosMp.sandbox_init_point;
+    if (!datosMp.id || !initPoint)
+      throw new ServiceUnavailableException(
+        'MercadoPago no devolvió el link de pago. Probá de nuevo.',
+      );
+    return { preferenceId: String(datosMp.id), initPoint };
+  }
+
+  /**
+   * ¿Entró este cobro? Es la verificación de verdad: se le pregunta a MercadoPago por nuestra
+   * referencia y se mira si hay un pago aprobado. No depende de que MercadoPago nos avise.
+   */
+  async buscarPagoAprobado(
+    empresaId: string,
+    referencia: string,
+  ): Promise<{ id: string; monto: number } | null> {
+    const token = await this.tokenDeEmpresa(empresaId);
+    const url = new URL(`${API}/v1/payments/search`);
+    url.searchParams.set('external_reference', referencia);
+    url.searchParams.set('sort', 'date_created');
+    url.searchParams.set('criteria', 'desc');
+    const respuesta = await this.llamar(url.toString(), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const datos = (await respuesta.json()) as {
+      results?: {
+        id?: number | string;
+        status?: string;
+        transaction_amount?: number;
+      }[];
+    };
+    const aprobado = (datos.results ?? []).find(
+      (p) => p.status === 'approved' && p.id,
+    );
+    if (!aprobado) return null;
+    return {
+      id: String(aprobado.id),
+      monto: Math.round(Number(aprobado.transaction_amount) || 0),
+    };
+  }
+
   private async pedirToken(
     cuerpo: Record<string, string>,
   ): Promise<RespuestaToken> {

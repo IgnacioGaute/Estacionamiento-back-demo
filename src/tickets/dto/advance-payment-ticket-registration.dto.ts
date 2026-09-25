@@ -1,5 +1,5 @@
 import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
-import { MOVIMIENTO_METODO, MovimientoMetodo } from 'src/movimientos/entities/movimiento.entity';
+import { MOVIMIENTO_METODO_MANUAL, MovimientoMetodoManual } from 'src/movimientos/entities/movimiento.entity';
 
 export class AdvancePaymentTicketRegistrationDto {
   // Monto efectivamente cobrado ahora. Opcional: se puede declarar la duración esperada
@@ -11,9 +11,9 @@ export class AdvancePaymentTicketRegistrationDto {
 
   // Obligatorio cuando advancePaidAmount sube respecto del valor anterior (verificado en el
   // servicio) — cómo se cobró el anticipo.
-  @IsEnum(MOVIMIENTO_METODO)
+  @IsEnum(MOVIMIENTO_METODO_MANUAL)
   @IsOptional()
-  metodo?: MovimientoMetodo;
+  metodo?: MovimientoMetodoManual;
 
   @IsString()
   @IsOptional()

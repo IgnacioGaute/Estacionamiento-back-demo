@@ -13,8 +13,15 @@ import { TicketRegistration } from 'src/tickets/entities/ticket-registration.ent
 import { User } from 'src/users/entities/user.entity';
 import { Turno } from 'src/turnos/entities/turno.entity';
 
-export const MOVIMIENTO_METODO = ['CASH', 'TRANSFER'] as const;
+export const MOVIMIENTO_METODO = ['CASH', 'TRANSFER', 'MERCADOPAGO'] as const;
 export type MovimientoMetodo = (typeof MOVIMIENTO_METODO)[number];
+
+// Los que una persona puede elegir a mano al cobrar. MERCADOPAGO queda afuera a propósito: ese
+// valor significa «MercadoPago confirmó que la plata entró», y sólo lo escribe la acreditación
+// automática del cobro con QR. Si el mostrador pudiera elegirlo, pasaría a significar lo mismo
+// que TRANSFER —alguien dice que le pagaron— y se perdería la única diferencia que importa.
+export const MOVIMIENTO_METODO_MANUAL = ['CASH', 'TRANSFER'] as const;
+export type MovimientoMetodoManual = (typeof MOVIMIENTO_METODO_MANUAL)[number];
 
 export const MOVIMIENTO_TIPO = ['ANTICIPO', 'SALDO', 'AJUSTE', 'CORTESIA'] as const;
 export type MovimientoTipo = (typeof MOVIMIENTO_TIPO)[number];

@@ -29,6 +29,7 @@ import { TicketScheduleSettings } from './entities/ticket-schedule-settings.enti
 import { UpdateTicketScheduleDto } from './dto/update-ticket-schedule.dto';
 import { TicketDayType } from './entities/ticket.entity';
 import { MovimientosService } from 'src/movimientos/movimientos.service';
+import { MovimientoMetodo } from 'src/movimientos/entities/movimiento.entity';
 import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate.dto';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
 import { normalizePlate, toSearchKey } from './utils/license-plate.util';
@@ -626,6 +627,40 @@ async addAdvancePayment(id: string, dto: AdvancePaymentTicketRegistrationDto, us
     if (dto.expectedUptoMinutes !== undefined) registration.expectedUptoMinutes = dto.expectedUptoMinutes;
     await repository.save(registration);
     return repository.findOne({ where: { id }, relations: ['ticket'] });
+  });
+  this.ticketGateway.emitNewRegistration(saved);
+  return saved;
+}
+
+/**
+ * Registra en la estadía un pago que se cobró por fuera del mostrador (hoy, el QR de MercadoPago
+ * ya acreditado). Entra como ANTICIPO y no como cierre: la plata llega mientras la estadía sigue
+ * abierta, y el cajero cierra después viendo que ya no queda saldo. Así el cobro no depende de
+ * que el precio no se haya movido mientras el cliente pagaba.
+ *
+ * `referencia` guarda el id del pago en MercadoPago: es el rastro que permite reconciliar una
+ * fila del libro con un pago real.
+ *
+ * Pasa por linkToTodaysBoxList aunque no sea efectivo —con importe 0— porque es lo que hace que
+ * el pago sea visible en la caja del día y en la planilla; un movimiento suelto no aparece.
+ */
+async registrarPagoExterno(
+  registrationId: string,
+  monto: number,
+  metodo: MovimientoMetodo,
+  referencia: string,
+  usuarioId: string,
+) {
+  const saved = await this.dataSource.transaction(async manager => {
+    const repository = manager.getRepository(TicketRegistration);
+    const registration = await repository.findOne({ where: { id: registrationId }, lock: { mode: 'pessimistic_write' } });
+    if (!registration) throw new NotFoundException('Registro no encontrado.');
+    if (registration.departureTime) throw new BadRequestException('El ticket ya está cerrado.');
+    await this.movimientosService.create({ ticketRegistrationId: registrationId, monto, metodo, tipo: 'ANTICIPO', referencia, usuarioId }, manager);
+    await this.linkToTodaysBoxList(registration, metodo === 'CASH' ? monto : 0, manager);
+    registration.advancePaidAmount = await this.collectedAmount(registration, manager);
+    await repository.save(registration);
+    return repository.findOne({ where: { id: registrationId }, relations: ['ticket'] });
   });
   this.ticketGateway.emitNewRegistration(saved);
   return saved;
