@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 import { CobroMercadoPago } from './entities/cobro-mercadopago.entity';
 import { MercadoPagoService } from './mercadopago.service';
 import { TicketsService } from '../tickets/tickets.service';
+import { CuentasService } from '../cuentas/cuentas.service';
 import { tenantContext } from '../tenancy/tenant-context';
 
 // Cuántos minutos vale el importe que se le mostró al cliente. La tarifa sigue corriendo mientras
@@ -33,6 +34,7 @@ export class CobrosMercadoPagoService {
     private readonly mercadoPago: MercadoPagoService,
     private readonly tickets: TicketsService,
     private readonly config: ConfigService,
+    private readonly cuentas: CuentasService,
   ) {}
 
   private scope() {
@@ -43,19 +45,24 @@ export class CobrosMercadoPagoService {
   }
 
   /**
-   * Genera el QR de cobro. Sirve para los dos tipos de estadía: la que se cobra por hora al salir
-   * y el abono por día, semana o mes, que se paga por adelantado y vive en otra tabla.
+   * Genera el QR de cobro. Sirve para los dos tipos de estadía —la que se cobra por hora al salir
+   * y el abono por día, semana o mes— y para un pago a la cuenta de un inquilino, que puede ser
+   * de cualquier importe (una parte, varios meses, de más), así que ahí el importe lo pone el
+   * mostrador.
    */
   async crear(
     registrationId: string,
-    tipo: 'HORA' | 'ABONO',
+    tipo: 'HORA' | 'ABONO' | 'INQUILINO',
     usuarioId: string,
+    inquilino?: { monto?: number; receiptIds?: string[]; nota?: string },
   ) {
     const { empresaId, playaId } = this.scope();
     const { monto, patente } =
-      tipo === 'ABONO'
-        ? await this.datosDeAbono(registrationId)
-        : await this.datosDeEstadia(registrationId);
+      tipo === 'INQUILINO'
+        ? await this.datosDeInquilino(registrationId, inquilino?.monto)
+        : tipo === 'ABONO'
+          ? await this.datosDeAbono(registrationId)
+          : await this.datosDeEstadia(registrationId);
 
     // Un solo QR vivo por estadía: si había otro pendiente se cancela, para que no queden dos
     // códigos dando vueltas por el mismo auto.
@@ -72,6 +79,10 @@ export class CobrosMercadoPagoService {
         registrationId,
         tipo,
         monto,
+        detalle:
+          tipo === 'INQUILINO'
+            ? { receiptIds: inquilino?.receiptIds ?? [], nota: inquilino?.nota?.trim() || null }
+            : null,
         estado: 'PENDIENTE',
         preferenceId: '',
         initPoint: '',
@@ -85,7 +96,7 @@ export class CobrosMercadoPagoService {
         await this.mercadoPago.crearPreferencia(empresaId, {
           monto,
           referencia: cobro.id,
-          descripcion: `Estacionamiento - ${patente}`,
+          descripcion: tipo === 'INQUILINO' ? `Cochera - ${patente}` : `Estacionamiento - ${patente}`,
           expiraEl,
           volverA: this.config.get<string>('MERCADOPAGO_REDIRECT_URI') ?? '',
         });
@@ -114,6 +125,15 @@ export class CobrosMercadoPagoService {
       monto: resumen.saldoACobrar,
       patente: resumen.registration?.licensePlateOriginal ?? 'Sin patente',
     };
+  }
+
+  /** Un pago a la cuenta de un inquilino: el importe elegido en el mostrador. */
+  private async datosDeInquilino(customerId: string, monto?: number) {
+    if (!monto || !Number.isInteger(monto) || monto < 1)
+      throw new BadRequestException('Ingresá el importe a cobrar, en pesos enteros.');
+    const { nombre } = await this.cuentas.validarCobroQr(customerId);
+    // `patente` se usa como nombre visible en la descripción del pago.
+    return { monto, patente: nombre };
   }
 
   /** El precio de un abono por día, semana o mes, que se cobra entero y por adelantado. */
@@ -183,7 +203,20 @@ export class CobrosMercadoPagoService {
     if (!tomado.affected) return this.aVista(await this.cobros.findOneBy({ id: cobro.id }));
 
     try {
-      if (cobro.tipo === 'ABONO') {
+      if (cobro.tipo === 'INQUILINO') {
+        // Un pago más de la cuenta corriente, con MercadoPago como medio y el id del cobro como
+        // solicitud: aunque este paso se repitiera, el pago se asienta una sola vez.
+        await this.cuentas.registrarPagoMercadoPago(
+          cobro.registrationId,
+          {
+            importe: pago.monto || cobro.monto,
+            receiptIds: cobro.detalle?.receiptIds ?? [],
+            nota: cobro.detalle?.nota ?? null,
+            cobroId: cobro.id,
+          },
+          cobro.creadoPor,
+        );
+      } else if (cobro.tipo === 'ABONO') {
         // El abono no pasa por el libro de movimientos: se marca pagado, igual que cuando se
         // cobra en efectivo, y con el medio puesto no suma a la caja física.
         await this.tickets.updateTicketStatus(cobro.registrationId, {
@@ -220,8 +253,11 @@ export class CobrosMercadoPagoService {
     return this.aVista(await this.cobros.findOneBy({ id: cobro.id }));
   }
 
-  /** Lo que ve el mostrador. El id de pago no se expone: no le sirve de nada al cajero. */
-  private aVista(cobro: CobroMercadoPago | null) {
+  /**
+   * Lo que ve el mostrador. El id de pago no se expone: no le sirve de nada al cajero. Para un
+   * inquilino acreditado va además el recibo del pago asentado, para entregárselo en el momento.
+   */
+  private async aVista(cobro: CobroMercadoPago | null) {
     if (!cobro) throw new NotFoundException('Cobro no encontrado.');
     return {
       id: cobro.id,
@@ -230,6 +266,9 @@ export class CobrosMercadoPagoService {
       initPoint: cobro.initPoint,
       expiraEl: cobro.expiraEl,
       acreditadoEl: cobro.acreditadoEl,
+      ...(cobro.tipo === 'INQUILINO' && cobro.estado === 'ACREDITADO'
+        ? { recibo: await this.cuentas.reciboDeCobro(cobro.id) }
+        : {}),
     };
   }
 }

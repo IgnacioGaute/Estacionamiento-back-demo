@@ -38,7 +38,7 @@ export class TenantAccessService {
         user,
         empresa: null,
         playas: await this.ds.query(
-          'SELECT id, nombre, "empresaId" FROM playas ORDER BY nombre',
+          'SELECT id, nombre, "empresaId", modulos FROM playas ORDER BY nombre',
         ),
       };
     const [empresa] = await this.ds.query(
@@ -48,7 +48,7 @@ export class TenantAccessService {
     if (!empresa)
       throw new ForbiddenException('Tu cuenta no tiene una empresa activa.');
     const playas = await this.ds.query(
-      `SELECT p.id,p.nombre,p."empresaId" FROM playas p WHERE p."empresaId"=$1 AND ($2='ADMIN' OR EXISTS(SELECT 1 FROM usuario_playas up WHERE up."playaId"=p.id AND up."usuarioId"=$3)) ORDER BY p.nombre,p.id`,
+      `SELECT p.id,p.nombre,p."empresaId",p.modulos FROM playas p WHERE p."empresaId"=$1 AND ($2='ADMIN' OR EXISTS(SELECT 1 FROM usuario_playas up WHERE up."playaId"=p.id AND up."usuarioId"=$3)) ORDER BY p.nombre,p.id`,
       [empresa.id, user.role, user.id],
     );
     return { user, empresa, playas };

@@ -5,6 +5,7 @@ import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerType } from './entities/customer.entity';
 import { CreateInterestSettingDto } from './dto/interest-setting.dto';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
+import { listPagination } from 'src/utils/list-pagination';
 
 
 @Controller('customers')
@@ -18,13 +19,13 @@ export class CustomersController {
   }
 
   @Get('customer/:customerType')
-  findAll(@Param('customerType') customer: CustomerType) {
-    return this.customersService.findAll(customer);
+  findAll(@Param('customerType') customer: CustomerType, @Query('page') page?: string, @Query('limit') limit?: string, @Query('search') search?: string, @Query('sort') sort?: string, @Query('direction') direction?: string) {
+    return this.customersService.findAll(customer, listPagination(page, limit), search, sort, direction);
   }
 
   @Get('thirds')
-  async getCustomerthird() {
-    return await this.customersService.getCustomerthird();
+  async getCustomerthird(@Query('page') page?: string, @Query('limit') limit?: string) {
+    return await this.customersService.getCustomerthird(listPagination(page, limit));
   }
 
   @Get('summary')

@@ -70,7 +70,7 @@ export class TurnosService {
       const repo = manager.getRepository(Turno);
       if (await repo.exists({ where: { estado: 'ABIERTO' } })) throw new ConflictException('Ya hay un turno abierto en esta caja. Cerralo antes del relevo.');
       const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
-      if (settings?.shiftsEnabled === false) throw new BadRequestException('Los turnos están desactivados. El administrador puede activarlos en Configuración.');
+      if (settings?.shiftsEnabled !== true) throw new BadRequestException('Los turnos están desactivados. El administrador puede activarlos en Configuración.');
       const last = await repo.findOne({ where: { estado: 'CERRADO', efectivoParaSiguiente: Not(IsNull()), recibidoPorTurnoId: IsNull() }, order: { fechaCierre: 'DESC' } });
       const pending = last && !last.recibidoPorTurnoId ? last : null;
       if ((pending?.id ?? undefined) !== dto.turnoAnteriorId) throw new ConflictException('El relevo cambió. Actualizá la caja y confirmá el fondo que recibís.');
@@ -121,7 +121,7 @@ export class TurnosService {
   }
 
   // El historial permite buscar por cierre; apertura sigue siendo el valor predeterminado.
-  async findAll(filtros: { estado?: 'ABIERTO' | 'CERRADO'; desde?: string; hasta?: string; usuarioId?: string; fechaPor?: 'APERTURA' | 'CIERRE' } = {}): Promise<Turno[]> {
+  async findAll(filtros: { estado?: 'ABIERTO' | 'CERRADO'; desde?: string; hasta?: string; usuarioId?: string; fechaPor?: 'APERTURA' | 'CIERRE'; soloDiferencias?: boolean } = {}, pagination = { page: 1, limit: 25 }) {
     const campoFecha = filtros.fechaPor === 'CIERRE' ? 't.fechaCierre' : 't.fechaApertura';
     const query = this.turnoRepository.createQueryBuilder('t')
       .leftJoinAndSelect('t.usuarioApertura', 'usuarioApertura')
@@ -144,22 +144,16 @@ export class TurnosService {
       });
     }
 
-    return query.getMany();
+    const stats = await query.clone().select('COUNT(*)', 'total').addSelect('COUNT(*) FILTER (WHERE t.efectivoContado IS NOT NULL AND t.diferencia <> 0)', 'diferencias').addSelect('COUNT(*) FILTER (WHERE t.efectivoContado IS NULL)', 'sinConteo').orderBy().getRawOne();
+    if (filtros.soloDiferencias) query.andWhere('t.efectivoContado IS NOT NULL AND t.diferencia <> 0');
+    const [data, total] = await query.addOrderBy('t.id', 'DESC').skip((pagination.page - 1) * pagination.limit).take(pagination.limit).getManyAndCount();
+    return { data, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) }, summary: { total: Number(stats.total), diferencias: Number(stats.diferencias), sinConteo: Number(stats.sinConteo) } };
   }
 
   // Quiénes abrieron turno alguna vez, para poblar el filtro sin traer todo el historial.
   async findOperadores(): Promise<{ id: string; firstName: string; lastName: string }[]> {
-    const turnos = await this.turnoRepository.find({ relations: ['usuarioApertura'], select: { id: true } });
-    const porId = new Map<string, { id: string; firstName: string; lastName: string }>();
-    for (const turno of turnos) {
-      if (turno.usuarioApertura) {
-        porId.set(turno.usuarioApertura.id, {
-          id: turno.usuarioApertura.id,
-          firstName: turno.usuarioApertura.firstName,
-          lastName: turno.usuarioApertura.lastName,
-        });
-      }
-    }
-    return [...porId.values()].sort((a, b) => a.firstName.localeCompare(b.firstName));
+    return this.turnoRepository.createQueryBuilder('t').innerJoin('t.usuarioApertura', 'u')
+      .select('u.id', 'id').addSelect('u.firstName', 'firstName').addSelect('u.lastName', 'lastName')
+      .distinct(true).orderBy('u.firstName', 'ASC').addOrderBy('u.id', 'ASC').getRawMany();
   }
 }

@@ -23,13 +23,18 @@ export class CobroMercadoPago {
   @Column('uuid', { nullable: true })
   playaId: string | null;
 
-  // Apunta a ticket_registrations o a ticket_registration_for_days según `tipo`. Sin FK, por eso:
-  // son dos tablas destino posibles. Igual que parking_receipts.
+  // Apunta a ticket_registrations, a ticket_registration_for_days o —para un inquilino— al cliente
+  // (customers), según `tipo`. Sin FK, por eso: son varias tablas destino. Igual que parking_receipts.
   @Column('uuid')
   registrationId: string;
 
   @Column('varchar', { length: 10, default: 'HORA' })
-  tipo: 'HORA' | 'ABONO';
+  tipo: 'HORA' | 'ABONO' | 'INQUILINO';
+
+  // Solo inquilinos: qué cargos cubrir primero y la nota, para asentar el pago cuando se acredite
+  // igual que si se hubiera cobrado en el mostrador.
+  @Column('jsonb', { nullable: true })
+  detalle: { receiptIds?: string[]; nota?: string | null } | null;
 
   // Congelado al generar el QR. La tarifa sigue corriendo mientras el cliente paga, así que el
   // importe que se cobra es el que se le mostró, y la diferencia —si la hay— queda como saldo.

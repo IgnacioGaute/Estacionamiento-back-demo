@@ -1,6 +1,6 @@
 # Entrega de comprobantes
 
-En **Administración → Tickets → Comprobantes** se activan por playa WhatsApp manual, QR e impresión. Son independientes y arrancan apagados. Con todos apagados, registrar entradas y salidas no abre el diálogo de entrega.
+En **Administración → Configuración → Comprobantes** se activan por playa WhatsApp manual, QR e impresión (QR e impresión valen también para los recibos de pago de inquilinos; su WhatsApp depende del celular, más abajo). Son independientes y arrancan apagados. Con todos apagados, registrar entradas y salidas no abre el diálogo de entrega.
 
 Se cubren las entradas por patente, por código de barras y por día/semana/mes, y sus salidas. Los errores al obtener un comprobante permiten reintentarlo sin volver a registrar la operación ni cobrar nuevamente.
 
@@ -24,6 +24,18 @@ Cada estadía tiene enlaces diferentes para entrada y salida. El backend conserv
 
 Los enlaces usan secretos aleatorios de 256 bits. Quien tiene un enlace puede leer ese comprobante sin iniciar sesión; la respuesta solo contiene datos del vehículo, playa, horarios e importes, sin usuarios ni movimientos internos. Desactivar un medio impide nuevas emisiones, pero conserva los enlaces ya entregados.
 
+## Recibos de pago de inquilinos
+
+Los pagos a la cuenta corriente de un inquilino usan el mismo circuito. QR y térmica siguen la configuración de la playa. WhatsApp, en cambio, se ofrece siempre que el inquilino tenga un celular válido cargado, aunque el WhatsApp de los tickets esté apagado: el inquilino es un contacto conocido, no un cliente de paso. Sin celular la opción no aparece y un aviso arriba explica por qué. Sin ningún medio (QR y térmica apagados y sin celular) no se emite enlace y queda la impresión en hoja de siempre, que no pasa por el sitio de comprobantes. Se ofrece al terminar el cobro y después desde la pestaña Pagos de la cuenta (`POST /cuentas/pagos/:id/comprobante`, habilitado también para operadores).
+
+El comprobante es `kind: 'PAGO'` y su `registrationId` es el asiento del pago en `cuenta_movimientos` (un pago con dos medios tiene un solo recibo). La copia congelada tiene número, fecha, nombre del inquilino, total, medios, a qué cargos se aplicó y cómo quedó cada uno, lo que quedó a favor y el saldo de la cuenta en ese momento; no tiene usuarios ni ids. Si el pago se anula después, el enlace sigue abriendo pero muestra «Anulado · sin validez» (el backend lo calcula al leer, no está en la copia) y ya no se puede emitir uno nuevo. Lleva la «X» de documento no válido como factura.
+
+El sitio de comprobantes distingue el tipo por `kind` y exporta el recibo de pago a PNG/PDF con el mismo mecanismo (`recibo-pago-<número>-<fecha>`).
+
+## Cobro con QR de MercadoPago a inquilinos
+
+Además de efectivo y transferencia, el cobro a un inquilino ofrece un QR de MercadoPago (`tipo: 'INQUILINO'` en `POST /mercadopago/cobros`, con el importe elegido, los cargos marcados y la nota). A diferencia de las estadías, el importe lo decide el mostrador porque puede pagar una parte o de más. El pago se asienta solo cuando la consulta a MercadoPago confirma que entró: un único PAGO con medio `MERCADOPAGO`, que no toca la caja física ni el turno. Si mientras tanto alguno de los cargos marcados se saldó por otra vía, el importe se aplica a lo que siga pendiente. Un pago acreditado por MercadoPago no se anula (la plata entró): si hay que devolverla, se registra una devolución. Con el QR esperando, el diálogo no se cierra: hay que cancelarlo o esperar la acreditación, para que no quede un pago que nadie consulta.
+
 ## Conocimiento del asistente y térmicas USB
 
 El asistente explica configuración, entrega, recuperación de entradas activas y salidas, enlaces públicos, descargas y teléfonos de frecuentes. Su consulta de configuración incluye los medios habilitados y el ancho de papel de la playa autenticada; no modifica ajustes ni genera enlaces desde el chat.
@@ -45,6 +57,6 @@ En Railway, la app de comprobantes es un servicio más: no hace falta un templat
 
 Backend: `pnpm build` y `node --test test/tenant-isolation.integration.cjs`. El test usa un PostgreSQL temporal; no lee `.env` ni conecta con la base del proyecto. Comprueba permisos de administración/operador, separación entre playas, validación, enlaces públicos, reintentos concurrentes, importes, abonos e inmutabilidad.
 
-Exportación PNG/PDF del comprobante: `node --test test/parking-receipt-export.test.cjs`, que lee el código de la app de comprobantes (necesita sus `node_modules` instalados).
+Exportación PNG/PDF del comprobante y del recibo de pago: `node --test test/parking-receipt-export.test.cjs`, que lee el código de la app de comprobantes (necesita sus `node_modules` instalados). Recibos de pago y QR de inquilinos: `node --test test/cuentas.integration.cjs` (MercadoPago simulado).
 
 Frontend del sistema y app de comprobantes: `pnpm exec tsc --noEmit` y `pnpm build`. La entrega física debe verificarse con la térmica instalada y la cuenta de WhatsApp de la empresa.

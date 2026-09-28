@@ -5,6 +5,7 @@ import { CloseTurnoDto } from './dto/close-turno.dto';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
 import { AuthenticatedRequest } from 'src/types/request';
 import { UnauthorizedException } from '@nestjs/common';
+import { listPagination } from 'src/utils/list-pagination';
 
 function requireUserId(req: AuthenticatedRequest): string {
   if (!req.user?.userId) {
@@ -38,8 +39,11 @@ export class TurnosController {
     @Query('hasta') hasta?: string,
     @Query('usuarioId') usuarioId?: string,
     @Query('fechaPor') fechaPor?: 'APERTURA' | 'CIERRE',
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('soloDiferencias') soloDiferencias?: string,
   ) {
-    return this.turnosService.findAll({ estado, desde, hasta, usuarioId, fechaPor });
+    return this.turnosService.findAll({ estado, desde, hasta, usuarioId, fechaPor, soloDiferencias: soloDiferencias === 'true' }, listPagination(page, limit));
   }
 
   @Get('operadores')

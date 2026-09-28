@@ -2,7 +2,7 @@
 // Use controller metadata, not the URL spelling (Express also accepts mixed case/trailing slashes).
 export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
   AssistantController: ['chat', 'stream'],
-  TicketsController: ['prepareOffline', 'syncOffline', 'finishOffline', 'issueParkingReceipt', 'getVehicleTypes', 'getSchedule', 'findAll', 'findAllRegistrationForDay', 'createRegistrationForDay', 'retireRegistrationsForDay', 'updateTicketStatus', 'addAdvancePayment', 'findAllTicketPrice', 'previewPrice', 'findAllPriceBrackets', 'findAllRegistrations', 'createRegistrationByPlate', 'searchActiveRegistrations', 'getCloseSummary', 'closeRegistrationByPlate', 'getFrequentCustomers', 'getPlateHistory', 'findOne'],
+  TicketsController: ['receiptHistory', 'prepareOffline', 'syncOffline', 'finishOffline', 'issueParkingReceipt', 'getVehicleTypes', 'getSchedule', 'findAll', 'findAllRegistrationForDay', 'createRegistrationForDay', 'retireRegistrationsForDay', 'updateTicketStatus', 'addAdvancePayment', 'findAllTicketPrice', 'previewPrice', 'findAllPriceBrackets', 'findAllRegistrations', 'createRegistrationByPlate', 'searchActiveRegistrations', 'getCloseSummary', 'closeRegistrationByPlate', 'getFrequentCustomers', 'getPlateHistory', 'findOne'],
   ScannerController: ['startScanner'],
   PlateRecognitionController: ['scan'],
   CustomersController: ['findAll', 'getCustomerthird', 'findOne', 'findInterest'],
@@ -13,6 +13,10 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
   NotesController: ['create', 'findAll', 'findOne', 'update', 'remove', 'getTodayNotes', 'unread', 'markRead'],
   TurnosController: ['open', 'close', 'getCashContext', 'getMyOpenTurno'],
   TenantContextController: ['context'],
+  // El operador consulta la cuenta de un inquilino, le cobra en el mostrador y le entrega el
+  // recibo. Saldo inicial, ajustes, devoluciones, anulaciones y cargar abonos quedan para
+  // administración.
+  CuentasController: ['resumen', 'estado', 'registrarPago', 'emitirComprobante'],
   // El cajero genera y consulta el QR de cobro. Conectar o desconectar la cuenta NO está acá:
   // eso es del administrador (MercadoPagoController queda, por omisión, sólo para administradores).
   CobrosMercadoPagoController: ['crearCobro', 'consultarCobro', 'cancelarCobro'],

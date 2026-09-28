@@ -31,7 +31,7 @@ export class ParkingRentersService {
   ) {}
 
   private async assertGarageNumberAvailable(
-    garageNumber: string,
+    garageNumber: string | null | undefined,
     ownerRepo: Repository<ParkingOwner>,
     renterRepo: Repository<ParkingRenter>,
   ): Promise<void> {
@@ -83,7 +83,28 @@ export class ParkingRentersService {
     const renters: ParkingRenter[] = [];
 
     for (const renterDto of dtos) {
-      if (renterDto.owner === '' || renterDto.owner === undefined) {
+      if (!renterDto.owner) {
+        // Un inquilino tiene cocheras propias de la playa: número y precio mensual, sin
+        // propietario. En Particulares una cochera sin propietario no significa nada y se
+        // ignora, como antes.
+        if (customer.customerType !== 'RENTER') continue;
+        if (!Number.isInteger(renterDto.amount) || renterDto.amount < 1)
+          throw new BadRequestException({
+            code: 'COCHERA_SIN_PRECIO',
+            message: 'Poné el precio mensual de cada cochera.',
+          });
+        const garageNumber = renterDto.garageNumber?.trim() || null;
+        await this.assertGarageNumberAvailable(garageNumber, ownerRepo, renterRepo);
+        renters.push(
+          renterRepo.create({
+            customer,
+            garageNumber,
+            licensePlate: renterDto.licensePlate,
+            amount: renterDto.amount,
+            owner: null,
+            parkingType: null,
+          }),
+        );
         continue;
       }
 
@@ -161,6 +182,9 @@ export class ParkingRentersService {
     let newOwnerKey: string | null = null;
 
     for (const renter of customer.parkingRenters ?? []) {
+      // Cochera de inquilino sin propietario: no hay cochera ajena que liberar ni tipo que
+      // reasignar. (Buscar un ParkingOwner con id null traería cualquiera.)
+      if (!renter.owner) continue;
       if (!renterTypeNames.has(renter.owner)) {
         const parkingOwner = await ownerRepo.findOne({ where: { id: renter.owner } });
 
@@ -211,20 +235,10 @@ export class ParkingRentersService {
         throw new NotFoundException(`No se encontraron clientes de tipo ${dto.customerType}`);
       }
 
-      const countsByCustomer = await this.bulkAdjustAmounts(customers, dto);
-
-      for (const customer of customers) {
-        const receipt = await this.receiptRepository.findOne({
-          where: { customer: { id: customer.id }, status: 'PENDING' },
-        });
-
-        if (receipt) {
-          const count = countsByCustomer.get(customer.id) ?? 0;
-          receipt.price += dto.amount * count;
-          receipt.startAmount += dto.amount * count;
-          await this.receiptRepository.save(receipt);
-        }
-      }
+      // El importe nuevo rige para los abonos que se carguen de acá en adelante. Los cargos ya
+      // registrados no se tocan: antes se sumaba la diferencia a «algún» pendiente, sin pasar por
+      // la cuenta corriente, y el saldo dejaba de coincidir con los cargos.
+      await this.bulkAdjustAmounts(customers, dto);
 
       return { message: 'Monto actualizado correctamente', customers };
     } catch (error: any) {
@@ -357,35 +371,21 @@ export class ParkingRentersService {
         await this.parkingRenterRepository.update({ owner: type.name }, { owner: dto.name });
       }
 
-      const targetMonth = dto.month; // "YYYY-MM"
       const newAmount = dto.amount;
 
       if (newAmount !== undefined) {
         const renterCustomers = await this.customerRepository.find({
           where: { customerType: 'RENTER' },
-          relations: ['parkingRenters', 'parkingRenters.parkingType', 'receipts'],
+          relations: ['parkingRenters', 'parkingRenters.parkingType'],
         });
 
+        // El precio nuevo rige para los abonos que se carguen de acá en adelante (`dto.month` ya
+        // no reescribe el cargo de ese mes). Los cargos registrados conservan su importe; si hay
+        // que corregir alguno, se hace con un ajuste en la cuenta corriente, que deja rastro.
         for (const renterCustomer of renterCustomers) {
           const rentersToUpdate = renterCustomer.parkingRenters.filter((r) => r.parkingType?.id === type.id);
 
           if (rentersToUpdate.length === 0) continue;
-
-          const count = rentersToUpdate.length;
-          const exactReceiptTotal = count > 1 ? newAmount * count : newAmount;
-
-          for (const receipt of renterCustomer.receipts) {
-            const receiptMonthStr = receipt.startDate?.slice(0, 7);
-            if (receiptMonthStr !== targetMonth) continue;
-            if (receipt.status !== 'PENDING') continue;
-
-            const hasDebtForMonth = renterCustomer.monthsDebt?.some((debt) => debt.month?.slice(0, 7) === receiptMonthStr);
-            if (hasDebtForMonth) continue;
-
-            receipt.price = exactReceiptTotal;
-            receipt.startAmount = exactReceiptTotal;
-            await this.receiptRepository.save(receipt);
-          }
 
           for (const renter of rentersToUpdate) {
             renter.amount = newAmount;

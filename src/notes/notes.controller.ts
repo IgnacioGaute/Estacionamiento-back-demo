@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Req, UseGuards, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Req, UseGuards, ForbiddenException, Query } from '@nestjs/common';
+import { listPagination } from 'src/utils/list-pagination';
 import { NotesService } from './notes.service';
 import { CreateNoteDto } from './dto/create-note.dto';
 import { UpdateNoteDto } from './dto/update-note.dto';
@@ -47,7 +48,7 @@ export class NotesController {
   }
 
   @Get('today/:userId')
-  async getTodayNotes(@Param('userId') userId: string) {
-    return this.notesService.getTodayNotes(userId);
+  async getTodayNotes(@Param('userId') userId: string, @Query('page') page?: string, @Query('limit') limit?: string) {
+    return this.notesService.getTodayNotes(userId, listPagination(page, limit));
   }
 }

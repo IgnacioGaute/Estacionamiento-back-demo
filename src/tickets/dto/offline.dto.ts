@@ -1,5 +1,5 @@
-import { IsUUID, IsIn, IsISO8601, IsString, IsOptional, MaxLength, IsInt, Min, Max } from 'class-validator';
-export class OfflineDeviceDto { @IsUUID() deviceId: string; }
+import { IsUUID, IsIn, IsISO8601, IsString, IsOptional, MaxLength, IsInt, Min, Max, IsBoolean } from 'class-validator';
+export class OfflineDeviceDto { @IsUUID() deviceId: string; @IsOptional() @IsBoolean() refresh?: boolean; }
 export class OfflineOperationDto extends OfflineDeviceDto {
   @IsUUID() sessionId: string;
   @IsUUID() id: string;

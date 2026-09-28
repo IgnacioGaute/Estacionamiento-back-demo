@@ -108,7 +108,7 @@ test('empresa, playas, usuarios: altas, edición, asignaciones, bajas y protecci
   await call('patch', `usuarios/${u.id}/playas`).send({ playaIds: [p1.id] }).expect(200);
   await call('patch', `empresas/${e1.id}/usuarios/${u.id}`).send({ firstName: 'Andrea', password: 'new-pass-123' }).expect(200);
   await call('patch', `playas/${p1.id}`).send({ nombre: 'Centro nuevo', direccion: 'Calle 123' }).expect(200);
-  const listado = (await call('get', 'empresas').expect(200)).body;
+  const listado = (await call('get', 'empresas').expect(200)).body.data;
   assert.deepEqual(listado.find(e => e.id === e1.id).usuarios[0].playaIds, [p1.id]);
   assert.equal(listado.find(e => e.id === e2.id).usuarios.length, 0);
   const stored = await ds.getRepository(User).findOne({ where: { id: u.id }, select: ['id', 'password'] });
@@ -122,4 +122,124 @@ test('empresa, playas, usuarios: altas, edición, asignaciones, bajas y protecci
   await call('delete', `empresas/${e1.id}`).expect(400);
   await call('delete', `playas/${p2.id}`).expect(200);
   await call('delete', `empresas/${e2.id}`).expect(200);
+});
+
+
+test('playa nueva: Auto habilitado sin tarifas de ejemplo ni pases', async () => {
+  const empresa = (await call('post', 'empresas').send({ nombre: 'Inicio sin ejemplos' }).expect(201)).body;
+  const playa = (await call('post', `empresas/${empresa.id}/playas`).send({ nombre: 'Nueva playa' }).expect(201)).body;
+  const vehicles = await ds.query('SELECT code, name, enabled FROM ticket_vehicle_types WHERE "playaId" = $1', [playa.id]);
+  assert.deepEqual(vehicles, [{ code: 'AUTO', name: 'Auto', enabled: true }]);
+  assert.equal(await ds.getRepository(Bracket).countBy({ playaId: playa.id }), 0);
+  assert.equal(await ds.getRepository(TicketPrice).countBy({ playaId: playa.id }), 0);
+  // El alta no guarda opciones implícitas; getSchedule usa los defaults de operación.
+  assert.equal(await ds.getRepository(Schedule).countBy({ playaId: playa.id }), 0);
+
+});
+
+test('configuracion nueva: tickets fisicos y turnos apagados en entidad y servicio', async () => {
+  const repository = ds.getRepository(Schedule);
+  const service = new TicketsService(undefined, undefined, undefined, undefined, undefined, repository, undefined, undefined, undefined, ds);
+  const fallback = await service.getSchedule();
+  assert.equal(fallback.barcodeTicketsEnabled, false);
+  assert.equal(fallback.shiftsEnabled, false);
+  const saved = await repository.save(repository.create({ dayStartHour: 8, dayEndHour: 20 }));
+  try {
+    assert.equal(saved.barcodeTicketsEnabled, false);
+    assert.equal(saved.shiftsEnabled, false);
+    await repository.update(saved.id, { barcodeTicketsEnabled: true, shiftsEnabled: true });
+    const existing = await service.getSchedule();
+    assert.equal(existing.barcodeTicketsEnabled, true);
+    assert.equal(existing.shiftsEnabled, true);
+  } finally {
+    await repository.delete(saved.id);
+  }
+});
+
+test('migracion de defaults: conserva flags existentes y cambia solo nuevas filas', async () => {
+  const Migration = load('database/migrations/1790000016000-simple-operation-defaults', 'SimpleOperationDefaults1790000016000');
+  const runner = ds.createQueryRunner();
+  await runner.connect();
+  await runner.startTransaction();
+  try {
+    const migration = new Migration();
+    await migration.down(runner);
+    const [enabled] = await runner.query('INSERT INTO ticket_schedule_settings ("dayStartHour", "dayEndHour") VALUES (8, 20) RETURNING id, "barcodeTicketsEnabled", "shiftsEnabled"');
+    assert.equal(enabled.barcodeTicketsEnabled, true);
+    assert.equal(enabled.shiftsEnabled, true);
+    const [disabled] = await runner.query('INSERT INTO ticket_schedule_settings ("dayStartHour", "dayEndHour", "barcodeTicketsEnabled", "shiftsEnabled") VALUES (8, 20, false, false) RETURNING id');
+    await migration.up(runner);
+    const [after] = await runner.query('INSERT INTO ticket_schedule_settings ("dayStartHour", "dayEndHour") VALUES (8, 20) RETURNING id, "barcodeTicketsEnabled", "shiftsEnabled"');
+    assert.equal(after.barcodeTicketsEnabled, false);
+    assert.equal(after.shiftsEnabled, false);
+    const existing = await runner.query('SELECT id, "barcodeTicketsEnabled", "shiftsEnabled" FROM ticket_schedule_settings WHERE id = ANY($1::uuid[])', [[enabled.id, disabled.id]]);
+    assert.deepEqual(existing.find(row => row.id === enabled.id), enabled);
+    assert.deepEqual(existing.find(row => row.id === disabled.id), { id: disabled.id, barcodeTicketsEnabled: false, shiftsEnabled: false });
+    await migration.down(runner);
+    const [stillDisabled] = await runner.query('SELECT "barcodeTicketsEnabled", "shiftsEnabled" FROM ticket_schedule_settings WHERE id = $1', [after.id]);
+    assert.deepEqual(stillDisabled, { barcodeTicketsEnabled: false, shiftsEnabled: false });
+  } finally {
+    await runner.rollbackTransaction();
+    await runner.release();
+  }
+});
+
+
+test('sin configuracion guardada: bloquea abrir turnos y permite caja diaria con historial', async () => {
+  assert.equal(await ds.getRepository(Schedule).count(), 0);
+  const shiftService = new TurnosService(ds.getRepository(Turno), ds.getRepository(Movimiento), ds);
+  await assert.rejects(shiftService.open(superUser.id, { fondoInicial: 0 }), /desactivados/);
+  const historical = await ds.getRepository(Turno).save({ usuarioApertura: superUser, estado: 'CERRADO', cashVersion: 2, fondoInicial: 0 });
+  const CashEntry = load('turnos/entities/cash-entry.entity', 'CashEntry');
+  const boxService = new BoxListsService(ds.getRepository(Box), ds.getRepository(Other), ds);
+  let box;
+  try {
+    box = await boxService.createBox({ date: '2026-09-26', totalPrice: 250 });
+    const cash = await ds.getRepository(CashEntry).findOneByOrFail({ boxId: box.id });
+    assert.equal(cash.amount, 250);
+    assert.equal(cash.turnoId, null);
+    assert.equal(await ds.getRepository(Turno).countBy({ estado: 'ABIERTO' }), 0);
+  } finally {
+    if (box) {
+      await ds.getRepository(CashEntry).delete({ boxId: box.id });
+      await ds.getRepository(Box).delete(box.id);
+    }
+    await ds.getRepository(Turno).delete(historical.id);
+  }
+});
+
+test('offline sin configuracion guardada: sincroniza con tarifas y bloquea si activan turnos', async () => {
+  const OfflineService = load('tickets/offline.service', 'OfflineService');
+  const OfflineSession = load('tickets/entities/offline-session.entity', 'OfflineSession');
+  const { tenantContext } = require('../dist/tenancy/tenant-context');
+  const { randomUUID } = require('node:crypto');
+  const Empresa = load('tenancy/entities/empresa.entity', 'Empresa');
+  const Playa = load('tenancy/entities/playa.entity', 'Playa');
+  const empresa = await ds.getRepository(Empresa).save({ nombre: 'Offline defaults' });
+  const playa = await ds.getRepository(Playa).save({ empresaId: empresa.id, nombre: 'Patente' });
+  const now = new Date();
+  const deviceId = randomUUID();
+  const registrationId = randomUUID();
+  const service = new OfflineService(ds, undefined, undefined, undefined, { emitNewRegistration() {} });
+  const session = await ds.getRepository(OfflineSession).save({ playaId: playa.id, userId: adminUser.id, deviceId,
+    active: true, createdAt: now, expiresAt: new Date(now.getTime() + 3600000), processed: {},
+    snapshot: { types: [{ code: 'AUTO', name: 'Auto' }], vehicles: [], pricing: { version: 1, capturedAt: now.toISOString(), schedule: { dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, pricingDayTypeBasis: 'EXIT' }, brackets: [{ vehicleType: 'AUTO', ticketDayType: null, label: 'Hora', uptoMinutes: 60, price: 1000 }, { vehicleType: 'AUTO', ticketDayType: null, label: 'Adicional', uptoMinutes: null, price: 1000, recurringUnitMinutes: 60, recurringPriceMode: 'FIXED' }] } },
+  });
+  let settings;
+  try {
+    await tenantContext.run({ empresaId: empresa.id, playaId: playa.id, userId: adminUser.id, role: 'ADMIN' }, async () => {
+      const operation = { deviceId, sessionId: session.id, id: randomUUID(), registrationId, kind: 'ENTRY', occurredAt: now.toISOString(), plate: 'DEFAULT1', vehicleType: 'AUTO' };
+      const synced = await service.synchronize(operation);
+      assert.equal(synced.status, 'SYNCED');
+      assert.equal(synced.registrationId, registrationId);
+      settings = await ds.getRepository(Schedule).save({ playaId: playa.id, dayStartHour: 8, dayEndHour: 20, shiftsEnabled: true });
+      await assert.rejects(service.synchronize({ ...operation, id: randomUUID(), registrationId: randomUUID(), plate: 'DEFAULT2' }), /turnos fueron activados/);
+    });
+  } finally {
+    await ds.getRepository(Registration).delete(registrationId);
+    await ds.getRepository(OfflineSession).delete(session.id);
+    if (settings) await ds.getRepository(Schedule).delete(settings.id);
+    await ds.getRepository(Playa).delete(playa.id);
+    await ds.getRepository(Empresa).delete(empresa.id);
+  }
 });

@@ -137,8 +137,17 @@ export class ParkingReceiptsService {
     // Única lectura pública: búsqueda exacta por secreto aleatorio, sin IDs ni listados.
     const receipt = await this.ds
       .getRepository(ParkingReceipt)
-      .findOne({ where: { token }, select: { snapshot: true } });
+      .findOne({ where: { token }, select: { snapshot: true, kind: true, registrationId: true } });
     if (!receipt) throw new NotFoundException('Comprobante no encontrado.');
+    // Un recibo de pago de inquilino se congela al emitirse; si después el pago se anuló, quien
+    // abra el enlace tiene que verlo (el id del asiento no sale de acá).
+    if (receipt.kind === 'PAGO') {
+      const [fila] = await this.ds.query(
+        'SELECT EXISTS (SELECT 1 FROM cuenta_movimientos WHERE "anulaId" = $1) AS anulado',
+        [receipt.registrationId],
+      );
+      return { ...receipt.snapshot, anulado: !!fila?.anulado };
+    }
     return receipt.snapshot;
   }
 }

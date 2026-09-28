@@ -10,6 +10,7 @@ import { TicketsService } from '../tickets/tickets.service';
 import { TurnosService } from '../turnos/turnos.service';
 import { SYSTEM_GUIDE } from './knowledge';
 import { requestGemini } from './gemini-request';
+import { claveDePregunta, temaDePregunta } from './temas';
 import type { AssistantMessageDto } from './assistant.controller';
 
 type Content = { role: string; parts: any[] };
@@ -74,6 +75,8 @@ export class AssistantService {
     // Mejor frenar acá, con un mensaje claro, que comerse un 429 de Google.
     if (limit.busy || limit.count >= 4 || (!this.limits.has(owner) && this.limits.size >= 5000)) throw new HttpException('Esperá un momento antes de volver a preguntar.', 429);
     limit.count++; limit.busy = true; this.limits.set(owner, limit);
+    const consulted: string[] = [];
+    let respondida = false;
     try {
       const previous = dto.conversationId ? this.conversations.get(dto.conversationId) : undefined;
       if (previous && previous.owner !== owner) throw new ForbiddenException();
@@ -86,8 +89,7 @@ export class AssistantService {
         { name: 'ticket_amount', description: 'Importe y desglose actual de un ingreso activo. Primero obtener su id mediante active_vehicles.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' } }, required: ['id'] } },
         ...(s.role === 'ADMIN' ? [{ name: 'shift_history', description: 'Últimos cinco cierres de turno, sin totales de recaudación.' }] : []),
       ];
-      const consulted: string[] = [];
-      const primary = this.config.get<string>('GEMINI_MODEL') || 'gemini-3.5-flash-lite';
+      const primary =this.config.get<string>('GEMINI_MODEL') || 'gemini-3.5-flash-lite';
       const fallback = this.config.get<string>('GEMINI_FALLBACK_MODELS') ?? 'gemini-3.1-flash-lite';
       const models = [...new Set([primary, ...fallback.split(',').map(value => value.trim()).filter(Boolean)])].slice(0, 3);
       if (models.some(model => !/^[a-zA-Z0-9.-]+$/.test(model))) throw new ServiceUnavailableException('Modelo de asistente inválido.');
@@ -128,6 +130,7 @@ export class AssistantService {
           if (this.conversations.size >= 300) this.conversations.delete(this.conversations.keys().next().value!);
           this.conversations.set(id, { owner, expires: now + 1800000, contents: history });
           emitir?.({ texto: answer });
+          respondida = true;
           return { answer, conversationId: id, consulted: [...new Set(consulted)], asOf: new Date().toISOString() };
         }
         if (calls.length > 3 || step === 3) break;
@@ -142,6 +145,26 @@ export class AssistantService {
         contents.push({ role: 'user', parts });
       }
       throw new ServiceUnavailableException('La consulta es demasiado amplia. Probá preguntar por un registro o tema concreto.');
-    } finally { limit.busy = false; }
+    } finally {
+      limit.busy = false;
+      // También las que fallaron: una pregunta que el asistente no supo responder es justo la
+      // que el panel de plataforma tiene que mostrar.
+      void this.registrarPregunta(s.playaId, s.userId, dto.message, consulted, respondida);
+    }
+  }
+
+  // Guarda la pregunta para las métricas de plataforma. Nunca hace fallar la respuesta: si no
+  // se puede escribir, el operador ya tiene lo que pidió y perder el registro es lo de menos.
+  private async registrarPregunta(playaId: string, userId: string, mensaje: string, consultadas: string[], respondida: boolean) {
+    try {
+      const pregunta = mensaje.trim().replace(/\s+/g, ' ').slice(0, 300);
+      if (!pregunta) return;
+      await this.ds.query(
+        'INSERT INTO assistant_preguntas ("playaId", "userId", pregunta, clave, tema, respondida) VALUES ($1, $2, $3, $4, $5, $6)',
+        [playaId, userId, pregunta, claveDePregunta(pregunta), temaDePregunta(pregunta, consultadas), respondida],
+      );
+    } catch (error) {
+      this.logger.warn(`No se pudo registrar la pregunta al asistente: ${error instanceof Error ? error.message : error}`);
+    }
   }
 }

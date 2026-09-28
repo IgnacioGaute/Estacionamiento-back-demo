@@ -168,6 +168,31 @@ movements or pricing snapshots. Box lookups (`findBoxByDate`/`findOne`) eagerly 
 (receipts → customers → parkingOwners/parkingRenters → payment history) — extend carefully, this is already a
 heavy query.
 
+### Cuenta corriente de inquilinos (`src/cuentas/`)
+
+Only for `RENTER` customers, and only where the super admin turned on `playas.modulos.inquilinos`
+(`MODULO_INQUILINOS_APAGADO` otherwise). Vocabulary (reviewed with an accountant, keep it consistent in UI and
+messages): *abono mensual* = agreed price; *cargo* = what a period adds to the account; *pago* = money received,
+documented by a *recibo de pago* ("X", no válido como factura); *saldo pendiente* / *saldo a favor*.
+`cuenta_movimientos` is an append-only ledger (the scoped role has SELECT/INSERT only): positive `importe` =
+debe, negative = haber, saldo = SUM. For renters a `receipts` row is a **cargo** (`price` = still owed), typed by
+`tipoCargo` (`ABONO`/`RECARGO`/`SALDO_INICIAL`) with `periodo` and `vencimiento`; one cargo per renter and
+period is enforced by the partial unique index `receipts_cargo_periodo_unico`. `conciliar` keeps cargos equal
+to the ledger; legacy renters are back-filled lazily by `asegurarCuenta`, which must run before any ledger
+write. A renter's cocheras (`vehicle_renters`) are just number + monthly price with `owner` null
+(`CocherasSinDuenio1790000019000`); older rows may still carry a `RenterParkingType` name, and real `ParkingOwner`
+links belong to PRIVATE customers (Particulares). The abono is the sum of the prices. Query a renter's cargos with `cargosDe()` (relation filters otherwise drop soft-deleted customers):
+a *baja* frees the cocheras and stops monthly abonos but keeps the account payable. Monthly abonos go through
+`previsualizarAbonos`/`cargarAbonos` (advisory lock per playa+month, savepoint per renter); price or cocheras
+changes never rewrite registered cargos. `registrarPago` is idempotent on `solicitudId` (unique with `metodo`).
+Money actually returned is a `DEVOLUCION` (only from saldo a favor), not an anulación. Legacy receipt
+update/cancel/delete for renters return `USAR_CUENTA_CORRIENTE`. Anulación is deliberately hard
+(`anulacion.ts`, shared by the endpoint and the `anulable` flags sent to the UI): cargos/adjustments only in
+the month they were loaded, payments and devoluciones only while their turno is open (same day without
+turnos), never migrated history; it needs a 10+ character reason and the exact amount typed back. Anulled pairs
+are hidden in the account view and the printed statement; `GET /cuentas/anulaciones` is the admin's control
+list. Amounts are whole pesos: DTOs reject decimals and the UI never reinterprets a "1.000,50".
+
 ### Pricing brackets
 
 Hourly pricing lives in `src/tickets/pricing/pricing.ts`. `TicketPriceBracket` is scoped by vehicle and optional
@@ -211,6 +236,13 @@ times and amounts — never users or internal movements — with `no-store`/`noi
 response (`/c/<token>`), so the link a customer receives never exposes the system's domain. It fetches
 server-side, so no CORS entry is needed for it. See `docs/comprobantes.md`.
 
+Renter payments reuse this circuit: `kind: 'PAGO'` (`CuentasService.emitirComprobante`, `POST /cuentas/pagos/:id/comprobante`)
+with `registrationId` = the `cuenta_movimientos` PAGO row and a `ReciboPagoSnapshot`; `readPublic` adds `anulado` at read
+time. QR/print follow `receiptDelivery`, but WhatsApp is offered whenever the renter has a valid cell number
+(`telefono` in the response), regardless of the toggle. Renters can also pay by MercadoPago QR (`CobroMercadoPago.tipo = 'INQUILINO'`, `registrationId` = customer id,
+amount/cargos in `detalle`); accreditation posts one PAGO with `metodo: 'MERCADOPAGO'` (outside the cash drawer, not
+anulable). `MERCADOPAGO` exists in the stored payment enums but never in DTOs, so nobody can declare it by hand.
+
 ### Assistant (Gemini)
 
 `src/assistant/` is an operator-facing chat (`POST /assistant/chat`, plus an SSE `chat/stream` that still buffers
@@ -218,7 +250,8 @@ the whole answer before emitting it). The Google key stays server-side. The mode
 no SQL, no mutations — and every tool execution re-checks the tenant scope. `knowledge.ts` is versioned product
 guidance that must be updated when screens, rules or permissions change. History and rate limits (8
 questions/minute, one concurrent per user/playa) are per-process in memory; multiple instances would need shared
-storage. `gemini-request.ts` owns retries and fallback models within a 65s budget. See `src/assistant/README.md`.
+storage. Each question (text, topic from `temas.ts`, answered or not — never the answer) is also persisted in the
+playa-scoped `assistant_preguntas` table, which feeds the super admin's metrics screen. `gemini-request.ts` owns retries and fallback models within a 65s budget. See `src/assistant/README.md`.
 
 ### Receipts / customers / parking / saas
 

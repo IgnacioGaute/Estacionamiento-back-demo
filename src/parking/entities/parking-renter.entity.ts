@@ -34,8 +34,10 @@ import { RenterParkingType } from './renter-parking-type.entity';
     @Column('int',{nullable:true})
     amount: number;
 
-    @Column('varchar')
-    owner: string;
+    // Id de un ParkingOwner real (Particulares) o nombre de un RenterParkingType (inquilinos
+    // viejos). Null en la cochera de un inquilino cargada solo con número y precio.
+    @Column('varchar', { nullable: true })
+    owner: string | null;
 
     @ManyToOne(() => ParkingOwner, (parkingOwner) => parkingOwner.parkingRenters)
     @JoinColumn({ name: 'vehicleId' })

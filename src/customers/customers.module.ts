@@ -9,9 +9,10 @@ import { InterestSettings } from './entities/interest-setting.entity';
 import { NotificationGateway } from 'src/notes/notification-gateway';
 import { NotificationInterestGateway } from './notification-interest-gateway';
 import { ParkingModule } from 'src/parking/parking.module';
+import { CuentasModule } from 'src/cuentas/cuentas.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Customer, Receipt, InterestSettings]), ReceiptsModule, ParkingModule],
+  imports: [TypeOrmModule.forFeature([Customer, Receipt, InterestSettings]), ReceiptsModule, ParkingModule, CuentasModule],
   controllers: [CustomersController],
   providers: [CustomersService, NotificationInterestGateway],
 })

@@ -10,6 +10,8 @@ import {
 } from 'typeorm';
 import { Empresa } from './empresa.entity';
 
+export type ModulosPlaya = { inquilinos?: boolean };
+
 // La playa es el scope operativo: todo lo que pasa en el mostrador (tickets, caja, turnos,
 // cocheras) cuelga de acá. Una empresa tiene una o dos.
 @Entity({ name: 'playas' })
@@ -30,6 +32,10 @@ export class Playa {
 
   @Column('varchar', { length: 255, nullable: true })
   direccion: string | null;
+
+  // Secciones opcionales que el super admin prende por playa. Ausente = apagada.
+  @Column('jsonb', { default: () => "'{}'::jsonb" })
+  modulos: ModulosPlaya;
 
   @CreateDateColumn()
   createdAt: Date;

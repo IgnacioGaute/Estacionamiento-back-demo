@@ -3,16 +3,16 @@
 Reemplaza la interfaz de Consulta sin conexión. Esta entrega admite entradas por patente y salidas/cobros de estadías por hora, en una playa con turnos desactivados. Día/Sem/Mes, cortesías, devoluciones y registros históricos sin snapshot no están habilitados offline.
 
 ## Uso
-1. Con conexión y la sesión de la playa activa: Modo sin conexión → Activar este equipo. Guardar la frase local de acceso.
-2. Una sola combinación dispositivo/usuario queda reservada por playa. Otro equipo no puede preparar una contingencia simultánea.
-3. Abrir modo operativo, ingresar la frase, registrar entradas y salidas. Confirmación local solo después de completar la transacción IndexedDB.
+1. Al abrir la pantalla de operación con sesión e internet, el navegador prepara los datos automáticamente y los renueva cada minuto sin pendientes. No hay botón de activación. Requiere navegador con Service Worker, IndexedDB, Web Crypto y Web Locks.
+2. Varios dispositivos pueden tener sesiones simultáneas. Durante un corte cada uno conoce solo su copia local; no puede ver ingresos nuevos de otro equipo. Coordinar qué vehículo atiende cada operador para evitar cobros físicos duplicados. El servidor detecta conflictos, no puede revertir dinero recibido físicamente.
+3. Abrir modo operativo y registrar entradas y salidas directamente. En /tickets, un corte detectado abre automáticamente la pantalla local si hay datos preparados. Las copias antiguas piden su frase una sola vez para migrar el acceso, sin borrar pendientes. Confirmación local solo después de completar la transacción IndexedDB.
 4. Las operaciones pendientes se sincronizan en orden al volver la conexión, al desbloquear y periódicamente mientras la pantalla está abierta. También existe Sincronizar ahora. Requiere sesión vigente del mismo usuario/playa.
 5. Finalizar contingencia, online y sin pendientes, libera el equipo. Preparar una nueva jornada renueva la autorización de 24 horas.
 
-No borrar almacenamiento, olvidar la frase, cambiar de usuario/playa ni cambiar de dispositivo con pendientes. No se garantiza sincronización en segundo plano con la app cerrada. Una actualización del service worker espera a que se cierren las ventanas anteriores; si sigue apareciendo Consulta sin conexión, cerrar todas las ventanas y reabrir con red.
+No borrar almacenamiento, cambiar de usuario/playa ni cambiar de dispositivo con pendientes. No se garantiza sincronización en segundo plano con la app cerrada. Una actualización del service worker espera a que se cierren las ventanas anteriores; si sigue apareciendo la pantalla anterior, cerrar todas las ventanas y reabrir con red.
 
 ## Persistencia y sincronización
-- Los pendientes no vencen ni se eliminan al vencer la autorización de nuevas operaciones. La frase deriva AES-GCM con PBKDF2; no se envía al servidor. No se guardan tokens de sesión.
+- Los pendientes no vencen ni se eliminan al vencer la autorización de nuevas operaciones. El secreto local deriva AES-GCM con PBKDF2; no se envía al servidor. Se conserva envuelto con una CryptoKey no exportable en IndexedDB para acceso automático. Esto NO protege contra alguien con acceso al mismo perfil del navegador: usar bloqueo del dispositivo. No se guardan tokens de sesión. No hay bloqueo automático al cambiar de pestaña.
 - Una revisión atómica en IndexedDB rechaza escrituras desde pestañas que leyeron una versión vieja.
 - El servidor conserva snapshot de preparación, propietario, dispositivo y fechas autorizadas. No confía en tarifas enviadas por el navegador.
 - Cada operación tiene UUID y huella de contenido. Operación, movimiento, caja e idempotencia se guardan en la misma transacción.
@@ -22,16 +22,16 @@ No borrar almacenamiento, olvidar la frase, cambiar de usuario/playa ni cambiar 
 - El admin remoto recibe los registros sincronizados. No puede conocer operaciones que todavía estén en un dispositivo sin red.
 - El motor de precios del navegador es generado desde el mismo código de pricing del backend, no una fórmula alternativa. Regenerar después de cambios de tarifas con `node scripts/build-offline-pricing.cjs`.
 - El desbloqueo local no verifica revocaciones remotas; la sincronización sí exige autorización vigente. Los usuarios con control del dispositivo pueden manipular el reloj local, pero el servidor valida rango temporal, precios, anticipos y propiedad.
-- No se generan enlaces públicos antes de sincronizar. La impresión local y la integración de abonos/turnos quedan fuera de esta entrega.
+- Comprobantes locales de entrada y salida: disponibles solo si la entrega estaba habilitada en la configuración descargada. Admiten PNG y, con impresión habilitada, impresión/PDF del navegador. Se identifican como pendientes hasta sincronizar. No se generan enlaces públicos ni QR antes de sincronizar. WhatsApp requiere red. La integración de abonos/turnos queda fuera de esta entrega.
 
 ## Despliegue
-Aplicar la migración `1790000010000-offline-sessions` al iniciar el backend. Mantener frontend y backend en la misma versión de pricing. El archivo público `sw.js` no debe cachearse por CDN. Solo se almacenan archivos del shell público en Cache Storage: nunca API, HTML autenticado, RSC o mutaciones.
+Aplicar las migraciones `1790000010000-offline-sessions` y `1790000013000-offline-multiple-devices` al iniciar el backend. Cada renovación conserva la sesión previa para no invalidar operaciones de una pestaña en carrera; no borrar sesiones sin auditar pendientes. Mantener frontend y backend en la misma versión de pricing. El archivo público `sw.js` no debe cachearse por CDN. Solo se almacenan archivos del shell público en Cache Storage: nunca API, HTML autenticado, RSC o mutaciones.
 
 HTTPS es necesario salvo localhost para desarrollo. HTTP por IP local no sirve para probar desde celulares. Referencia: [Service Worker API](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API).
 
 ## Pruebas
 - `pnpm build`
-- `node --test test/tenant-isolation.integration.cjs`: DB temporal, RLS, dispositivo único, propietario, huella, reintentos concurrentes, saldo y fecha original.
+- `node --test test/tenant-isolation.integration.cjs`: DB temporal, RLS, múltiples dispositivos, conflictos, propietario, huella, reintentos concurrentes, saldo y fecha original.
 - `node --test test/pwa-offline.test.cjs`: Chromium con red deshabilitada, recarga con pendiente, entrada, salida, copia cifrada, respuesta de sync perdida, reintento, conflicto de revisión entre pestañas, anchos móviles y equivalencia del motor browser/backend.
 - Frontend: `pnpm exec tsc --noEmit`.
 

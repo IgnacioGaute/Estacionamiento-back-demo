@@ -4,6 +4,7 @@ import { CUSTOMER_TYPE, CustomerType } from '../entities/customer.entity';
 import { PAYMENT_TYPE, PaymentType } from 'src/receipts/entities/receipt-payment.entity';
 import { CreateParkingOwnerDto } from 'src/parking/dto/create-parking-owner.dto';
 import { CreateParkingRenterDto } from 'src/parking/dto/create-parking-renter.dto';
+import { SaldoInicialDto } from 'src/cuentas/dto/cuentas.dto';
 
 export class CreateCustomerDto {
   @IsString()
@@ -53,6 +54,12 @@ export class CreateCustomerDto {
   @Type(() => CreateParkingRenterDto)
   @IsOptional()
   parkingRenters?: CreateParkingRenterDto[]; // Hacer que los inquilinos sean opcionales
+
+  // Sólo inquilinos: cómo está su cuenta al darlo de alta. Reemplaza a hasDebt/monthsDebt/credit.
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SaldoInicialDto)
+  saldoInicial?: SaldoInicialDto;
 }
 
 class MonthDebtDto {

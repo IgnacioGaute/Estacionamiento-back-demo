@@ -136,6 +136,7 @@ before(async () => {
     await new (load('database/migrations/1790000002000-auth-version', 'AuthVersion1790000002000'))().up(migrationRunner);
     await new (load('database/migrations/1790000004000-parking-receipts', 'ParkingReceipts1790000004000'))().up(migrationRunner);
     await new (load('database/migrations/1790000010000-offline-sessions', 'OfflineSessions1790000010000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000013000-offline-multiple-devices', 'OfflineMultipleDevices1790000013000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -735,6 +736,7 @@ test('telefono: primera entrada figura en frecuentes, normaliza, recupera contac
 test('configuracion: turnos desactivados permiten caja diaria y bloquean aperturas sin afectar otra playa', async () => {
   const service = app.get(TicketsService);
   const shifts = app.get(TurnosService);
+  await scoped(a, async () => service.updateSchedule({ shiftsEnabled: true }));
   await scoped(b, async () => {
     await service.updateSchedule({ shiftsEnabled: false });
     assert.equal((await service.getSchedule()).shiftsEnabled, false);
@@ -754,7 +756,7 @@ test('configuracion: turnos desactivados permiten caja diaria y bloquean apertur
   await scoped(a, async () => assert.equal((await service.getSchedule()).shiftsEnabled, true));
 });
 
-test('offline: dispositivo exclusivo, reintentos idempotentes y cobro con horario original', async () => {
+test('offline: múltiples dispositivos, conflictos y cobro idempotente con horario original', async () => {
   const offline = app.get(load('tickets/offline.service', 'OfflineService'));
   const uuid = require('node:crypto').randomUUID;
   const deviceId = uuid();
@@ -762,11 +764,16 @@ test('offline: dispositivo exclusivo, reintentos idempotentes y cobro con horari
   await scoped({ ...b, role: 'ADMIN' }, async () => {
     await app.get(TicketsService).updateSchedule({ shiftsEnabled: false });
     session = await offline.prepare(deviceId);
-    await assert.rejects(offline.prepare(uuid()), /Otro dispositivo/);
+    const otherDevice = uuid();
+    const otherSession = await offline.prepare(otherDevice);
+    assert.notEqual(session.sessionId, otherSession.sessionId);
     const now = Math.floor(Date.now() / 1000) * 1000;
     entryOp = { deviceId, sessionId: session.sessionId, id: uuid(), registrationId: uuid(), kind: 'ENTRY', occurredAt: new Date(now - 60000).toISOString(), plate: 'OFF123', vehicleType: 'AUTO' };
     await offline.synchronize(entryOp);
     await offline.synchronize(entryOp);
+    await assert.rejects(offline.synchronize({ ...entryOp, id: uuid(), registrationId: uuid(), deviceId: otherDevice, sessionId: otherSession.sessionId }), /ingreso activo/);
+    const refreshed = await offline.prepare(otherDevice, true);
+    assert.ok(refreshed.vehicles.some(v => v.id === entryOp.registrationId));
     assert.equal(await ds.getRepository(Registration).countBy({ id: entryOp.registrationId }), 1);
     await assert.rejects(offline.synchronize({ ...entryOp, plate: 'DIFFERENT' }), /otros datos/);
     const expected = load('tickets/pricing/stay-pricing', 'calculateStayPrice')(session.pricing, 'AUTO', new Date(entryOp.occurredAt), new Date(now));
@@ -778,6 +785,7 @@ test('offline: dispositivo exclusivo, reintentos idempotentes y cobro con horari
     const saved = await ds.getRepository(Registration).findOneByOrFail({ id: entryOp.registrationId });
     assert.equal(saved.departureTime, dayjs(now).tz('America/Argentina/Buenos_Aires').format('HH:mm:ss'));
     await assert.rejects(offline.synchronize({ ...exit, id: uuid() }), /Otro operador/);
+    await assert.rejects(offline.synchronize({ ...exit, id: uuid(), deviceId: otherDevice, sessionId: refreshed.sessionId }), /Otro operador/);
     await offline.finish({ sessionId: session.sessionId, deviceId });
   });
   await scoped({ ...a, role: 'ADMIN' }, async () => assert.rejects(offline.synchronize(entryOp), /otro usuario/));

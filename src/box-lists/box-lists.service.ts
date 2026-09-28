@@ -46,7 +46,7 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     if (!amount) return;
     const turno = await manager.getRepository(Turno).findOne({ where: { estado: 'ABIERTO', cashVersion: 2 } });
     const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
-    if (settings?.shiftsEnabled !== false && !turno && await manager.getRepository(Turno).exists({ where: { cashVersion: 2 } })) {
+    if (settings?.shiftsEnabled === true && !turno && await manager.getRepository(Turno).exists({ where: { cashVersion: 2 } })) {
       throw new BadRequestException('Abrí el siguiente turno antes de registrar efectivo en caja.');
     }
     await manager.getRepository(CashEntry).save({ boxId, amount, description, turnoId: turno?.id ?? null });
@@ -73,11 +73,11 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     return box;
   }
 
-  async getAllboxes(){
+  async getAllboxes(pagination = { page: 1, limit: 25 }){
     try{
 
-      const boxes = await this.boxListRepository.find()
-      return boxes
+      const [data, total] = await this.boxListRepository.findAndCount({ order: { id: 'DESC' }, skip: (pagination.page - 1) * pagination.limit, take: pagination.limit });
+      return { data, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) } };
 
     } catch (error: any) {
       this.logger.error(error.message, error.stack);
@@ -362,16 +362,13 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
       return repo.save(updated);
     });
   }
-  async findAllOtherPayment() {
+  async findAllOtherPayment(pagination = { page: 1, limit: 25 }, search = '', sort = 'dateNow', direction = 'DESC') {
     try {
-      const expenses = await this.otherPaymentepository.find({
-        relations: ['boxList'],
-        order: {
-          dateNow: 'DESC',  // 👈 Cambiado a descendente
-        },
-      });
-  
-      return expenses;
+      const query = this.otherPaymentepository.createQueryBuilder('e').leftJoinAndSelect('e.boxList', 'box');
+      if (search.trim()) query.andWhere('e.description ILIKE :search', { search: '%' + search.slice(0, 120).trim().replace(/[\\%_]/g, '\\$&') + '%' });
+      const column = ['dateNow', 'description', 'price', 'type', 'paymentMethod'].includes(sort) ? sort : 'dateNow';
+      const [data, total] = await query.orderBy(`e.${column}`, direction === 'ASC' ? 'ASC' : 'DESC').addOrderBy('e.id', 'DESC').skip((pagination.page - 1) * pagination.limit).take(pagination.limit).getManyAndCount();
+      return { data, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) } };
     } catch (error: any) {
       this.logger.error(error.message, error.stack);
     }

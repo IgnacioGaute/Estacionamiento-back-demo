@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards, Query } from '@nestjs/common';
+import { listPagination } from 'src/utils/list-pagination';
 import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
 import { ParkingOwnersService } from './parking-owners.service';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
@@ -12,8 +13,8 @@ export class ParkingOwnersController {
   constructor(private readonly parkingOwnersService: ParkingOwnersService) {}
 
   @Get('owners/for-rent')
-  async getOwnersAvailableForRent() {
-    return await this.parkingOwnersService.getOwnersAvailableForRent();
+  async getOwnersAvailableForRent(@Query('page') page?: string, @Query('limit') limit?: string) {
+    return await this.parkingOwnersService.getOwnersAvailableForRent(listPagination(page, limit));
   }
 
   @Get('owners/occupancy-summary')

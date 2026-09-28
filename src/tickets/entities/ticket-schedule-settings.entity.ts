@@ -47,14 +47,18 @@ export class TicketScheduleSettings {
   // Si está apagado, la pantalla de operación no muestra nada del flujo por código de barras
   // (escáner, grilla de tickets, ni esos tickets en "Activos ahora") — queda solo el flujo
   // por patente. No borra ni bloquea nada del lado del servidor, es puramente de interfaz.
-  @Column('boolean', { default: true })
+  @Column('boolean', { default: false })
   barcodeTicketsEnabled: boolean;
 
-  @Column('boolean', { default: true })
+  @Column('boolean', { default: false })
   shiftsEnabled: boolean;
 
   @Column('jsonb', { nullable: true })
   pricingOptions: PricingOptions | null;
+
+  // Día del mes en que vence el abono de los inquilinos. Se elige al cargar los abonos del mes.
+  @Column('int', { default: 10 })
+  vencimientoAbonoDia: number;
 
   @UpdateDateColumn()
   updatedAt: Date;

@@ -170,17 +170,20 @@ export class NotesService {
     return { success: true };
   }
 
-  async getTodayNotes(userId: string) {
+  async getTodayNotes(userId: string, pagination = { page: 1, limit: 25 }) {
     const today = new Date();
     today.setHours(0, 0, 0, 0); // Establecer la fecha de inicio del día
 
-    return this.noteRepository.find({
+    const [data, total] = await this.noteRepository.findAndCount({
       where: {
         user: { id: userId }, // Si `userId` es una relación
         createdAt: MoreThanOrEqual(today),
       },
       relations: ['user'], // Asegurar que se cargue la relación
+      order: { createdAt: 'DESC', id: 'DESC' },
+      skip: (pagination.page - 1) * pagination.limit, take: pagination.limit,
     });
+    return { data, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) } };
   }
   
 }

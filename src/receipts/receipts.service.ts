@@ -6,7 +6,7 @@ import { BoxList } from 'src/box-lists/entities/box-list.entity';
 import { addMonths, startOfMonth } from 'date-fns';
 import { Customer, CustomerType } from 'src/customers/entities/customer.entity';
 import { RenterParkingType } from 'src/parking/entities/renter-parking-type.entity';
-import { Receipt } from './entities/receipt.entity';
+import { Receipt, TipoCargo } from './entities/receipt.entity';
 import { UpdateReceiptDto } from './dto/update-receipt.dto';
 
 import dayjs from 'dayjs';
@@ -17,6 +17,15 @@ import { LessThan } from "typeorm";
 import { ReceiptPayment } from './entities/receipt-payment.entity';
 import { PaymentHistoryOnAccount } from './entities/payment-history-on-account.entity';
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
+import {
+  asegurarCuenta,
+  asentar,
+  conciliar,
+  diaDeVencimiento,
+  hoy as hoyCuenta,
+  mesLargo,
+  vencimientoDe,
+} from 'src/cuentas/libro';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -41,17 +50,40 @@ export class ReceiptsService {
         private readonly dataSource: DataSource,
     ) {}
 
-async createReceipt(customerId: string, manager: EntityManager, price?: number, dateNow?: string, dateNowForDebt?: string): Promise<Receipt> {
+async createReceipt(
+  customerId: string,
+  manager: EntityManager,
+  price?: number,
+  dateNow?: string,
+  dateNowForDebt?: string,
+  // Sólo para inquilinos: qué asiento de la cuenta corriente origina el cargo, de qué tipo es, a
+  // qué período corresponde y cuándo vence. Sin tipo explícito se deduce del origen.
+  cuenta?: {
+    origen?: 'CARGO' | 'SALDO_INICIAL' | 'AJUSTE';
+    concepto?: string;
+    motivo?: string | null;
+    usuarioId?: string | null;
+    tipoCargo?: TipoCargo;
+    periodo?: string | null;
+    vencimiento?: string;
+  },
+): Promise<Receipt> {
   try {
 
+    // Con los dados de baja: a un ex inquilino todavía se le puede cargar un recargo o un saldo
+    // inicial. Los abonos del mes nunca le llegan, porque la generación mensual no lo ve.
     const customer = await manager.findOne(Customer, {
       where: { id: customerId },
       relations: ['parkingOwners', 'parkingRenters', 'receipts'],
+      withDeleted: true,
     });
 
     if (!customer) {
       throw new NotFoundException('Customer not found');
     }
+    // La historia vieja del inquilino se vuelca antes de asentar este recibo (ver asegurarCuenta).
+    const esInquilino = customer.customerType === 'RENTER';
+    if (esInquilino) await asegurarCuenta(manager, customer.id);
     const argentinaTime = dayjs().tz('America/Argentina/Buenos_Aires');
     const nextMonthStartDate = argentinaTime
     .startOf('month')
@@ -80,8 +112,9 @@ async createReceipt(customerId: string, manager: EntityManager, price?: number, 
       : (await manager.find(RenterParkingType)).map((t) => t.name);
 
     if (customer.customerType === 'RENTER') {
+      // Una cochera sin propietario (inquilino nuevo) numera en la serie de la playa.
       const matchedOwner = customer.parkingRenters.find(renter =>
-        manualOwnerNames.includes(renter.owner)
+        !!renter.owner && manualOwnerNames.includes(renter.owner)
       );
 
       receiptTypeKey = matchedOwner ? matchedOwner.owner : 'GARAGE_MITRE';
@@ -105,7 +138,29 @@ async createReceipt(customerId: string, manager: EntityManager, price?: number, 
       startDate: actualStartDate,
       barcode,
       receiptTypeKey,
+      concepto: cuenta?.concepto ?? (esInquilino ? `Abono ${mesLargo(actualStartDate)}` : null),
     });
+
+    if (esInquilino) {
+      const tipoCargo: TipoCargo =
+        cuenta?.tipoCargo ??
+        (cuenta?.origen === 'AJUSTE' ? 'RECARGO' : cuenta?.origen === 'SALDO_INICIAL' ? 'SALDO_INICIAL' : 'ABONO');
+      const periodo =
+        cuenta?.periodo !== undefined ? cuenta.periodo : tipoCargo === 'ABONO' ? String(actualStartDate).slice(0, 7) : null;
+      receipt.tipoCargo = tipoCargo;
+      receipt.periodo = periodo;
+      // Un abono vence el día configurado de su mes; una deuda inicial por mes, el de aquel mes
+      // (ya pasó: es deuda vieja); un recargo o un saldo inicial total, desde que se cargan.
+      receipt.vencimiento =
+        cuenta?.vencimiento ??
+        (periodo
+          ? tipoCargo === 'ABONO'
+            ? vencimientoDe(periodo, await diaDeVencimiento(manager))
+            : vencimientoDe(periodo, await diaDeVencimiento(manager), '0000-00-00')
+          : tipoCargo === 'RECARGO'
+            ? hoyCuenta()
+            : String(actualStartDate).slice(0, 10));
+    }
 
 
     // GENERAR receiptNumber
@@ -118,7 +173,34 @@ async createReceipt(customerId: string, manager: EntityManager, price?: number, 
       receipt.receiptNumber = 'N° 0000-00000001';
     }
 
-    return await manager.save(receipt);
+    let guardado: Receipt;
+    try {
+      guardado = await manager.save(receipt);
+    } catch (error: any) {
+      // El índice único por período: otro pedido (u otra pantalla) ya cargó el de ese mes.
+      if (error?.code === '23505' && String(error?.constraint ?? error?.detail ?? '').includes('periodo'))
+        throw new ConflictException({
+          code: 'CARGO_DEL_PERIODO_EXISTENTE',
+          message: `Ya tiene un cargo de ${mesLargo(`${receipt.periodo}-01`)}.`,
+        });
+      throw error;
+    }
+    if (esInquilino && price) {
+      await asentar(manager, {
+        customerId: customer.id,
+        tipo: cuenta?.origen ?? 'CARGO',
+        importe: price,
+        fecha: String(actualStartDate).slice(0, 10),
+        concepto: `${guardado.concepto} · ${guardado.receiptNumber}`,
+        receiptId: guardado.id,
+        motivo: cuenta?.motivo ?? null,
+        usuarioId: cuenta?.usuarioId ?? null,
+      });
+      // Si tenía saldo a favor, el recibo nuevo lo consume en el acto.
+      await conciliar(manager, customer.id);
+      return (await manager.findOne(Receipt, { where: { id: guardado.id } })) ?? guardado;
+    }
+    return guardado;
   } catch (error: any) {
     if (!(error instanceof NotFoundException)) {
       this.logger.error(error.message, error.stack);
@@ -326,6 +408,13 @@ async updateReceipt(
       relations: ["receipts"],
     });
     if (!customer) throw new NotFoundException("Customer not found");
+    // Los inquilinos cobran por su cuenta corriente: este camino pisa el saldo del recibo sin
+    // dejar asiento y la cuenta dejaría de cuadrar.
+    if (customer.customerType === "RENTER")
+      throw new BadRequestException({
+        code: "USAR_CUENTA_CORRIENTE",
+        message: "Los pagos de inquilinos se registran desde su cuenta corriente.",
+      });
 
     logPrivate(customer, "Inicio updateReceipt()", { receiptId, customerId });
 
@@ -775,6 +864,11 @@ async cancelReceipt(receiptId: string, customerId: string) {
     });
 
     if (!customer) throw new NotFoundException("Customer not found");
+    if (customer.customerType === "RENTER")
+      throw new BadRequestException({
+        code: "USAR_CUENTA_CORRIENTE",
+        message: "Los pagos de inquilinos se anulan desde su cuenta corriente.",
+      });
 
 
     const lastPaidReceipt = await queryRunner.manager.findOne(Receipt, {
@@ -944,16 +1038,24 @@ async createReceiptMan(dateNowFront: string, customerType: CustomerType): Promis
   try {
     this.logger.log(`Generando recibos para ${target.format('MM/YYYY')}`);
 
+    // Dos generaciones simultáneas del mismo mes verían los mismos faltantes; en serie, la segunda
+    // ya encuentra lo que cargó la primera (y el índice único por período es la última defensa).
+    if (customerType === 'RENTER')
+      await qr.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`abonos-inquilinos:${targetMonthString}`]);
+
+    // Los dados de baja no aparecen (quedan fuera por su borrado lógico): no se les cargan abonos.
     const customers = await qr.manager.find(Customer, {
       where: { customerType: customerType },
       relations: ['receipts', 'parkingOwners', 'parkingRenters'],
     });
 
     for (const customer of customers) {
-      const exists = customer.receipts.some(r => {
-        if (!r.dateNow) return false;
-        return dayjs(r.dateNow).format('YYYY-MM') === targetMonthString;
-      });
+      // Un inquilino ya tiene el abono del mes si hay un cargo de ese período (un recargo o un
+      // saldo inicial total no lo tienen). Los propietarios siguen con la regla de siempre.
+      const exists =
+        customer.customerType === 'RENTER'
+          ? customer.receipts.some((r) => r.periodo === targetMonthString)
+          : customer.receipts.some((r) => !!r.dateNow && dayjs(r.dateNow).format('YYYY-MM') === targetMonthString);
 
       if (exists) {
         this.logger.debug(`Cliente ${customer.id} ya tiene recibo en ${targetMonthString}, se salta.`);
@@ -971,7 +1073,14 @@ async createReceiptMan(dateNowFront: string, customerType: CustomerType): Promis
       }
 
       if (shouldCreateReceipt) {
-        const newReceipt = await this.createReceipt(customer.id, qr.manager, totalVehicleAmount, dateNowFront);
+        const newReceipt = await this.createReceipt(
+          customer.id,
+          qr.manager,
+          totalVehicleAmount,
+          dateNowFront,
+          null,
+          customer.customerType === 'RENTER' ? { tipoCargo: 'ABONO', periodo: targetMonthString } : undefined,
+        );
         createdReceipts.push(newReceipt);
       }
     }
@@ -1032,38 +1141,16 @@ async createReceiptMan(dateNowFront: string, customerType: CustomerType): Promis
 
 
 
-    async findAllPendingReceipts(customerType: CustomerType) {
-      try {
-        const customers = await this.customerRepository.find({
-          where: { customerType: customerType },
-          relations: ['receipts'],
-          withDeleted: true
-        });
-    
-        // Array para almacenar los recibos pendientes de todos los clientes
-        const pendingReceipts = [];
-    
-        for (const customer of customers) {
-          const receipts = customer.receipts.sort(
-            (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
-          );
-    
-          // Filtrar solo los recibos con estado 'PENDING'
-          const customerPendingReceipts = receipts.filter(
-            (receipt) => receipt.status === 'PENDING'
-          );
-    
-          // Agregar los recibos pendientes al array general
-          pendingReceipts.push(...customerPendingReceipts);
-        }
-    
-        return pendingReceipts;
-      } catch (error: any) {
-        if (!(error instanceof NotFoundException)) {
-          this.logger.error(error.message, error.stack);
-        }
-        throw error;
+    async findAllPendingReceipts(customerType: CustomerType, pagination = { page: 1, limit: 25 }, month?: string) {
+      const query = this.receiptRepository.createQueryBuilder('r').withDeleted().innerJoin('r.customer', 'c')
+        .where('c.customerType = :customerType', { customerType }).andWhere('r.status = :status', { status: 'PENDING' });
+      if (month) {
+        if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new BadRequestException('Mes inválido.');
+        query.andWhere('r.dateNow >= :from AND r.dateNow < :to', { from: month + '-01', to: dayjs(month + '-01').add(1, 'month').format('YYYY-MM-DD') });
       }
+      const [data, total] = await query.orderBy('r.createdAt', 'DESC').addOrderBy('r.id', 'DESC')
+        .skip((pagination.page - 1) * pagination.limit).take(pagination.limit).getManyAndCount();
+      return { data, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) } };
     }
 
     async getBarcodeReceipt(barcode: string, manager: EntityManager):Promise<Receipt>{
@@ -1092,11 +1179,11 @@ async createReceiptMan(dateNowFront: string, customerType: CustomerType): Promis
       }
     }
 
-    async findReceipts(){
+    async findReceipts(pagination = { page: 1, limit: 25 }){
       try{
-        const receipts = await this.receiptRepository.find({relations: ['payments', 'customer','customer.parkingRenters', 'customer.parkingRenters.parkingOwner', 'customer.parkingRenters.parkingOwner.customer']})
+        const [receipts, total] = await this.receiptRepository.findAndCount({relations: ['payments', 'customer','customer.parkingRenters', 'customer.parkingRenters.parkingOwner', 'customer.parkingRenters.parkingOwner.customer'], order: { createdAt: 'DESC', id: 'DESC' }, skip: (pagination.page - 1) * pagination.limit, take: pagination.limit })
 
-        return receipts;
+        return { data: receipts, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) } };
       } catch (error: any) {
         if (!(error instanceof NotFoundException)) {
           this.logger.error(error.message, error.stack);
@@ -1197,6 +1284,15 @@ async createReceiptMan(dateNowFront: string, customerType: CustomerType): Promis
         }
 
         const customer = receipt.customer;
+
+        // Inquilino: borrar un recibo es anular deuda, y eso solo se hace desde la cuenta
+        // corriente, con sus plazos, motivo y confirmación (ver cuentas/anulacion.ts). Por acá
+        // se podía borrar sin nada de eso.
+        if (customer.customerType === 'RENTER')
+          throw new BadRequestException({
+            code: 'USAR_CUENTA_CORRIENTE',
+            message: 'Los recibos de inquilinos se anulan desde su cuenta corriente.',
+          });
 
         if (customer.monthsDebt && Array.isArray(customer.monthsDebt)) {
           const receiptMonth = receipt.startDate.slice(0, 7);

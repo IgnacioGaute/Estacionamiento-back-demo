@@ -3,6 +3,7 @@ import { ReceiptsService } from './receipts.service';
 import { UpdateReceiptDto } from './dto/update-receipt.dto';
 import { CustomerType } from 'src/customers/entities/customer.entity';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
+import { listPagination } from 'src/utils/list-pagination';
 
 @Controller('receipts')
 @UseGuards(AuthOrTokenAuthGuard)
@@ -33,13 +34,13 @@ export class ReceiptsController {
     }
 
     @Get(':customerType')
-    async findAllPendingReceipts( @Param('customerType') customer: CustomerType) {
-        return await this.receiptsService.findAllPendingReceipts(customer);
+    async findAllPendingReceipts(@Param('customerType') customer: CustomerType, @Query('page') page?: string, @Query('limit') limit?: string, @Query('month') month?: string) {
+        return await this.receiptsService.findAllPendingReceipts(customer, listPagination(page, limit), month);
     }
 
     @Get()
-    async findReceipts() {
-        return await this.receiptsService.findReceipts();
+    async findReceipts(@Query('page') page?: string, @Query('limit') limit?: string) {
+        return await this.receiptsService.findReceipts(listPagination(page, limit));
     }
 
 

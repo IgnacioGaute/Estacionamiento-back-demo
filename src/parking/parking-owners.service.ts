@@ -54,12 +54,14 @@ export class ParkingOwnersService {
     }
   }
 
-  async getOwnersAvailableForRent(): Promise<ParkingOwner[]> {
+  async getOwnersAvailableForRent(pagination = { page: 1, limit: 25 }) {
     try {
-      return await this.parkingOwnerRepository.find({
+      const [data, total] = await this.parkingOwnerRepository.findAndCount({
         where: { rent: true },
         relations: ['customer', 'parkingRenters', 'parkingRenters.customer'],
+        order: { id: 'ASC' }, skip: (pagination.page - 1) * pagination.limit, take: pagination.limit,
       });
+      return { data, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) } };
     } catch (error: any) {
       if (!(error instanceof NotFoundException)) {
         this.logger.error(error.message, error.stack);

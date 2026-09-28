@@ -5,6 +5,9 @@ import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate
 import { CloseRegistrationDto } from './dto/close-registration.dto';
 import { PreviewPriceDto, SimulatePriceDto } from './dto/preview-price.dto';
 import { TicketsService } from './tickets.service';
+import { TariffPlanService } from './tariff-plan.service';
+import { SimulateTariffPlanDto, UpdateTariffPlanDto } from './dto/tariff-plan.dto';
+import { listPagination } from 'src/utils/list-pagination';
 import { OfflineService } from './offline.service';
 import { OfflineDeviceDto, OfflineOperationDto, OfflineFinishDto } from './dto/offline.dto';
 import { ParkingReceiptsService } from './parking-receipts.service';
@@ -29,10 +32,19 @@ import { CreateTicketRegistrationForDayDto, UpdateTicketStatusDto } from './dto/
 @Controller('tickets')
 @UseGuards(AuthOrTokenAuthGuard)
 export class TicketsController {
-  constructor(private readonly ticketsService: TicketsService, private readonly parkingReceipts: ParkingReceiptsService, private readonly offline: OfflineService) {}
+  constructor(private readonly ticketsService: TicketsService, private readonly parkingReceipts: ParkingReceiptsService, private readonly offline: OfflineService, private readonly tariffPlans: TariffPlanService) {}
+
+  @Get('tariff-plan')
+  getTariffPlan() { return this.tariffPlans.getPlan(); }
+
+  @Patch('tariff-plan')
+  updateTariffPlan(@Body() dto: UpdateTariffPlanDto) { return this.tariffPlans.updatePlan(dto); }
+
+  @Post('tariff-plan/simulate')
+  simulateTariffPlan(@Body() dto: SimulateTariffPlanDto) { return this.tariffPlans.simulate(dto); }
 
   @Post('offline/prepare')
-  prepareOffline(@Body() dto: OfflineDeviceDto) { return this.offline.prepare(dto.deviceId); }
+  prepareOffline(@Body() dto: OfflineDeviceDto) { return this.offline.prepare(dto.deviceId, dto.refresh); }
   @Post('offline/sync')
   syncOffline(@Body() dto: OfflineOperationDto) { return this.offline.synchronize(dto); }
   @Post('offline/finish')
@@ -72,8 +84,8 @@ export class TicketsController {
     return this.ticketsService.findAll(query);
   }
   @Get('registrationForDays')
-  findAllRegistrationForDay() {
-    return this.ticketsService.findAllRegistrationForDay();
+  findAllRegistrationForDay(@Query('page') page?: string, @Query('limit') limit?: string, @Query('operation') operation?: string) {
+    return this.ticketsService.findAllRegistrationForDay(listPagination(page, limit), operation === 'true');
   }
 
   @Get('registrationForDays/summary')
@@ -187,9 +199,14 @@ export class TicketsController {
     return this.ticketsService.removePriceBracket(id);
   }
 
+  @Get('receipt-history')
+  receiptHistory(@Query('page') page?: string, @Query('limit') limit?: string, @Query('date') date?: string, @Query('search') search?: string) {
+    return this.ticketsService.receiptHistory(listPagination(page, limit), date ?? '', search);
+  }
+
   @Get('registrations')
-  findAllRegistrations() {
-    return this.ticketsService.findAllRegistrations();
+  findAllRegistrations(@Query('page') page?: string, @Query('limit') limit?: string, @Query('operation') operation?: string) {
+    return this.ticketsService.findAllRegistrations(listPagination(page, limit), operation === 'true');
   }
 
   @Post('registrations/by-plate')
@@ -235,18 +252,22 @@ export class TicketsController {
     @Query('to') to?: string,
     @Query('vehicleType') vehicleType?: string,
     @Query('minVisits') minVisits?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
   ) {
     return this.ticketsService.getFrequentCustomers({
       from,
       to,
       vehicleType,
       minVisits: minVisits ? Number(minVisits) : undefined,
-    });
+      search,
+    }, listPagination(page, limit));
   }
 
   @Get('registrations/frequent/:plate')
-  getPlateHistory(@Param('plate') plate: string) {
-    return this.ticketsService.getPlateHistory(plate);
+  getPlateHistory(@Param('plate') plate: string, @Query('page') page?: string, @Query('limit') limit?: string) {
+    return this.ticketsService.getPlateHistory(plate, listPagination(page, limit));
   }
 
   @Get('registrations/:id')

@@ -1,4 +1,5 @@
 import { VehicleTypeEntity } from './entities/vehicle-type.entity';
+import { ListPagination, listResult } from 'src/utils/list-pagination';
 import { CreateVehicleTypeDto, UpdateVehicleTypeDto } from './dto/vehicle-type.dto';
 import { assertPricingCoverage, calculateStayPrice, validatePricingOptions } from './pricing/stay-pricing';
 import { defaultPricingOptions, PricingOptions } from './pricing/pricing.types';
@@ -189,7 +190,7 @@ async removeTicketPrice(id: string) {
 }
 
 
-  private readonly defaultTicketSchedule = { dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, barcodeTicketsEnabled: true, shiftsEnabled: true, pricingDayTypeBasis: 'EXIT' as const };
+  private readonly defaultTicketSchedule = { dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, barcodeTicketsEnabled: false, shiftsEnabled: false, pricingDayTypeBasis: 'EXIT' as const };
 
   async getSchedule(manager?: EntityManager) {
     const repository = manager ? manager.getRepository(TicketScheduleSettings) : this.ticketScheduleSettingsRepository;
@@ -547,10 +548,14 @@ async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMe
     return { affected: result.affected ?? 0 };
   }
 
-    async findAllRegistrationForDay() {
+    async findAllRegistrationForDay(pagination?: ListPagination, operation = false) {
       try {
-        const ticketsDays = await this.ticketRegistrationForDayRepository.find({ relations: ['boxList'] })
-        return ticketsDays;
+        const query = this.ticketRegistrationForDayRepository.createQueryBuilder('r').leftJoinAndSelect('r.boxList', 'box');
+        if (operation) query.where('r.retired = false');
+        query.orderBy('r.createdAt', 'DESC').addOrderBy('r.id', 'DESC');
+        if (!pagination) return query.getMany();
+        const [data, total] = await query.skip((pagination.page - 1) * pagination.limit).take(pagination.limit).getManyAndCount();
+        return listResult(data, total, pagination);
       } catch (error: any) {
         this.logger.error(error.message, error.stack);
       }
@@ -719,17 +724,39 @@ async removePriceBracket(id: string) {
   });
 }
 
-  async findAllRegistrations() {
+  async findAllRegistrations(pagination?: ListPagination, operation = false) {
     try{
-        const registrations = await this.ticketRegistrationRepository.find({
-            relations: ['ticket', 'boxList'],
-            order: { createdAt: 'DESC' },
-          });
-
-        return registrations;
+        const query = this.ticketRegistrationRepository.createQueryBuilder('r').leftJoinAndSelect('r.ticket', 'ticket').leftJoinAndSelect('r.boxList', 'box');
+        if (operation) query.where('r.departureTime IS NULL OR r.id IN (SELECT id FROM ticket_registrations ORDER BY "updatedAt" DESC, id DESC LIMIT 1)');
+        query.orderBy('r.createdAt', 'DESC').addOrderBy('r.id', 'DESC');
+        if (!pagination) return query.getMany();
+        const [data, total] = await query.skip((pagination.page - 1) * pagination.limit).take(pagination.limit).getManyAndCount();
+        return listResult(data, total, pagination);
     } catch (error: any) {
         this.logger.error(error.message, error.stack);
     }
+  }
+
+  async receiptHistory(pagination: ListPagination, date: string, search = '') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !dayjs(date).isValid() || dayjs(date).format('YYYY-MM-DD') !== date) throw new BadRequestException('Fecha inválida.');
+    const union = `
+      SELECT id, COALESCE(NULLIF("licensePlateOriginal", ''), NULLIF("vehiclePlateCustomer", ''), NULLIF("codeBarTicket", ''), "lastNameCustomer", 'Sin patente') AS identification,
+        CONCAT_WS(' ', "licensePlateOriginal", "vehiclePlateCustomer", "codeBarTicket", "lastNameCustomer") AS search,
+        COALESCE("departureDay", "entryDay") AS date, COALESCE("departureTime", "entryTime", '') AS time,
+        ("departureTime" IS NOT NULL OR "departureDay" IS NOT NULL) AS departed, 'Por hora' AS type
+      FROM ticket_registrations WHERE "entryDay" = $1 OR "departureDay" = $1
+      UNION ALL
+      SELECT id, COALESCE(NULLIF("vehiclePlateCustomer", ''), "lastNameCustomer", 'Sin patente'),
+        CONCAT_WS(' ', "vehiclePlateCustomer", "lastNameCustomer"),
+        COALESCE(to_char("retiredAt" AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD'), "dateNow"),
+        COALESCE(to_char("retiredAt" AT TIME ZONE 'America/Argentina/Buenos_Aires', 'HH24:MI:SS'), ''), retired, 'Día / semana / mes'
+      FROM ticket_registration_for_days WHERE "dateNow" = $1 OR ("retiredAt" >= ($1::date::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND "retiredAt" < (($1::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires'))`;
+    const filtered = `WITH rows AS (${union}) SELECT * FROM rows WHERE regexp_replace(upper(search), '[^A-Z0-9]', '', 'g') LIKE $2`;
+    const searchKey = search.slice(0, 120).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const params = [date, '%' + searchKey + '%'];
+    const [count] = await this.dataSource.query(`SELECT COUNT(*) AS total FROM (${filtered}) filtered`, params);
+    const data = await this.dataSource.query(`${filtered} ORDER BY date DESC, time DESC, id DESC LIMIT $3 OFFSET $4`, [...params, pagination.limit, (pagination.page - 1) * pagination.limit]);
+    return listResult(data, Number(count.total), pagination);
   }
 
   async getTicketRegistrationsSummary(from?: string, to?: string) {
@@ -1028,7 +1055,7 @@ async removePriceBracket(id: string) {
     return saved;
   }
 
-  async getFrequentCustomers(filters: { from?: string; to?: string; vehicleType?: string; minVisits?: number }) {
+  async getFrequentCustomers(filters: { from?: string; to?: string; vehicleType?: string; minVisits?: number; search?: string }, pagination?: ListPagination) {
     const minVisits = filters.minVisits ?? 1;
 
     const durationExpr =
@@ -1058,11 +1085,17 @@ async removePriceBracket(id: string) {
     if (filters.vehicleType) qb.andWhere('r.vehicleType = :vehicleType', { vehicleType: filters.vehicleType });
 
     qb.having(`COUNT(*) >= :minVisits OR BOOL_OR(r."phoneCustomer" IS NOT NULL AND r."phoneCustomer" <> '')`, { minVisits });
-    qb.orderBy('visits', 'DESC');
-
+    if (filters.search?.trim()) qb.andHaving(`CONCAT_WS(' ', r."licensePlateNormalized", MAX(r."lastNameCustomer"), MAX(r."phoneCustomer")) ILIKE :search`, { search: '%' + filters.search.slice(0, 120).trim().replace(/[\\%_]/g, '\\$&') + '%' });
+    let total = 0;
+    if (pagination) {
+      const [sql, params] = qb.getQueryAndParameters();
+      const [count] = await this.dataSource.query(`SELECT COUNT(*) AS total FROM (${sql}) grouped`, params);
+      total = Number(count.total);
+      qb.offset((pagination.page - 1) * pagination.limit).limit(pagination.limit);
+    }
+    qb.orderBy('visits', 'DESC').addOrderBy('r.licensePlateNormalized', 'ASC');
     const rows = await qb.getRawMany();
-
-    return rows.map((row) => {
+    const data = rows.map((row) => {
       const visits = Number(row.visits);
       const firstVisit = row.firstVisit as string;
       const lastVisit = row.lastVisit as string;
@@ -1086,12 +1119,15 @@ async removePriceBracket(id: string) {
         totalSpent: Number(row.totalSpent),
       };
     });
+    return pagination ? listResult(data, total, pagination) : data;
   }
 
-  async getPlateHistory(plateNormalized: string) {
-    return this.ticketRegistrationRepository.find({
+  async getPlateHistory(plateNormalized: string, pagination = { page: 1, limit: 25 }) {
+    const [data, total] = await this.ticketRegistrationRepository.findAndCount({
       where: { licensePlateNormalized: plateNormalized },
-      order: { entryDay: 'DESC', entryTime: 'DESC' },
+      order: { entryDay: 'DESC', entryTime: 'DESC', id: 'DESC' },
+      skip: (pagination.page - 1) * pagination.limit, take: pagination.limit,
     });
+    return listResult(data, total, pagination);
   }
 }

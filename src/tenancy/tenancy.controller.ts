@@ -15,6 +15,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { TenancyService } from './tenancy.service';
+import { listPagination } from 'src/utils/list-pagination';
 import { SuperAdminGuard } from 'src/utils/guards/super-admin.guard';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
@@ -91,8 +92,8 @@ export class TenancyController {
   }
 
   @Get('empresas')
-  findAllEmpresas() {
-    return this.tenancyService.findAllEmpresas();
+  findAllEmpresas(@Query('page') page?: string, @Query('limit') limit?: string) {
+    return this.tenancyService.findEmpresasPage(listPagination(page, limit));
   }
 
   // Métricas de operación de todas las playas. `dias` acota la ventana de lo cobrado.
@@ -213,7 +214,9 @@ export class TenancyController {
       empresaId: playa.empresaId,
       playaId: playa.id,
       usuarioId: this.actor(req),
-      accion: 'PLAYA_EDITADA',
+      // Prender o apagar una sección cambia lo que ven los usuarios de la playa: se distingue de
+      // corregir el nombre o la dirección.
+      accion: dto.modulos ? 'PLAYA_MODULOS' : 'PLAYA_EDITADA',
       entidad: playa.nombre,
       entidadId: playa.id,
     });

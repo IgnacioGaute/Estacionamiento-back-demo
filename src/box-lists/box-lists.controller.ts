@@ -5,6 +5,7 @@ import { UpdateBoxListDto } from './dto/update-box-list.dto';
 import { CreateOtherPaymentDto } from './dto/create-other-payment.dto';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
 import { UpdateOtherPaymentDto } from './dto/update-other-payment.dto';
+import { listPagination } from 'src/utils/list-pagination';
 
 @Controller('box-lists')
 @UseGuards(AuthOrTokenAuthGuard)
@@ -23,12 +24,12 @@ export class BoxListsController {
 
 
   @Get()
-  async getAllboxes() {
-      return await this.boxListsService.getAllboxes();
+  async getAllboxes(@Query('page') page?: string, @Query('limit') limit?: string) {
+      return await this.boxListsService.getAllboxes(listPagination(page, limit));
   }
     @Get('otherPayment')
-  async findAllOtherPayment() {
-    return await this.boxListsService.findAllOtherPayment();
+  async findAllOtherPayment(@Query('page') page?: string, @Query('limit') limit?: string, @Query('search') search?: string, @Query('sort') sort?: string, @Query('direction') direction?: string) {
+    return await this.boxListsService.findAllOtherPayment(listPagination(page, limit), search, sort, direction);
   }
 
   @Get('summary')

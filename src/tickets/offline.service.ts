@@ -15,12 +15,13 @@ import { BoxListsService } from 'src/box-lists/box-lists.service';
 import { MovimientosService } from 'src/movimientos/movimientos.service';
 import { TicketGateway } from './register-gateway';
 import { OfflineOperationDto, OfflineFinishDto } from './dto/offline.dto';
+import { Playa } from 'src/tenancy/entities/playa.entity';
 const TZ = 'America/Argentina/Buenos_Aires';
 @Injectable()
 export class OfflineService {
   constructor(private readonly ds: DataSource, private readonly tickets: TicketsService, private readonly boxes: BoxListsService, private readonly movements: MovimientosService, private readonly gateway: TicketGateway) {}
   private scope() { const s = tenantContext.getStore(); if (!s?.userId || !s.playaId || !['USER', 'ADMIN'].includes(s.role)) throw new ForbiddenException(); return s; }
-  async prepare(deviceId: string) {
+  async prepare(deviceId: string, refresh = false) {
     const scope = this.scope();
     return this.ds.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
@@ -28,9 +29,8 @@ export class OfflineService {
       const schedule = await this.tickets.getSchedule(manager);
       if (schedule.shiftsEnabled !== false) throw new BadRequestException('Para operar offline, desactivá los turnos en Configuración.');
       const repo = manager.getRepository(OfflineSession);
-      const active = await repo.findOne({ where: { playaId: scope.playaId, active: true } });
-      if (active) {
-        if (active.deviceId !== deviceId || active.userId !== scope.userId) throw new ConflictException('Otro dispositivo o usuario tiene la contingencia de esta playa. Debe sincronizar y finalizar antes de cambiarlo.');
+      const active = await repo.findOne({ where: { playaId: scope.playaId, userId: scope.userId, deviceId, active: true }, order: { createdAt: 'DESC' } });
+      if (active && !refresh) {
         return { ...active.snapshot, sessionId: active.id, processedIds: Object.keys(active.processed) };
       }
       const now = new Date();
@@ -40,7 +40,8 @@ export class OfflineService {
       for (const r of await manager.getRepository(TicketRegistration).find({ where: { departureTime: IsNull() }, relations: ['ticket'] })) {
         vehicles.push({ id: r.id, plate: r.licensePlateOriginal || r.codeBarTicket || r.ticket?.codeBar || 'Sin patente', vehicleType: r.vehicleType || r.ticket?.vehicleType, entry: dayjs.tz(`${r.entryDay} ${r.entryTime}`, TZ).toISOString(), pricing: r.pricingSnapshot, collected: await this.tickets.collectedAmount(r, manager), eligible: !!r.pricingSnapshot });
       }
-      const snapshot = { version: 2, userId: scope.userId, playaId: scope.playaId, capturedAt: now.toISOString(), expiresAt: now.getTime() + 86400000, pricing, types: types.map(t => ({ code: t.code, name: t.name })), vehicles };
+      const playa = await manager.getRepository(Playa).findOneBy({ id: scope.playaId });
+      const snapshot = { version: 2, userId: scope.userId, playaId: scope.playaId, business: { name: playa?.nombre, address: playa?.direccion }, receiptDelivery: schedule.receiptDelivery, capturedAt: now.toISOString(), expiresAt: now.getTime() + 86400000, pricing, types: types.map(t => ({ code: t.code, name: t.name })), vehicles };
       const session = await repo.save(repo.create({ playaId: scope.playaId, userId: scope.userId, deviceId, createdAt: now, expiresAt: new Date(snapshot.expiresAt), active: true, snapshot, processed: {} }));
       return { ...snapshot, sessionId: session.id, processedIds: [] };
     });
@@ -61,7 +62,7 @@ export class OfflineService {
       const time = Date.parse(dto.occurredAt);
       if (time < session.createdAt.getTime() - 120000 || time > session.expiresAt.getTime() || time > Date.now() + 120000) throw new ConflictException('La fecha de la operación está fuera del período autorizado.');
       const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
-      if (settings?.shiftsEnabled !== false) throw new ConflictException('Los turnos fueron activados. Desactivalos antes de sincronizar esta contingencia.');
+      if (settings?.shiftsEnabled === true) throw new ConflictException('Los turnos fueron activados. Desactivalos antes de sincronizar esta contingencia.');
       const repo = manager.getRepository(TicketRegistration);
       let registration: TicketRegistration;
       if (dto.kind === 'ENTRY') {

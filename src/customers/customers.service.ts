@@ -23,6 +23,8 @@ import { ParkingOwnersService } from 'src/parking/parking-owners.service';
 import { ParkingRentersService } from 'src/parking/parking-renters.service';
 import { ParkingOwner } from 'src/parking/entities/parking-owner.entity';
 import { ParkingRenter } from 'src/parking/entities/parking-renter.entity';
+import { CuentasService } from 'src/cuentas/cuentas.service';
+import { asegurarCuenta, mesLargo } from 'src/cuentas/libro';
 
 
 dayjs.extend(utc);
@@ -45,6 +47,7 @@ export class CustomersService {
       private readonly dataSource: DataSource,
       private readonly parkingOwnersService: ParkingOwnersService,
       private readonly parkingRentersService: ParkingRentersService,
+      private readonly cuentasService: CuentasService,
     ) {}
 
     async create(createCustomerDto: CreateCustomerDto) {
@@ -55,8 +58,9 @@ export class CustomersService {
       try {
         const customerRepo = queryRunner.manager.getRepository(Customer);
 
+        const { saldoInicial, ...datosCliente } = createCustomerDto;
         const customer = customerRepo.create({
-          ...createCustomerDto,
+          ...datosCliente,
           parkingOwners: [],
           parkingRenters: []
         });
@@ -134,15 +138,28 @@ export class CustomersService {
               await customerRepo.save(savedCustomer);
 
             for (const debt of parsedMonthsDebt) {
-
+              const mes = debt.month.length === 7 ? `${debt.month}-01` : debt.month;
               await this.receiptsService.createReceipt(
                 savedCustomer.id,
                 queryRunner.manager,
                 debt.amount,
                 null,
-                debt.month.length === 7 ? `${debt.month}-01` : debt.month,
+                mes,
+                // En la cuenta de un inquilino, la deuda que trae al alta es saldo inicial.
+                customer.customerType === 'RENTER'
+                  ? { origen: 'SALDO_INICIAL', concepto: `Deuda ${mesLargo(mes)}`, periodo: mes.slice(0, 7) }
+                  : undefined,
               );
             }
+          }
+
+          if (customer.customerType === 'RENTER' && saldoInicial && saldoInicial.tipo !== 'AL_DIA') {
+            await this.cuentasService.registrarSaldoInicial(
+              savedCustomer.id,
+              saldoInicial,
+              null,
+              queryRunner.manager,
+            );
           }
 
 
@@ -159,9 +176,9 @@ export class CustomersService {
     }
 
 
-async findAll(customerType: CustomerType) {
+async findAll(customerType: CustomerType, pagination?: { page: number; limit: number }, search = '', sort = 'lastName', direction = 'ASC') {
   try {
-    const customers = await this.customerRepository.find({
+    const [customers, total] = await this.customerRepository.findAndCount({
       relations: [
         'receipts',
         'receipts.payments',
@@ -174,10 +191,12 @@ async findAll(customerType: CustomerType) {
         'parkingRenters.parkingOwner',
         'parkingRenters.parkingOwner.customer',
       ],
-      where: { customerType },
+      where: { customerType, ...(search.trim() ? { lastName: ILike('%' + search.slice(0, 120).trim().replace(/[\\%_]/g, '\\$&') + '%') } : {}) },
+      order: { [['lastName', 'firstName', 'numberOfVehicles', 'createdAt'].includes(sort) ? sort : 'lastName']: direction === 'DESC' ? 'DESC' : 'ASC', id: 'ASC' },
+      ...(pagination ? { skip: (pagination.page - 1) * pagination.limit, take: pagination.limit } : {}),
       withDeleted: true,
     });
-    return customers;
+    return pagination ? { data: customers, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) } } : customers;
   } catch (error: any) {
     this.logger.error(error.message, error.stack);
     throw error;
@@ -232,6 +251,8 @@ async findAll(customerType: CustomerType) {
       if (!customer) {
         throw new NotFoundException(`Customer ${id} not found`);
       }
+      // Antes de tocar recibos de un inquilino, su historia tiene que estar en el libro.
+      if (customer.customerType === 'RENTER') await asegurarCuenta(queryRunner.manager, customer.id);
        const receipts = await receiptRepo.find({
         where: { customer: { id: customer.id }, status: 'PENDING' },
       });
@@ -306,28 +327,9 @@ async findAll(customerType: CustomerType) {
       const isRenterCustomer = customer.customerType === "RENTER";
 
       if (isRenterCustomer) {
-        // ✅ SOLO el último pending (más reciente) que NO esté en monthsDebt
-        const monthsDebtSet = new Set(
-          (customer.monthsDebt || []).map((d) => String(d.month).slice(0, 7))
-        );
-
-        const pendingReceipts = await receiptRepo.find({
-          where: { customer: { id: customer.id }, status: "PENDING" },
-          order: { startDate: "DESC" }, // ✅ más reciente primero
-        });
-
-        const lastPendingNotDebt = pendingReceipts.find((r) => {
-          const m = String(r.startDate).slice(0, 7);
-          return !monthsDebtSet.has(m);
-        });
-
-        if (lastPendingNotDebt) {
-          await queryRunner.manager.update(
-            Receipt,
-            lastPendingNotDebt.id,
-            { price, startAmount: price }
-          );
-        }
+        // Inquilino: el abono nuevo rige para los cargos que se carguen de acá en adelante. Los
+        // ya registrados conservan su importe —antes se tocaba «el último pendiente», que podía
+        // ser un recargo u otro mes—; si alguno hay que corregirlo, es un ajuste explícito.
       } else {
         // ✅ comportamiento actual: actualizar todos los pendings que no estén en debt
         for (const receipt of receipts) {
@@ -350,7 +352,10 @@ async findAll(customerType: CustomerType) {
 
 
 
+      // La deuda por meses del alta vieja pisaba importes de cargos sin pasar por el libro; para
+      // un inquilino, la deuda previa se carga como saldo inicial desde su cuenta corriente.
       if (
+        !isRenterCustomer &&
         updateCustomerDto.hasDebt &&
         JSON.stringify(updateCustomerDto.monthsDebt) !== JSON.stringify(oldMonthsDebtCustoemr)
       ) {
@@ -464,8 +469,13 @@ async findAll(customerType: CustomerType) {
         await this.parkingRentersService.softDeleteMany(customer.parkingRenters);
       }
 
-      for(const receipt of customer.receipts){
-        await this.receiptRepository.softDelete(receipt.id);
+      // Un inquilino que deja de alquilar no deja de deber: se liberan sus cocheras y no se le
+      // cargan más abonos (la generación mensual no ve a los dados de baja), pero sus cargos y su
+      // cuenta corriente quedan a la vista para cobrarle lo pendiente.
+      if (customer.customerType !== 'RENTER') {
+        for(const receipt of customer.receipts){
+          await this.receiptRepository.softDelete(receipt.id);
+        }
       }
 
       await this.customerRepository.softDelete(customer.id);
@@ -623,31 +633,13 @@ async findAll(customerType: CustomerType) {
 //     }
 //   }
 
-async getCustomerthird() {
-  try {
-    const customers = await this.customerRepository.find({
-      relations: ['receipts','receipts.payments','receipts.paymentHistoryOnAccount','parkingOwners','parkingOwners.parkingType','parkingRenters', 'parkingOwners.parkingRenters', 'parkingRenters.customer',
-           'parkingRenters.parkingOwner', 'parkingRenters.parkingOwner.customer'],
-    });
-
-    const filteredCustomers = customers.filter(customer => {
-      const receipts = customer.receipts || [];
-
-      // Buscamos el recibo con la fecha más reciente
-      const latestReceipt = receipts
-        .filter(r => r.receiptTypeKey === 'GARAGE_MITRE')
-        .sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime())[0];
-
-      return !!latestReceipt;
-    });
-
-    return filteredCustomers;
-  } catch (error: any) {
-    if (!(error instanceof NotFoundException)) {
-      this.logger.error(error.message, error.stack);
-    }
-    throw error;
-  }
+async getCustomerthird(pagination = { page: 1, limit: 25 }) {
+  const query = this.customerRepository.createQueryBuilder('c').setFindOptions({
+    relations: ['receipts','receipts.payments','receipts.paymentHistoryOnAccount','parkingOwners','parkingOwners.parkingType','parkingRenters', 'parkingOwners.parkingRenters', 'parkingRenters.customer', 'parkingRenters.parkingOwner', 'parkingRenters.parkingOwner.customer'],
+  }).where('EXISTS (SELECT 1 FROM receipts r WHERE r."customerId" = c.id AND r."receiptTypeKey" = :type AND r."deletedAt" IS NULL)', { type: 'GARAGE_MITRE' })
+    .orderBy('c.lastName', 'ASC').addOrderBy('c.id', 'ASC').skip((pagination.page - 1) * pagination.limit).take(pagination.limit);
+  const [data, total] = await query.getManyAndCount();
+  return { data, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) } };
 }
 
 async getCustomersSummary(from?: string, to?: string) {

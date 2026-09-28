@@ -50,22 +50,25 @@ pnpm build
 El build del frontend omite tipos/lint por configuración preexistente, por eso se ejecuta TypeScript por separado. No usar el e2e de ejemplo de Nest para estas comprobaciones: importa AppModule y puede conectarse a la base configurada.
 
 
-## Opciones de cobro y uso sin capacitación presencial
+## Configuración unificada de tarifas
 
-En **Administración → Tickets → Cómo cobrar** se muestran dos opciones apagables: **Forma de cobro** y **Cruces de horario**. Sus detalles empiezan plegados y se pueden abrir cuando se necesitan. La configuración inicial conserva los precios por duración existentes.
+Administración → **Tarifas** (/admin/tarifas) reemplaza las pestañas de configuración dispersas. Tiene **Por tiempo** y **Día / semana / mes**. El enlace anterior /admin/tickets redirige a su nueva ubicación; sus pestañas de tarjetas, vehículos y comprobantes redirigen a Configuración.
 
-- **Forma de cobro:** períodos iniciados, períodos completos o proporción por minutos. Se carga la duración del período y su precio de día/noche por vehículo. Activarla reemplaza los precios por duración para nuevos ingresos; apagada conserva esa lista.
-- **Cruces de horario:** usar el precio de entrada, el de salida o separar las partes diurna/nocturna. Cada parte cuenta sus propios períodos; en proporcional se cobra el tiempo de cada parte.
+**Por tiempo** muestra siempre precios vigentes. Editar abre un borrador completo: método único (hora/fracción iniciada, proporcional o lista de precios), importes por vehículo, horarios, tolerancia y un único criterio de cruce de día/noche. Períodos completos se conserva como opción avanzada. Los modos guardados se mantienen; abrir y cancelar no convierte tarifas. El cambio a mismo precio todo el día exige confirmar el reemplazo de precios nocturnos en el borrador. SPLIT se conserva aunque coincidan importes porque cuenta cada tramo por separado.
 
-La tolerancia general afecta los períodos iniciados y los precios por duración; no reduce el primer período iniciado ni se aplica al proporcional/completos.
+Las franjas personalizadas generan su nombre desde la duración. Las existentes conservan nombre e importe si no se editan. La regla final se presenta como precio total fijo o adicional por período; DERIVED se mantiene para configuraciones anteriores. El motor de cálculo no cambia. La tolerancia afecta precios por duración y períodos iniciados, no proporcional ni completos. Reglas de permanencia continúa retirada: stay.enabled se fuerza a false para nuevas configuraciones/simulaciones; los snapshots históricos no se alteran.
 
-**Reglas de permanencia** se retiró temporalmente de la configuración. El backend fuerza `stay.enabled = false` en las configuraciones y simulaciones actuales, aunque exista un valor anterior guardado. Nuevas entradas no usan minutos gratis, mínimos ni topes ocultos. Las estadías ya abiertas conservan su `pricingSnapshot` y se cierran con sus reglas originales. El motor histórico permanece para poder calcular esas estadías sin cambiar sus importes.
+El simulador muestra vigente y borrador para el mismo vehículo, entrada y duración. Incluye precios y horarios todavía sin guardar; no registra estadías ni movimientos. Cambiar campos invalida el resultado anterior. **Aplicar a los próximos ingresos** guarda la configuración entera dentro de una transacción. Una revisión evita pisar cambios de otro administrador y conserva el borrador en caso de conflicto. Las estadías con pricingSnapshot mantienen sus reglas; las antiguas sin copia siguen utilizando tarifas actuales, como antes.
 
-**Probá cuánto cobrarías** usa las opciones que se están editando, incluso sin guardar, y explica cada importe. La zona de prueba queda separada visualmente de Guardar; pide hora de entrada en formato de 24 horas y duración. Toma la fecha actual de Buenos Aires, calcula automáticamente salidas después de medianoche o de varios días y no solicita un día porque estas tarifas no cambian por día de la semana. No registra entradas, movimientos ni cobros. Cambiar un dato borra el resultado anterior. Guardar afecta únicamente los próximos ingresos; la copia de reglas de cada estadía conserva todos los precios y opciones.
+API administrativa: GET /tickets/tariff-plan devuelve revision, schedule y brackets. PATCH recibe expectedRevision, schedule y brackets y devuelve el plan actualizado; un conflicto devuelve TARIFF_PLAN_CHANGED (409). POST /tickets/tariff-plan/simulate recibe vehicleType, entryAt, elapsedMinutes y opcionalmente plan (schedule/brackets); sin plan consulta vigente. No admite cambios a flags de operación ni receiptDelivery. La simulación puede evaluar el vehículo elegido sin exigir precios de otros; el guardado comprueba la cobertura de los vehículos habilitados.
 
-En **Tipos de vehículo** se agregan nombres como Moto o Utilitario. El código queda fijo; el nombre se puede cambiar y el tipo se puede desactivar. Antes del primer ingreso se deben cargar sus precios. Desactivarlo impide nuevas entradas pero permite cerrar las existentes, tanto por patente como por ticket físico.
+**Día / semana / mes** conserva precios independientes por unidad y alta/edición/eliminación desde sus ventanas. Permanecer 24 horas por tiempo no contrata automáticamente un pase de día.
 
-Para el operador, **Registrar salida y cobrar** muestra identificación, tiempo, total, adelantos y **Falta cobrar ahora**. Primero elige Efectivo o Transferencia; luego confirma el importe y la salida. **¿Cómo se calculó este importe?** despliega el detalle si lo necesita. Los anticipos con reglas avanzadas no sugieren un precio antiguo de la lista por duración. Consultar precios usa el simulador cuando hay reglas adicionales.
+## Operación simple por defecto
+
+Playas nuevas: Auto disponible, tickets físicos y turnos apagados y ningún precio de ejemplo activo. Primero hay que cargar tarifas; la falta de precios bloquea ingresos y no implica estacionar gratis. Configuración → Operación permite habilitar turnos/tarjetas y administrar vehículos. Configuración → Comprobantes administra WhatsApp, QR e impresión. Caja reúne ingresos/gastos, planilla e historial, accesible aunque los turnos estén apagados.
+
+La migración SimpleOperationDefaults1790000016000 cambia solamente los DEFAULT de las dos columnas; no actualiza las elecciones de playas existentes. La configuración implícita cuando no hay fila también usa false. No se conecta a una base real para realizar pruebas.
 
 ## Migración de vehículos configurables
 

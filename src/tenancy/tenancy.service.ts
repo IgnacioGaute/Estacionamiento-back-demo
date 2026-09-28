@@ -94,10 +94,17 @@ export class TenancyService {
   }
 
   // Una empresa con sus playas y sus usuarios: es la única vista que necesita el super admin.
-  async findAllEmpresas() {
+  async findEmpresasPage(pagination: { page: number; limit: number }) {
+    const [rows, total] = await this.empresaRepository.findAndCount({ select: { id: true, nombre: true }, order: { nombre: 'ASC', id: 'ASC' }, skip: (pagination.page - 1) * pagination.limit, take: pagination.limit });
+    const data = rows.length ? await this.findAllEmpresas(rows.map(e => e.id)) : [];
+    return { data, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) } };
+  }
+
+  async findAllEmpresas(ids?: string[]) {
     const empresas = await this.empresaRepository.find({
       relations: ['playas'],
-      order: { nombre: 'ASC' },
+      where: ids ? { id: In(ids) } : {},
+      order: { nombre: 'ASC', id: 'ASC' },
     });
     if (empresas.length === 0) return [];
 
@@ -114,9 +121,30 @@ export class TenancyService {
         ),
       },
     });
+    // Solo el estado y la fecha: los tokens de la cuenta nunca salen de su módulo.
+    const cuentasMp: {
+      empresaId: string;
+      estado: string;
+      conectadaEl: Date | null;
+    }[] = await this.dataSource.query(
+      `SELECT "empresaId", estado, "conectadaEl" FROM mercadopago_cuentas
+       WHERE "empresaId" = ANY($1)`,
+      [empresas.map((e) => e.id)],
+    );
 
     return empresas.map((empresa) => ({
       ...empresa,
+      mercadoPago: (() => {
+        const cuenta = cuentasMp.find((c) => c.empresaId === empresa.id);
+        return cuenta
+          ? {
+              estado: cuenta.estado,
+              conectadaEl: cuenta.conectadaEl
+                ? new Date(cuenta.conectadaEl).toISOString()
+                : null,
+            }
+          : null;
+      })(),
       playas: [...(empresa.playas ?? [])].sort((a, b) =>
         a.nombre.localeCompare(b.nombre),
       ),
@@ -198,15 +226,8 @@ export class TenancyService {
         `INSERT INTO ticket_vehicle_types ("playaId", code, name, enabled) VALUES ($1, 'AUTO', 'Auto', true)`,
         [saved.id],
       );
-      await manager.query(
-        `INSERT INTO ticket_price_brackets ("playaId", "vehicleType", "ticketDayType", label, "uptoMinutes", price, "recurringUnitMinutes", "recurringPriceMode")
-         VALUES
-         ($1, 'AUTO', NULL, 'Ejemplo: hasta 30 minutos', 30, 1000, NULL, 'FIXED'),
-         ($1, 'AUTO', NULL, 'Ejemplo: hasta 1 hora', 60, 2000, NULL, 'FIXED'),
-         ($1, 'AUTO', NULL, 'Ejemplo: hasta 2 horas', 120, 4000, NULL, 'FIXED'),
-         ($1, 'AUTO', NULL, 'Ejemplo: cada hora adicional', NULL, 2000, 60, 'FIXED')`,
-        [saved.id],
-      );
+      // Las tarifas las define el administrador antes del primer ingreso.
+      // Los ejemplos no deben convertirse en importes reales de cobro.
       return saved;
     });
   }
@@ -214,7 +235,11 @@ export class TenancyService {
   async updatePlaya(id: string, dto: UpdatePlayaDto) {
     const playa = await this.playaRepository.findOne({ where: { id } });
     if (!playa) throw new NotFoundException('Playa no encontrada.');
-    return this.playaRepository.save(this.playaRepository.merge(playa, dto));
+    const { modulos, ...datos } = dto;
+    this.playaRepository.merge(playa, datos);
+    // Se combinan: prender una sección no apaga las demás.
+    if (modulos) playa.modulos = { ...(playa.modulos ?? {}), ...modulos };
+    return this.playaRepository.save(playa);
   }
 
   // No se borra una playa que ya tiene operación cargada: las FK de tickets, caja y turnos no
@@ -376,7 +401,7 @@ export class TenancyService {
   // La ficha de una empresa. Misma forma que un elemento de findAllEmpresas, para que la página
   // de detalle y el panel compartan tipos en el frontend.
   async findEmpresa(id: string) {
-    const empresas = await this.findAllEmpresas();
+    const empresas = await this.findAllEmpresas([id]);
     const empresa = empresas.find((e) => e.id === id);
     if (!empresa) throw new NotFoundException('Empresa no encontrada.');
     return empresa;
@@ -393,7 +418,7 @@ export class TenancyService {
     const ventana = Math.min(Math.max(Math.trunc(dias) || 30, 1), 365);
     const desde = new Date(Date.now() - ventana * 24 * 60 * 60 * 1000);
 
-    const [cobros, estadias, turnos, tarifas] = await Promise.all([
+    const [cobros, estadias, turnos, tarifas, comprobantes] = await Promise.all([
       // CORTESIA es una estadía bonificada: figura como movimiento pero no es plata cobrada.
       this.dataSource.query(
         `SELECT "playaId", COALESCE(SUM(monto), 0)::int AS cobrado, MAX("fechaHora") AS ultima
@@ -413,6 +438,11 @@ export class TenancyService {
       this.dataSource.query(
         `SELECT "playaId", COUNT(*)::int AS brackets FROM ticket_price_brackets
          WHERE "playaId" IS NOT NULL GROUP BY "playaId"`,
+      ),
+      // Canales de comprobante por playa: la ficha avisa cuáles todavía entregan solo en papel.
+      this.dataSource.query(
+        `SELECT "playaId", "receiptDelivery" FROM ticket_schedule_settings
+         WHERE "playaId" IS NOT NULL`,
       ),
     ]);
 
@@ -434,6 +464,7 @@ export class TenancyService {
           cobro?.ultima ? new Date(cobro.ultima) : null,
           estadia?.ultima ? new Date(estadia.ultima) : null,
         );
+        const entrega = porPlaya(comprobantes, playa.id)?.receiptDelivery;
         return {
           playaId: playa.id,
           empresaId: playa.empresaId,
@@ -444,6 +475,11 @@ export class TenancyService {
           // Sin franjas de precio no se puede registrar una entrada: es el aviso más útil del panel.
           tieneTarifas: (porPlaya(tarifas, playa.id)?.brackets ?? 0) > 0,
           ultimaOperacion: ultima ? ultima.toISOString() : null,
+          comprobantes: {
+            whatsapp: !!entrega?.whatsapp,
+            qr: !!entrega?.qr,
+            print: !!entrega?.print,
+          },
         };
       }),
     };
@@ -473,14 +509,31 @@ export class TenancyService {
         serie: [],
         anterior: [],
         serieEstadias: [],
+        serieEstadiasAnterior: [],
+        seriePlayas: [],
         metodos: [],
+        metodosAnterior: [],
+        abiertas24h: [],
+        entradas: [],
+        salidas: [],
+        abonos: [],
+        asistente: { temas: [], recientes: [], frecuentes: [] },
         empresas: [],
         horas: [],
         totales: { actual: 0, anterior: 0, estadias: 0, estadiasAnterior: 0 },
       };
 
-    const [serie, metodos, horas, estadias, empresas, cierresDiarios] =
-      await Promise.all([
+    const [
+      serie,
+      metodos,
+      horas,
+      estadias,
+      empresas,
+      cierresDiarios,
+      metodosAnterior,
+      porPlaya,
+      abiertas24h,
+    ] = await Promise.all([
         this.dataSource.query(
           `SELECT ("fechaHora" AT TIME ZONE $3)::date AS dia, COALESCE(SUM(monto), 0)::int AS total
          FROM movimientos
@@ -528,13 +581,51 @@ export class TenancyService {
           [ids, desde, desdePrevio],
         ),
         // Estadías cerradas por día: el sparkline del KPI dibuja su propia forma. Con la serie de
-        // dinero dibujaba otra cosa con el rótulo equivocado.
+        // dinero dibujaba otra cosa con el rótulo equivocado. Arranca en el período anterior
+        // para poder comparar las estadías por día de la semana.
         this.dataSource.query(
           `SELECT ("createdAt" AT TIME ZONE $3)::date AS dia, COUNT(*)::int AS total
          FROM ticket_registrations
          WHERE "playaId" = ANY($1) AND "departureDay" IS NOT NULL AND "createdAt" >= $2
          GROUP BY dia ORDER BY dia`,
+          [ids, desdePrevio, zona],
+        ),
+        // El reparto del período anterior, para medir cuánto creció el cobro con QR.
+        this.dataSource.query(
+          `SELECT metodo, COALESCE(SUM(monto), 0)::int AS total
+         FROM movimientos
+         WHERE tipo <> 'CORTESIA' AND "playaId" = ANY($1) AND "fechaHora" >= $2 AND "fechaHora" < $3
+         GROUP BY metodo`,
+          [ids, desdePrevio, desde],
+        ),
+        // Cobrado por playa y por día: la ficha filtra la curva por playa y la comparativa suma
+        // la tendencia de cada empresa con sus playas.
+        this.dataSource.query(
+          `SELECT "playaId", ("fechaHora" AT TIME ZONE $3)::date AS dia, COALESCE(SUM(monto), 0)::int AS total
+         FROM movimientos
+         WHERE tipo <> 'CORTESIA' AND "playaId" = ANY($1) AND "fechaHora" >= $2
+         GROUP BY "playaId", dia ORDER BY dia`,
           [ids, desde, zona],
+        ),
+        // Estadías abiertas hora por hora en las últimas 24 horas. Primero se acotan las
+        // candidatas (abiertas, o cerradas hace menos de dos días) para no cruzar toda la
+        // historia contra las 24 horas. La salida se guarda en fecha y hora de Argentina, así
+        // que se recompone igual que en minutesSinceEntry.
+        this.dataSource.query(
+          `WITH candidatas AS (
+             SELECT "createdAt" AS desde,
+                    CASE WHEN "departureDay" IS NULL THEN NULL
+                         ELSE ("departureDay" + COALESCE("departureTime", '00:00'::time)) AT TIME ZONE $2
+                    END AS hasta
+             FROM ticket_registrations
+             WHERE "playaId" = ANY($1)
+               AND ("departureDay" IS NULL OR "departureDay" >= (now() AT TIME ZONE $2)::date - 2)
+           )
+           SELECT h AS hora, COUNT(c.desde)::int AS abiertas
+           FROM generate_series(now() - interval '23 hours', now(), interval '1 hour') AS h
+           LEFT JOIN candidatas c ON c.desde <= h AND (c.hasta IS NULL OR c.hasta > h)
+           GROUP BY h ORDER BY h`,
+          [ids, zona],
         ),
       ]);
 
@@ -546,6 +637,82 @@ export class TenancyService {
        GROUP BY p."empresaId"`,
       [ids, desde],
     );
+
+    const [
+      entradasDiarias,
+      salidasDiarias,
+      abonos,
+      temasAsistente,
+      recientesAsistente,
+      frecuentesAsistente,
+    ] = await Promise.all([
+      // Movimiento de vehículos: las entradas cuentan el día en que se abrió la estadía y las
+      // salidas el día en que se cerró. No es lo mismo que «estadías cerradas», que agrupa por
+      // la entrada: un auto que entró el 30 y salió el 1 es salida del 1.
+      this.dataSource.query(
+        `SELECT ("createdAt" AT TIME ZONE $3)::date AS dia, COUNT(*)::int AS total
+         FROM ticket_registrations
+         WHERE "playaId" = ANY($1) AND "createdAt" >= $2
+         GROUP BY dia ORDER BY dia`,
+        [ids, desdePrevio, zona],
+      ),
+      this.dataSource.query(
+        `SELECT "departureDay" AS dia, COUNT(*)::int AS total
+         FROM ticket_registrations
+         WHERE "playaId" = ANY($1) AND "departureDay" >= ($2::timestamptz AT TIME ZONE $3)::date
+         GROUP BY "departureDay" ORDER BY "departureDay"`,
+        [ids, desdePrevio, zona],
+      ),
+      // Estadías por día, semana o mes. «Semana y día» cuenta como semana y «mes y día» como
+      // mes; las viejas sin tipo se clasifican por el campo que tengan cargado. Vigente es lo
+      // que el panel del operador todavía muestra: no retirado.
+      this.dataSource.query(
+        `SELECT CASE
+                  WHEN "ticketTimeType" IN ('MES', 'MES_Y_DIA') OR COALESCE(months, 0) > 0 THEN 'MES'
+                  WHEN "ticketTimeType" IN ('SEMANA', 'SEMANA_Y_DIA') OR COALESCE(weeks, 0) > 0 THEN 'SEMANA'
+                  ELSE 'DIA'
+                END AS tipo,
+                COUNT(*) FILTER (WHERE "createdAt" >= $2)::int AS vendidos,
+                COUNT(*) FILTER (WHERE "createdAt" >= $3 AND "createdAt" < $2)::int AS anteriores,
+                COALESCE(SUM(price) FILTER (WHERE "createdAt" >= $2), 0)::int AS importe,
+                COUNT(*) FILTER (WHERE "createdAt" >= $2 AND NOT COALESCE(paid, false))::int AS pendientes,
+                COUNT(*) FILTER (WHERE NOT COALESCE(retired, false))::int AS vigentes
+         FROM ticket_registration_for_days
+         WHERE "playaId" = ANY($1) AND ("createdAt" >= $3 OR NOT COALESCE(retired, false))
+         GROUP BY tipo`,
+        [ids, desde, desdePrevio],
+      ),
+      // Lo que le preguntan al asistente: temas, las últimas y las que se repiten.
+      this.dataSource.query(
+        `SELECT tema,
+                COUNT(*) FILTER (WHERE "createdAt" >= $2)::int AS total,
+                COUNT(*) FILTER (WHERE "createdAt" < $2)::int AS anterior,
+                COUNT(*) FILTER (WHERE "createdAt" >= $2 AND NOT respondida)::int AS "sinRespuesta"
+         FROM assistant_preguntas
+         WHERE "playaId" = ANY($1) AND "createdAt" >= $3
+         GROUP BY tema`,
+        [ids, desde, desdePrevio],
+      ),
+      this.dataSource.query(
+        `SELECT a.pregunta, a.tema, a.respondida, a."createdAt" AS fecha,
+                p.nombre AS playa, e.nombre AS empresa
+         FROM assistant_preguntas a
+         JOIN playas p ON p.id = a."playaId"
+         JOIN empresas e ON e.id = p."empresaId"
+         WHERE a."playaId" = ANY($1) AND a."createdAt" >= $2
+         ORDER BY a."createdAt" DESC LIMIT 6`,
+        [ids, desde],
+      ),
+      this.dataSource.query(
+        `SELECT (array_agg(pregunta ORDER BY "createdAt" DESC))[1] AS pregunta,
+                MIN(tema) AS tema, COUNT(*)::int AS veces, MAX("createdAt") AS ultima
+         FROM assistant_preguntas
+         WHERE "playaId" = ANY($1) AND "createdAt" >= $2
+         GROUP BY clave HAVING COUNT(*) > 1
+         ORDER BY veces DESC, ultima DESC LIMIT 5`,
+        [ids, desde],
+      ),
+    ]);
 
     const corte = desde.toISOString().slice(0, 10);
     const dia = (f: any) => new Date(f.dia).toISOString().slice(0, 10);
@@ -564,7 +731,14 @@ export class TenancyService {
         dia: dia(f),
         total: Number(f.total),
       })),
-      serieEstadias: cierresDiarios.map((f: any) => ({
+      serieEstadias: cierresDiarios
+        .filter((f: any) => dia(f) >= corte)
+        .map((f: any) => ({ dia: dia(f), total: Number(f.total) })),
+      serieEstadiasAnterior: cierresDiarios
+        .filter((f: any) => dia(f) < corte)
+        .map((f: any) => ({ dia: dia(f), total: Number(f.total) })),
+      seriePlayas: porPlaya.map((f: any) => ({
+        playaId: f.playaId,
         dia: dia(f),
         total: Number(f.total),
       })),
@@ -572,6 +746,46 @@ export class TenancyService {
         metodo: f.metodo,
         total: Number(f.total),
       })),
+      metodosAnterior: metodosAnterior.map((f: any) => ({
+        metodo: f.metodo,
+        total: Number(f.total),
+      })),
+      abiertas24h: abiertas24h.map((f: any) => ({
+        hora: new Date(f.hora).toISOString(),
+        abiertas: Number(f.abiertas),
+      })),
+      // Desde el período anterior, con sus propias fechas: el front las superpone como `serie`.
+      entradas: entradasDiarias.map((f: any) => ({ dia: dia(f), total: Number(f.total) })),
+      salidas: salidasDiarias.map((f: any) => ({ dia: dia(f), total: Number(f.total) })),
+      abonos: abonos.map((f: any) => ({
+        tipo: f.tipo,
+        vendidos: Number(f.vendidos),
+        anteriores: Number(f.anteriores),
+        importe: Number(f.importe),
+        pendientes: Number(f.pendientes),
+        vigentes: Number(f.vigentes),
+      })),
+      asistente: {
+        temas: temasAsistente.map((f: any) => ({
+          tema: f.tema,
+          total: Number(f.total),
+          anterior: Number(f.anterior),
+          sinRespuesta: Number(f.sinRespuesta),
+        })),
+        recientes: recientesAsistente.map((f: any) => ({
+          pregunta: f.pregunta,
+          tema: f.tema,
+          respondida: f.respondida,
+          fecha: new Date(f.fecha).toISOString(),
+          playa: f.playa,
+          empresa: f.empresa,
+        })),
+        frecuentes: frecuentesAsistente.map((f: any) => ({
+          pregunta: f.pregunta,
+          tema: f.tema,
+          veces: Number(f.veces),
+        })),
+      },
       // ISODOW: 1 = lunes … 7 = domingo.
       horas: horas.map((f: any) => ({
         dia: f.dia,

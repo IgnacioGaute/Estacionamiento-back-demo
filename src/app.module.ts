@@ -23,6 +23,7 @@ import { PlateRecognitionModule } from './plate-recognition/plate-recognition.mo
 import { TenancyModule } from './tenancy/tenancy.module';
 import { SaasModule } from './saas/saas.module';
 import { AssistantModule } from './assistant/assistant.module';
+import { CuentasModule } from './cuentas/cuentas.module';
 import { MercadoPagoModule } from './mercadopago/mercadopago.module';
 
 @Module({
@@ -59,6 +60,7 @@ import { MercadoPagoModule } from './mercadopago/mercadopago.module';
   TenancyModule,
   SaasModule,
   AssistantModule,
+  CuentasModule,
   MercadoPagoModule
 ],
   controllers: [],
