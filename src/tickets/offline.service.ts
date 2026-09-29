@@ -17,6 +17,7 @@ import { TicketGateway } from './register-gateway';
 import { OfflineOperationDto, OfflineFinishDto } from './dto/offline.dto';
 import { Playa } from 'src/tenancy/entities/playa.entity';
 import { User } from 'src/users/entities/user.entity';
+import { Turno } from 'src/turnos/entities/turno.entity';
 const TZ = 'America/Argentina/Buenos_Aires';
 @Injectable()
 export class OfflineService {
@@ -28,7 +29,10 @@ export class OfflineService {
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const schedule = await this.tickets.getSchedule(manager);
-      if (schedule.shiftsEnabled !== false) throw new BadRequestException('Para operar offline, desactivá los turnos en Configuración.');
+      const shift = schedule.shiftsEnabled
+        ? await manager.getRepository(Turno).findOne({ where: { estado: 'ABIERTO', cashVersion: 2 } })
+        : null;
+      if (schedule.shiftsEnabled && !shift) throw new BadRequestException('Abrí un turno de caja para preparar el modo sin conexión.');
       const repo = manager.getRepository(OfflineSession);
       const active = await repo.findOne({ where: { playaId: scope.playaId, userId: scope.userId, deviceId, active: true }, order: { createdAt: 'DESC' } });
       if (active && !refresh) {
@@ -44,7 +48,7 @@ export class OfflineService {
         vehicles.push({ id: r.id, plate: r.licensePlateOriginal || r.codeBarTicket || r.ticket?.codeBar || 'Sin patente', vehicleType: r.vehicleType || r.ticket?.vehicleType, entry: dayjs.tz(`${r.entryDay} ${r.entryTime}`, TZ).toISOString(), pricing: r.pricingSnapshot, collected: await this.tickets.collectedAmount(r, manager), eligible: !!r.pricingSnapshot });
       }
       const playa = await manager.getRepository(Playa).findOneBy({ id: scope.playaId });
-      const snapshot = { version: 2, userId: scope.userId, playaId: scope.playaId, operatorName, business: { name: playa?.nombre, address: playa?.direccion }, receiptDelivery: schedule.receiptDelivery, capturedAt: now.toISOString(), expiresAt: now.getTime() + 86400000, pricing, types: types.map(t => ({ code: t.code, name: t.name })), vehicles };
+      const snapshot = { version: 2, userId: scope.userId, playaId: scope.playaId, operatorName, shift: shift ? { id: shift.id, name: shift.nombre } : null, shiftsEnabled: schedule.shiftsEnabled === true, business: { name: playa?.nombre, address: playa?.direccion }, receiptDelivery: schedule.receiptDelivery, capturedAt: now.toISOString(), expiresAt: now.getTime() + 86400000, pricing, types: types.map(t => ({ code: t.code, name: t.name })), vehicles };
       const session = await repo.save(repo.create({ playaId: scope.playaId, userId: scope.userId, deviceId, createdAt: now, expiresAt: new Date(snapshot.expiresAt), active: true, snapshot, processed: {} }));
       return { ...snapshot, sessionId: session.id, processedIds: [] };
     });
@@ -65,7 +69,14 @@ export class OfflineService {
       const time = Date.parse(dto.occurredAt);
       if (time < session.createdAt.getTime() - 120000 || time > session.expiresAt.getTime() || time > Date.now() + 120000) throw new ConflictException('La fecha de la operación está fuera del período autorizado.');
       const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
-      if (settings?.shiftsEnabled === true) throw new ConflictException('Los turnos fueron activados. Desactivalos antes de sincronizar esta contingencia.');
+      const shiftId = session.snapshot.shiftsEnabled === true ? session.snapshot.shift?.id as string | undefined : undefined;
+      if (dto.kind === 'EXIT' && session.snapshot.shiftsEnabled === true) {
+        if (!settings?.shiftsEnabled || !shiftId) throw new ConflictException('Cambió la configuración de turnos. Conservá la operación pendiente para revisión.');
+        const shift = await manager.getRepository(Turno).findOne({ where: { id: shiftId, estado: 'ABIERTO', cashVersion: 2 }, lock: { mode: 'pessimistic_write' } });
+        if (!shift) throw new ConflictException('El turno del corte ya está cerrado. La operación sigue pendiente; revisá el arqueo antes de sincronizarla.');
+      } else if (dto.kind === 'EXIT' && settings?.shiftsEnabled === true) {
+        throw new ConflictException('Los turnos se activaron durante esta contingencia. La operación sigue pendiente para revisión.');
+      }
       const repo = manager.getRepository(TicketRegistration);
       const operator = await manager.getRepository(User).findOne({ where: { id: scope.userId }, withDeleted: true });
       const operatorName = operator ? (`${operator.firstName} ${operator.lastName}`.trim() || operator.username) : 'Operador no disponible';
@@ -97,9 +108,9 @@ export class OfflineService {
         if (collected > preview.price) throw new ConflictException('La devolución de anticipos requiere revisión online.');
         if (!dto.method) throw new BadRequestException('Falta el medio de pago.');
         const amount = preview.price - collected;
-        if (amount > 0) await this.movements.create({ ticketRegistrationId: registration.id, usuarioId: scope.userId, monto: amount, metodo: dto.method, tipo: 'SALDO', referencia: `Offline ${dto.id}; fecha ${dto.occurredAt}` }, manager);
+        if (amount > 0) await this.movements.create({ ticketRegistrationId: registration.id, usuarioId: scope.userId, monto: amount, metodo: dto.method, tipo: 'SALDO', referencia: `Offline ${dto.id}; fecha ${dto.occurredAt}` }, manager, shiftId);
         const date = dayjs(time).tz(TZ);
-        const box = await this.boxes.applyTicketPayment(date.format('YYYY-MM-DD'), dto.method === 'CASH' ? amount : 0, manager);
+        const box = await this.boxes.applyTicketPayment(date.format('YYYY-MM-DD'), dto.method === 'CASH' ? amount : 0, manager, shiftId);
         Object.assign(registration, { departureDay: date.format('YYYY-MM-DD'), departureTime: date.format('HH:mm:ss'), dateNow: date.format('YYYY-MM-DD'), price: preview.price, pricingBreakdown: preview.breakdown, priceBracketLabel: preview.label, priceBracketFallbackUsed: preview.usedFallback, boxList: { id: box.id }, codeBarTicket: registration.ticket?.codeBar ?? registration.codeBarTicket, vehicleType: vehicle, entryMode: registration.entryMode ?? (registration.ticket ? 'BARCODE' : 'PLATE'), ticket: null, description: `Salida offline ${dto.id}; ${dto.occurredAt}`, exitOperatorName: operatorName });
         registration = await repo.save(registration);
       }

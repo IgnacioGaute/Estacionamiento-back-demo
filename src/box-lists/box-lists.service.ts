@@ -42,9 +42,10 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     : this.dataSource.transaction(tx => this.applyTicketPayment(dto.date, dto.totalPrice, tx));
 }
 
-  private async recordCash(boxId: string, amount: number, manager: EntityManager, description = 'Movimiento de efectivo') {
+  private async recordCash(boxId: string, amount: number, manager: EntityManager, description = 'Movimiento de efectivo', turnoIdOverride?: string) {
     if (!amount) return;
-    const turno = await manager.getRepository(Turno).findOne({ where: { estado: 'ABIERTO', cashVersion: 2 } });
+    const turno = await manager.getRepository(Turno).findOne({ where: { ...(turnoIdOverride ? { id: turnoIdOverride } : {}), estado: 'ABIERTO', cashVersion: 2 } });
+    if (turnoIdOverride && !turno) throw new BadRequestException('El turno del cobro ya no está abierto.');
     const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
     if (settings?.shiftsEnabled === true && !turno && await manager.getRepository(Turno).exists({ where: { cashVersion: 2 } })) {
       throw new BadRequestException('Abrí el siguiente turno antes de registrar efectivo en caja.');
@@ -53,7 +54,7 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
   }
 
 
-  async applyTicketPayment(date: string, amount: number, manager: EntityManager) {
+  async applyTicketPayment(date: string, amount: number, manager: EntityManager, turnoIdOverride?: string) {
     // También protege el caso de la primera caja: bloquear una fila inexistente no alcanza.
     await manager.query('SELECT pg_advisory_xact_lock(718904)');
     const repository = manager.getRepository(BoxList);
@@ -62,13 +63,13 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
       const last = await repository.findOne({ where: {}, order: { boxNumber: 'DESC' } });
       box = repository.create({ date, boxNumber: (last?.boxNumber ?? 0) + 1, totalPrice: amount });
       box = await repository.save(box);
-      await this.recordCash(box.id, amount, manager);
+      await this.recordCash(box.id, amount, manager, 'Movimiento de efectivo', turnoIdOverride);
       return box;
     }
     if (amount !== 0) {
       await repository.increment({ id: box.id }, 'totalPrice', amount);
       box.totalPrice += amount;
-      await this.recordCash(box.id, amount, manager);
+      await this.recordCash(box.id, amount, manager, 'Movimiento de efectivo', turnoIdOverride);
     }
     return box;
   }

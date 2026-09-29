@@ -23,12 +23,12 @@ export class MovimientosService {
   // uno abierto se lo asocia igual, si no, el movimiento se crea sin turno (turno: null) en
   // vez de bloquear el cobro. Para retomar la exigencia, volver a llamar
   // turnosService.getOpenTurno (que tira NO_OPEN_TURNO) en vez de findOpenTurnoOrNull.
-  async create(dto: CreateMovimientoDto & { usuarioId: string }, manager?: EntityManager): Promise<Movimiento> {
+  async create(dto: CreateMovimientoDto & { usuarioId: string }, manager?: EntityManager, turnoIdOverride?: string): Promise<Movimiento> {
     if ((dto.tipo === 'AJUSTE' || dto.tipo === 'CORTESIA') && !dto.motivo?.trim()) {
       throw new BadRequestException('El motivo es obligatorio para un ajuste o una cortesía.');
     }
 
-    const turno = await this.turnosService.findOpenTurnoOrNull(dto.usuarioId, manager);
+    const turno = turnoIdOverride ? null : await this.turnosService.findOpenTurnoOrNull(dto.usuarioId, manager);
     const repository = manager ? manager.getRepository(Movimiento) : this.movimientoRepository;
 
     const movimiento = repository.create({
@@ -37,7 +37,7 @@ export class MovimientosService {
       metodo: dto.metodo,
       tipo: dto.tipo,
       usuario: { id: dto.usuarioId } as any,
-      turno: turno ? ({ id: turno.id } as any) : null,
+      turno: turnoIdOverride ? ({ id: turnoIdOverride } as any) : turno ? ({ id: turno.id } as any) : null,
       referencia: dto.referencia ?? null,
       motivo: dto.motivo ?? null,
     });
