@@ -37,12 +37,14 @@ export class OfflineService {
       const now = new Date();
       const pricing: PricingSnapshot = { version: 1, capturedAt: now.toISOString(), schedule: { ...schedule, pricingDayTypeBasis: schedule.pricingDayTypeBasis ?? 'EXIT' }, brackets: await manager.getRepository(TicketPriceBracket).find() };
       const types = await manager.getRepository(VehicleTypeEntity).find({ where: { enabled: true } });
+      const operator = await manager.getRepository(User).findOne({ where: { id: scope.userId }, withDeleted: true });
+      const operatorName = operator ? (`${operator.firstName} ${operator.lastName}`.trim() || operator.username) : 'Operador no disponible';
       const vehicles = [];
       for (const r of await manager.getRepository(TicketRegistration).find({ where: { departureTime: IsNull() }, relations: ['ticket'] })) {
         vehicles.push({ id: r.id, plate: r.licensePlateOriginal || r.codeBarTicket || r.ticket?.codeBar || 'Sin patente', vehicleType: r.vehicleType || r.ticket?.vehicleType, entry: dayjs.tz(`${r.entryDay} ${r.entryTime}`, TZ).toISOString(), pricing: r.pricingSnapshot, collected: await this.tickets.collectedAmount(r, manager), eligible: !!r.pricingSnapshot });
       }
       const playa = await manager.getRepository(Playa).findOneBy({ id: scope.playaId });
-      const snapshot = { version: 2, userId: scope.userId, playaId: scope.playaId, business: { name: playa?.nombre, address: playa?.direccion }, receiptDelivery: schedule.receiptDelivery, capturedAt: now.toISOString(), expiresAt: now.getTime() + 86400000, pricing, types: types.map(t => ({ code: t.code, name: t.name })), vehicles };
+      const snapshot = { version: 2, userId: scope.userId, playaId: scope.playaId, operatorName, business: { name: playa?.nombre, address: playa?.direccion }, receiptDelivery: schedule.receiptDelivery, capturedAt: now.toISOString(), expiresAt: now.getTime() + 86400000, pricing, types: types.map(t => ({ code: t.code, name: t.name })), vehicles };
       const session = await repo.save(repo.create({ playaId: scope.playaId, userId: scope.userId, deviceId, createdAt: now, expiresAt: new Date(snapshot.expiresAt), active: true, snapshot, processed: {} }));
       return { ...snapshot, sessionId: session.id, processedIds: [] };
     });
