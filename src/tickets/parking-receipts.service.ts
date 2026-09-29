@@ -120,6 +120,9 @@ export class ParkingReceiptsService {
                       ? dayRegistration.price
                       : 0
                   : null,
+              operatorName: kind === 'EXIT'
+                ? (registration?.exitOperatorName ?? dayRegistration?.exitOperatorName ?? null)
+                : (registration?.entryOperatorName ?? dayRegistration?.entryOperatorName ?? null),
             },
           }),
         );

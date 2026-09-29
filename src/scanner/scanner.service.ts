@@ -12,13 +12,13 @@ export class ScannerService {
     private readonly dataSource: DataSource,
   ) {}
 
-  async start(dto?: ScannerDto) {
+  async start(dto?: ScannerDto, userId?: string) {
     const barCode = dto?.barCode?.trim();
     if (!barCode) return { success: false, message: 'Ingresá un código de barras.' };
     // Un código físico registrado tiene prioridad incluso si contiene sólo números.
     const ticket = await this.ticketsService.findTicketByCode(barCode);
     if (ticket) {
-      const { registration, requiresClose } = await this.ticketsService.createRegistration(ticket.id);
+      const { registration, requiresClose } = await this.ticketsService.createRegistration(ticket.id, userId);
       return { success: true, type: 'TICKET', registrationId: registration.id, requiresClose,
         message: requiresClose ? 'Confirmá el cobro para registrar la salida.' : 'Entrada registrada.' };
     }

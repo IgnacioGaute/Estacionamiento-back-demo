@@ -16,6 +16,7 @@ import { MovimientosService } from 'src/movimientos/movimientos.service';
 import { TicketGateway } from './register-gateway';
 import { OfflineOperationDto, OfflineFinishDto } from './dto/offline.dto';
 import { Playa } from 'src/tenancy/entities/playa.entity';
+import { User } from 'src/users/entities/user.entity';
 const TZ = 'America/Argentina/Buenos_Aires';
 @Injectable()
 export class OfflineService {
@@ -64,6 +65,8 @@ export class OfflineService {
       const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
       if (settings?.shiftsEnabled === true) throw new ConflictException('Los turnos fueron activados. Desactivalos antes de sincronizar esta contingencia.');
       const repo = manager.getRepository(TicketRegistration);
+      const operator = await manager.getRepository(User).findOne({ where: { id: scope.userId }, withDeleted: true });
+      const operatorName = operator ? (`${operator.firstName} ${operator.lastName}`.trim() || operator.username) : 'Operador no disponible';
       let registration: TicketRegistration;
       if (dto.kind === 'ENTRY') {
         const plate = dto.plate?.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -73,7 +76,7 @@ export class OfflineService {
         const pricing = session.snapshot.pricing as PricingSnapshot;
         assertPricingCoverage(pricing, dto.vehicleType, 'DAY'); assertPricingCoverage(pricing, dto.vehicleType, 'NIGHT');
         const date = dayjs(time).tz(TZ);
-        registration = await repo.save(repo.create({ id: dto.registrationId, playaId: scope.playaId, description: `Entrada offline ${dto.id}`, price: 0, entryMode: 'PLATE', vehicleType: dto.vehicleType as any, licensePlateOriginal: dto.plate.trim().toUpperCase(), licensePlateNormalized: plate, licensePlateSearch: plate, entryDay: date.format('YYYY-MM-DD'), entryTime: date.format('HH:mm:ss'), pricingSnapshot: pricing, noPlate: false }));
+        registration = await repo.save(repo.create({ id: dto.registrationId, playaId: scope.playaId, description: `Entrada offline ${dto.id}`, price: 0, entryMode: 'PLATE', vehicleType: dto.vehicleType as any, licensePlateOriginal: dto.plate.trim().toUpperCase(), licensePlateNormalized: plate, licensePlateSearch: plate, entryDay: date.format('YYYY-MM-DD'), entryTime: date.format('HH:mm:ss'), pricingSnapshot: pricing, noPlate: false, entryOperatorName: operatorName }));
       } else {
         const known = session.snapshot.vehicles.find(v => v.id === dto.registrationId);
         const ownEntry = Object.values(session.processed).some(p => p.registrationId === dto.registrationId);
@@ -95,7 +98,7 @@ export class OfflineService {
         if (amount > 0) await this.movements.create({ ticketRegistrationId: registration.id, usuarioId: scope.userId, monto: amount, metodo: dto.method, tipo: 'SALDO', referencia: `Offline ${dto.id}; fecha ${dto.occurredAt}` }, manager);
         const date = dayjs(time).tz(TZ);
         const box = await this.boxes.applyTicketPayment(date.format('YYYY-MM-DD'), dto.method === 'CASH' ? amount : 0, manager);
-        Object.assign(registration, { departureDay: date.format('YYYY-MM-DD'), departureTime: date.format('HH:mm:ss'), dateNow: date.format('YYYY-MM-DD'), price: preview.price, pricingBreakdown: preview.breakdown, priceBracketLabel: preview.label, priceBracketFallbackUsed: preview.usedFallback, boxList: { id: box.id }, codeBarTicket: registration.ticket?.codeBar ?? registration.codeBarTicket, vehicleType: vehicle, entryMode: registration.entryMode ?? (registration.ticket ? 'BARCODE' : 'PLATE'), ticket: null, description: `Salida offline ${dto.id}; ${dto.occurredAt}` });
+        Object.assign(registration, { departureDay: date.format('YYYY-MM-DD'), departureTime: date.format('HH:mm:ss'), dateNow: date.format('YYYY-MM-DD'), price: preview.price, pricingBreakdown: preview.breakdown, priceBracketLabel: preview.label, priceBracketFallbackUsed: preview.usedFallback, boxList: { id: box.id }, codeBarTicket: registration.ticket?.codeBar ?? registration.codeBarTicket, vehicleType: vehicle, entryMode: registration.entryMode ?? (registration.ticket ? 'BARCODE' : 'PLATE'), ticket: null, description: `Salida offline ${dto.id}; ${dto.occurredAt}`, exitOperatorName: operatorName });
         registration = await repo.save(registration);
       }
       session.processed[dto.id] = { fingerprint, registrationId: registration.id };

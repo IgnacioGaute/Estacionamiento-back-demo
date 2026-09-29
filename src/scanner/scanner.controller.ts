@@ -1,4 +1,5 @@
-import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Req, UnauthorizedException } from '@nestjs/common';
+import { AuthenticatedRequest } from 'src/types/request';
 import { ScannerService } from '../scanner/scanner.service';
 import { ScannerDto } from './dto/scanner.dto';
 import { UpdateReceiptDto } from 'src/receipts/dto/update-receipt.dto';
@@ -11,7 +12,8 @@ export class ScannerController {
   constructor(private readonly scannerService: ScannerService) {}
 
   @Post('start-scanner')
-  async startScanner(@Body() scannerDto: ScannerDto) {
-    return await this.scannerService.start(scannerDto);
+  async startScanner(@Req() req: AuthenticatedRequest, @Body() scannerDto: ScannerDto) {
+    if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    return await this.scannerService.start(scannerDto, req.user.userId);
   }
 }

@@ -101,13 +101,14 @@ export class TicketsController {
     if (!req.user?.userId) {
       throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
     }
-    return this.ticketsService.createRegistrationForDay(createTicketRegistrationForDayDto);
+    return this.ticketsService.createRegistrationForDay(createTicketRegistrationForDayDto, req.user.userId);
   }
 
   // Va antes de `registrationForDays/:id/status` para que "retire-many" no entre como un id.
   @Patch('registrationForDays/retire-many')
-  retireRegistrationsForDay(@Body('ids') ids: string[]) {
-    return this.ticketsService.retireRegistrationsForDay(ids);
+  retireRegistrationsForDay(@Req() req: AuthenticatedRequest, @Body('ids') ids: string[]) {
+    if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    return this.ticketsService.retireRegistrationsForDay(ids, req.user.userId);
   }
 
   @Patch('registrationForDays/:id/status')
@@ -119,7 +120,7 @@ export class TicketsController {
     if (!req.user?.userId) {
       throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
     }
-    return this.ticketsService.updateTicketStatus(id, dto);
+    return this.ticketsService.updateTicketStatus(id, dto, req.user.userId);
   }
 
   @Patch(':id')
@@ -210,8 +211,9 @@ export class TicketsController {
   }
 
   @Post('registrations/by-plate')
-  createRegistrationByPlate(@Body() dto: CreateRegistrationByPlateDto) {
-    return this.ticketsService.createRegistrationByPlate(dto);
+  createRegistrationByPlate(@Req() req: AuthenticatedRequest, @Body() dto: CreateRegistrationByPlateDto) {
+    if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    return this.ticketsService.createRegistrationByPlate(dto, req.user.userId);
   }
 
   @Get('registrations/active/search')

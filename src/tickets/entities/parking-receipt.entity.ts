@@ -18,6 +18,7 @@ export interface ParkingReceiptSnapshot {
   departureTime: string | null;
   total: number | null;
   collected: number | null;
+  operatorName?: string | null;
 }
 
 // El recibo de un pago de inquilino (cuenta corriente). Documenta la plata recibida, no la

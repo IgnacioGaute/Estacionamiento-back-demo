@@ -15,6 +15,7 @@ import { BoxList } from 'src/box-lists/entities/box-list.entity';
 import { TicketGateway } from './register-gateway';
 import { FilterOperator, paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
 import { TicketRegistrationForDay } from './entities/ticket-registration-for-day.entity';
+import { User } from 'src/users/entities/user.entity';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
@@ -46,6 +47,12 @@ dayjs.extend(isBetween);
 @Injectable()
 export class TicketsService {
   private readonly logger = new Logger(TicketsService.name);
+
+  private async operatorName(userId: string, manager: EntityManager): Promise<string> {
+    const user = await manager.getRepository(User).findOne({ where: { id: userId }, withDeleted: true });
+    if (!user) return 'Operador no disponible';
+    return `${user.firstName} ${user.lastName}`.trim() || user.username;
+  }
 
   constructor(
     @InjectRepository(Ticket)
@@ -380,7 +387,7 @@ async removeTicketPrice(id: string) {
     return ticket;
   }
 
-  async createRegistration(ticketId?: string) {
+  async createRegistration(ticketId?: string, userId?: string) {
     if (!ticketId) throw new BadRequestException('Falta el identificador del ticket.');
     const result = await this.dataSource.transaction(async manager => {
       const ticket = await manager.getRepository(Ticket).findOne({ where: { id: ticketId }, lock: { mode: 'pessimistic_write' } });
@@ -390,12 +397,14 @@ async removeTicketPrice(id: string) {
       // El segundo escaneo prepara el cierre; nunca registra un cobro implícito.
       if (existing) return { registration: existing, requiresClose: true };
       const pricingSnapshot = await this.capturePricing(ticket.vehicleType, manager);
+      const entryOperatorName = userId ? await this.operatorName(userId, manager) : null;
       const now = dayjs(pricingSnapshot.capturedAt).tz('America/Argentina/Buenos_Aires');
       const registration = await repository.save(repository.create({
         description: `Registro de ticket para vehículo tipo ${ticket.vehicleType}`, price: 0,
         entryDay: now.format('YYYY-MM-DD'), entryTime: now.format('HH:mm:ss'),
         ticket, vehicleType: ticket.vehicleType as any, codeBarTicket: ticket.codeBar,
         pricingSnapshot, entryMode: 'BARCODE',
+        entryOperatorName,
       }));
       return { registration, requiresClose: false };
     });
@@ -432,12 +441,13 @@ private async getTicketTimePriceOrThrow(
   return ticketPrice;
 }
 
-async createRegistrationForDay(createTicketRegistrationForDayDto: CreateTicketRegistrationForDayDto) {
+async createRegistrationForDay(createTicketRegistrationForDayDto: CreateTicketRegistrationForDayDto, userId?: string) {
   await this.assertVehicleType(createTicketRegistrationForDayDto.vehicleType);
   return this.dataSource.transaction(async manager => {
   try {
     const { ticketTimeType, vehicleType, days, weeks, months } = createTicketRegistrationForDayDto;
     const ticket = manager.getRepository(TicketRegistrationForDay).create(createTicketRegistrationForDayDto);
+    ticket.entryOperatorName = userId ? await this.operatorName(userId, manager) : null;
 
     let time = '';
     if (ticketTimeType === 'DIA') {
@@ -509,7 +519,7 @@ async getRegistrationForDay(id: string) {
 
 // El DTO de la ruta sólo acepta CASH y TRANSFER: MERCADOPAGO no se elige a mano, lo escribe la
 // acreditación automática del cobro con QR llamando a este método.
-async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMetodo'> & { paymentMetodo?: 'CASH' | 'TRANSFER' | 'MERCADOPAGO' }) {
+async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMetodo'> & { paymentMetodo?: 'CASH' | 'TRANSFER' | 'MERCADOPAGO' }, userId?: string) {
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const repo = manager.getRepository(TicketRegistrationForDay);
@@ -527,8 +537,14 @@ async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMe
       ticket.paid = paid;
       ticket.paymentMetodo = method;
       if (dto.retired !== undefined) {
-        if (dto.retired && !ticket.retired) ticket.retiredAt = new Date();
-        if (!dto.retired) ticket.retiredAt = null;
+        if (dto.retired && !ticket.retired) {
+          ticket.retiredAt = new Date();
+          ticket.exitOperatorName = userId ? await this.operatorName(userId, manager) : null;
+        }
+        if (!dto.retired) {
+          ticket.retiredAt = null;
+          ticket.exitOperatorName = null;
+        }
         ticket.retired = dto.retired;
       }
       return repo.save(ticket);
@@ -537,14 +553,17 @@ async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMe
 
   // Limpieza masiva del panel "Día/Sem/Mes": solo marca `retired` (los saca de la lista de
   // ocupación), nunca toca `paid` / la caja — eso es una acción separada e independiente.
-  async retireRegistrationsForDay(ids: string[]) {
+  async retireRegistrationsForDay(ids: string[], userId?: string) {
     if (!ids || ids.length === 0) {
       return { affected: 0 };
     }
-    const result = await this.ticketRegistrationForDayRepository.update(
-      { id: In(ids) },
-      { retired: true },
-    );
+    const exitOperatorName = userId ? await this.operatorName(userId, this.dataSource.manager) : null;
+    const result = await this.ticketRegistrationForDayRepository.createQueryBuilder()
+      .update()
+      .set({ retired: true, retiredAt: new Date(), exitOperatorName })
+      .where('id IN (:...ids)', { ids })
+      .andWhere('(retired IS NULL OR retired = false)')
+      .execute();
     return { affected: result.affected ?? 0 };
   }
 
@@ -742,14 +761,17 @@ async removePriceBracket(id: string) {
     const union = `
       SELECT id, COALESCE(NULLIF("licensePlateOriginal", ''), NULLIF("vehiclePlateCustomer", ''), NULLIF("codeBarTicket", ''), "lastNameCustomer", 'Sin patente') AS identification,
         CONCAT_WS(' ', "licensePlateOriginal", "vehiclePlateCustomer", "codeBarTicket", "lastNameCustomer") AS search,
-        COALESCE("departureDay", "entryDay") AS date, COALESCE("departureTime", "entryTime", '') AS time,
-        ("departureTime" IS NOT NULL OR "departureDay" IS NOT NULL) AS departed, 'Por hora' AS type
+        COALESCE("departureDay", "entryDay")::text AS date,
+        COALESCE("departureTime"::text, "entryTime"::text, '') AS time,
+        ("departureTime" IS NOT NULL OR "departureDay" IS NOT NULL) AS departed, 'Por hora' AS type,
+        "entryOperatorName", "exitOperatorName"
       FROM ticket_registrations WHERE "entryDay" = $1 OR "departureDay" = $1
       UNION ALL
       SELECT id, COALESCE(NULLIF("vehiclePlateCustomer", ''), "lastNameCustomer", 'Sin patente'),
         CONCAT_WS(' ', "vehiclePlateCustomer", "lastNameCustomer"),
-        COALESCE(to_char("retiredAt" AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD'), "dateNow"),
-        COALESCE(to_char("retiredAt" AT TIME ZONE 'America/Argentina/Buenos_Aires', 'HH24:MI:SS'), ''), retired, 'Día / semana / mes'
+        COALESCE(to_char("retiredAt" AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD'), "dateNow"::text),
+        COALESCE(to_char("retiredAt" AT TIME ZONE 'America/Argentina/Buenos_Aires', 'HH24:MI:SS'), ''), retired, 'Día / semana / mes',
+        "entryOperatorName", "exitOperatorName"
       FROM ticket_registration_for_days WHERE "dateNow" = $1 OR ("retiredAt" >= ($1::date::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND "retiredAt" < (($1::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires'))`;
     const filtered = `WITH rows AS (${union}) SELECT * FROM rows WHERE regexp_replace(upper(search), '[^A-Z0-9]', '', 'g') LIKE $2`;
     const searchKey = search.slice(0, 120).toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -877,7 +899,7 @@ async removePriceBracket(id: string) {
     return now.diff(entryAt, 'minute');
   }
 
-  async createRegistrationByPlate(dto: CreateRegistrationByPlateDto) {
+  async createRegistrationByPlate(dto: CreateRegistrationByPlateDto, userId?: string) {
     const saved = await this.dataSource.transaction(async manager => {
       const repository = manager.getRepository(TicketRegistration);
       if (dto.noPlate && !dto.lastNameCustomer?.trim()) {
@@ -918,8 +940,10 @@ async removePriceBracket(id: string) {
       }
 
       const pricingSnapshot = await this.capturePricing(dto.vehicleType, manager);
+      const entryOperatorName = userId ? await this.operatorName(userId, manager) : null;
       const argentinaTime = dayjs(pricingSnapshot.capturedAt).tz('America/Argentina/Buenos_Aires');
       const registration = repository.create({
+        entryOperatorName,
         pricingSnapshot, entryMode: 'PLATE',
         description: `Registro por patente para vehículo tipo ${dto.vehicleType}`,
         price: 0,
@@ -1040,6 +1064,7 @@ async removePriceBracket(id: string) {
       registration.codeBarTicket = registration.ticket?.codeBar ?? registration.codeBarTicket;
       registration.departureDay = now.format('YYYY-MM-DD');
       registration.departureTime = now.format('HH:mm:ss');
+      registration.exitOperatorName = await this.operatorName(usuarioId, manager);
       registration.price = preview.price;
       registration.pricingBreakdown = preview.breakdown;
       registration.priceBracketLabel = preview.label;

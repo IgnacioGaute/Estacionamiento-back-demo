@@ -68,6 +68,12 @@ export class TicketRegistrationForDay {
   @Column('timestamptz', { nullable: true })
   retiredAt: Date | null;
 
+  @Column('varchar', { length: 255, nullable: true })
+  entryOperatorName: string | null;
+
+  @Column('varchar', { length: 255, nullable: true })
+  exitOperatorName: string | null;
+
   // Con qué se cobró el abono por día/semana/mes. Se completa al marcarlo pagado (o al crearlo
   // ya pagado); queda en null mientras siga pendiente de cobro.
   @Column('varchar', { length: 20, nullable: true })

@@ -67,6 +67,12 @@ export class TicketRegistration {
   @Column('time', { nullable: true })
   departureTime: string | null;
 
+  @Column('varchar', { length: 255, nullable: true })
+  entryOperatorName: string | null;
+
+  @Column('varchar', { length: 255, nullable: true })
+  exitOperatorName: string | null;
+
   @Column('date', { nullable: true })
   dateNow: string | null;
 
