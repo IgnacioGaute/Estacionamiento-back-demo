@@ -1,5 +1,5 @@
 import { CreateVehicleTypeDto, UpdateVehicleTypeDto } from './dto/vehicle-type.dto';
-import { Controller, Get, Post, Body, Patch, Param, Query, Delete, UseGuards, Req, UnauthorizedException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Query, Delete, UseGuards, Req, UnauthorizedException, ParseIntPipe } from '@nestjs/common';
 import { AuthenticatedRequest } from 'src/types/request';
 import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate.dto';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
@@ -137,6 +137,11 @@ export class TicketsController {
       throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
     }
     return this.ticketsService.addAdvancePayment(id, dto, req.user.userId);
+  }
+
+  @Get('registrations/:id/planned-price')
+  previewPlannedPrice(@Param('id', ParseUUIDPipe) id: string, @Query('minutes', ParseIntPipe) minutes: number) {
+    return this.ticketsService.previewPlannedPrice(id, minutes);
   }
 
   @Delete(':id')

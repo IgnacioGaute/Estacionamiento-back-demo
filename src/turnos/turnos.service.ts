@@ -7,7 +7,7 @@ import { CashEntry } from './entities/cash-entry.entity';
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
 import { OpenTurnoDto } from './dto/open-turno.dto';
 import { CloseTurnoDto } from './dto/close-turno.dto';
-import { UserRole } from 'src/users/entities/user.entity';
+import { User, UserRole } from 'src/users/entities/user.entity';
 import { tenantContext } from 'src/tenancy/tenant-context';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
@@ -55,10 +55,11 @@ export class TurnosService {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const repo = manager.getRepository(Turno);
       const active = await repo.findOne({ where: { estado: 'ABIERTO' }, relations: ['usuarioApertura'], order: { fechaApertura: 'DESC' } });
-      const last = await repo.findOne({ where: { estado: 'CERRADO', efectivoParaSiguiente: Not(IsNull()), recibidoPorTurnoId: IsNull() }, relations: ['usuarioCierre'], order: { fechaCierre: 'DESC' } });
+      const last = await repo.findOne({ where: { estado: 'CERRADO', efectivoParaSiguiente: Not(IsNull()), recibidoPorTurnoId: IsNull() }, relations: ['usuarioCierre', 'usuarioApertura'], order: { fechaCierre: 'DESC' } });
       const pending = last && !last.recibidoPorTurnoId ? last : null;
       const publicPending = pending && tenantContext.getStore()?.role === 'USER'
-        ? { id: pending.id, nombre: pending.nombre, fechaCierre: pending.fechaCierre, efectivoParaSiguiente: pending.efectivoParaSiguiente }
+        ? { id: pending.id, nombre: pending.nombre, fechaCierre: pending.fechaCierre, efectivoParaSiguiente: pending.efectivoParaSiguiente,
+            usuarioApertura: pending.usuarioApertura ? { firstName: pending.usuarioApertura.firstName, lastName: pending.usuarioApertura.lastName } : null }
         : pending;
       return { active, pending: publicPending, efectivoDisponible: active ? await this.cashTotal(active, manager) : pending?.efectivoParaSiguiente ?? 0 };
     });
@@ -76,8 +77,11 @@ export class TurnosService {
       if ((pending?.id ?? undefined) !== dto.turnoAnteriorId) throw new ConflictException('El relevo cambió. Actualizá la caja y confirmá el fondo que recibís.');
       const recibido = pending?.efectivoParaSiguiente ?? 0;
       if (dto.fondoInicial < recibido) throw new BadRequestException('El fondo inicial no puede ser menor al efectivo entregado por el turno anterior.');
+      const operator = await manager.getRepository(User).findOneBy({ id: usuarioId });
+      if (!operator) throw new NotFoundException('Operador no encontrado.');
+      const operatorName = `${operator.firstName} ${operator.lastName}`.trim() || operator.username;
       const turno = await repo.save(repo.create({ usuarioApertura: { id: usuarioId }, fondoInicial: dto.fondoInicial,
-        nombre: dto.nombre?.trim() || 'Turno', duracionPrevistaHoras: dto.duracionPrevistaHoras ?? null,
+        nombre: operatorName, duracionPrevistaHoras: null,
         cashVersion: 2, estado: 'ABIERTO', fondoRecibido: recibido, turnoAnteriorId: pending?.id ?? null }));
       if (pending) { pending.recibidoPorTurnoId = turno.id; await repo.save(pending); }
       return turno;

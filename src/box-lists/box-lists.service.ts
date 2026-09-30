@@ -42,19 +42,19 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     : this.dataSource.transaction(tx => this.applyTicketPayment(dto.date, dto.totalPrice, tx));
 }
 
-  private async recordCash(boxId: string, amount: number, manager: EntityManager, description = 'Movimiento de efectivo', turnoIdOverride?: string) {
+  private async recordCash(boxId: string, amount: number, manager: EntityManager, description = 'Movimiento de efectivo', turnoIdOverride?: string | null) {
     if (!amount) return;
-    const turno = await manager.getRepository(Turno).findOne({ where: { ...(turnoIdOverride ? { id: turnoIdOverride } : {}), estado: 'ABIERTO', cashVersion: 2 } });
+    const turno = turnoIdOverride === null ? null : await manager.getRepository(Turno).findOne({ where: { ...(turnoIdOverride ? { id: turnoIdOverride } : {}), estado: 'ABIERTO', cashVersion: 2 } });
     if (turnoIdOverride && !turno) throw new BadRequestException('El turno del cobro ya no está abierto.');
     const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
-    if (settings?.shiftsEnabled === true && !turno && await manager.getRepository(Turno).exists({ where: { cashVersion: 2 } })) {
+    if (turnoIdOverride !== null && settings?.shiftsEnabled === true && !turno && await manager.getRepository(Turno).exists({ where: { cashVersion: 2 } })) {
       throw new BadRequestException('Abrí el siguiente turno antes de registrar efectivo en caja.');
     }
     await manager.getRepository(CashEntry).save({ boxId, amount, description, turnoId: turno?.id ?? null });
   }
 
 
-  async applyTicketPayment(date: string, amount: number, manager: EntityManager, turnoIdOverride?: string) {
+  async applyTicketPayment(date: string, amount: number, manager: EntityManager, turnoIdOverride?: string | null) {
     // También protege el caso de la primera caja: bloquear una fila inexistente no alcanza.
     await manager.query('SELECT pg_advisory_xact_lock(718904)');
     const repository = manager.getRepository(BoxList);

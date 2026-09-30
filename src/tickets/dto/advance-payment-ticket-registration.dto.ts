@@ -1,7 +1,11 @@
-import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { MOVIMIENTO_METODO_MANUAL, MovimientoMetodoManual } from 'src/movimientos/entities/movimiento.entity';
 
 export class AdvancePaymentTicketRegistrationDto {
+  // Cobra el total calculado para la duración elegida con las tarifas fijadas al ingresar.
+  @IsBoolean()
+  @IsOptional()
+  chargeFullPlannedStay?: boolean;
   // Monto efectivamente cobrado ahora. Opcional: se puede declarar la duración esperada
   // sin cobrar nada todavía (el cliente paga recién al salir).
   @IsInt()
@@ -23,12 +27,12 @@ export class AdvancePaymentTicketRegistrationDto {
   // elegida en el form) y su tope en minutos, para poder avisar si la estadía real la supera.
   @IsString()
   @IsOptional()
-  expectedBracketLabel?: string;
+  expectedBracketLabel?: string | null;
 
   @IsInt()
   @Min(0)
   @IsOptional()
-  expectedUptoMinutes?: number;
+  expectedUptoMinutes?: number | null;
 
   @IsString()
   @IsOptional()

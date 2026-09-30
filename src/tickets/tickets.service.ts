@@ -654,7 +654,16 @@ async addAdvancePayment(id: string, dto: AdvancePaymentTicketRegistrationDto, us
     if (!registration) throw new NotFoundException('Registro no encontrado.');
     if (registration.departureTime) throw new BadRequestException('El ticket ya está cerrado.');
     const collected = await this.collectedAmount(registration, manager);
-    const target = dto.advancePaidAmount ?? collected;
+    if (dto.chargeFullPlannedStay && dto.advancePaidAmount !== undefined) {
+      throw new BadRequestException('El importe de la tarifa se calcula automáticamente.');
+    }
+    const planned = dto.chargeFullPlannedStay
+      ? await this.plannedPriceForRegistration(registration, dto.expectedUptoMinutes, manager)
+      : null;
+    const target = planned?.price ?? dto.advancePaidAmount ?? collected;
+    if (planned && target < collected) {
+      throw new BadRequestException('Ya se cobró más que esta tarifa. Elegí otra duración o gestioná la devolución por separado.');
+    }
     const delta = target - collected;
     if (delta !== 0) {
       if (!dto.metodo) throw new BadRequestException('Elegí el medio de pago o devolución.');
@@ -674,6 +683,27 @@ async addAdvancePayment(id: string, dto: AdvancePaymentTicketRegistrationDto, us
   this.ticketGateway.emitNewRegistration(saved);
   return saved;
 }
+
+  private async plannedPriceForRegistration(registration: TicketRegistration, minutes?: number | null, manager?: EntityManager) {
+    if (!Number.isInteger(minutes) || minutes! < 1 || minutes! > 5256000) {
+      throw new BadRequestException('Elegí una duración válida para calcular la tarifa.');
+    }
+    if (!registration.entryDay || !registration.entryTime) throw new BadRequestException('El registro no tiene fecha de entrada.');
+    const vehicle = registration.vehicleType ?? registration.ticket?.vehicleType;
+    if (!vehicle) throw new BadRequestException('El registro no tiene tipo de vehículo.');
+    const snapshot = registration.pricingSnapshot ?? await this.capturePricing(vehicle, manager, false);
+    const entry = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', 'America/Argentina/Buenos_Aires');
+    if (!entry.isValid()) throw new BadRequestException('La fecha de entrada no es válida.');
+    return calculateStayPrice(snapshot, vehicle, entry.toDate(), entry.add(minutes!, 'minute').toDate());
+  }
+
+  async previewPlannedPrice(id: string, minutes: number) {
+    const registration = await this.ticketRegistrationRepository.findOne({ where: { id }, relations: ['ticket'] });
+    if (!registration) throw new NotFoundException('Registro no encontrado.');
+    if (registration.departureTime) throw new BadRequestException('El ticket ya está cerrado.');
+    const result = await this.plannedPriceForRegistration(registration, minutes);
+    return { price: result.price, ticketDayType: result.ticketDayType };
+  }
 
 /**
  * Registra en la estadía un pago que se cobró por fuera del mostrador (hoy, el QR de MercadoPago
