@@ -70,7 +70,9 @@ export class AuthService {
       }
       if (user.role !== 'SUPER_ADMIN') {
         const current = await this.userRepository.findOne({ where: { id: user.id }, relations: ['empresa'] });
-        if (current?.empresa?.estado !== 'ACTIVA') throw new UnauthorizedException('La cuenta no tiene acceso a una empresa activa.');
+        // Una empresa suspendida entra en modo restringido (ver SUSPENDED_ENDPOINTS); de baja, no.
+        const estado = current?.empresa?.estado;
+        if (estado !== 'ACTIVA' && estado !== 'SUSPENDIDA') throw new UnauthorizedException('La cuenta no tiene acceso a una empresa activa.');
       }
 
       const { password, ...userWithoutPassword } = user; // eslint-disable-line

@@ -33,7 +33,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const user = await this.users.findOne({ where: { id: payload.id }, relations: ['empresa'] });
     if (!user) throw new UnauthorizedException('La cuenta ya no está disponible.');
     if ((payload.authVersion ?? 0) !== user.authVersion) throw new UnauthorizedException('Volvé a iniciar sesión.');
-    if (user.role !== 'SUPER_ADMIN' && user.empresa?.estado !== 'ACTIVA') throw new ForbiddenException('Tu empresa no está activa.');
-    return { userId: user.id, email: user.email, username: user.username, role: user.role };
+    // Suspendida sigue entrando: tiene que ver por qué y poder sacar los autos que quedaron adentro.
+    // Qué puede hacer lo decide TenantGuard con SUSPENDED_ENDPOINTS. De baja no entra.
+    const empresaEstado = user.empresa?.estado ?? null;
+    if (user.role !== 'SUPER_ADMIN' && empresaEstado !== 'ACTIVA' && empresaEstado !== 'SUSPENDIDA')
+      throw new ForbiddenException('Tu empresa no está activa.');
+    return { userId: user.id, email: user.email, username: user.username, role: user.role, empresaEstado };
   }
 }

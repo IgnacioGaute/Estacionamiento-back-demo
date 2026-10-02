@@ -238,6 +238,10 @@ export class CuentasService {
       });
       const activos = inquilinos.filter((i) => !i.baja);
 
+      // El operador ve la lista para cobrar; los números de la playa (lo pendiente de todos, lo
+      // cobrado en el mes) son de la administración.
+      if (tenantContext.getStore()?.role === 'USER') return { kpis: null, inquilinos };
+
       return {
         kpis: {
           activos: activos.length,
@@ -259,6 +263,45 @@ export class CuentasService {
         inquilinos,
       };
     });
+  }
+
+  // Lo que ve el mostrador de un inquilino: lo que debe y lo que pagó. Sin el libro (movimientos,
+  // anulaciones, ajustes) ni nada que se pueda anular o corregir: eso es de la administración.
+  async mostrador(customerId: string) {
+    const e = await this.estado(customerId);
+    return {
+      cliente: {
+        id: e.cliente.id,
+        nombre: e.cliente.nombre,
+        apellido: e.cliente.apellido,
+        baja: e.cliente.baja,
+        abono: e.cliente.abono,
+        cocheras: e.cliente.cocheras.map((c) => ({ numero: c.numero, importe: c.importe })),
+      },
+      saldo: e.saldo,
+      vencido: e.vencido,
+      deudas: e.recibos
+        .filter((r) => r.estado === 'PENDING' && r.saldo > 0)
+        .map(({ origen: _origen, pagos: _pagos, ...r }) => r),
+      // Con lo que cubrió cada pago y cómo quedó la cuenta, para volver a entregar su recibo
+      // (también impreso en hoja) igual que al cobrar.
+      pagos: e.comprobantes
+        .filter((p) => !p.anulado)
+        .map((p) => ({
+          id: p.id,
+          numero: p.numero,
+          fecha: p.fecha,
+          total: p.total,
+          medios: p.medios,
+          nota: p.nota,
+          saldoDespues: p.saldoDespues,
+          aplicado: p.imputaciones.map((i) => {
+            const cargo = e.recibos.find((r) => r.id === i.receiptId);
+            // Lo guardado al cobrar; el estado de hoy solo para cobros migrados, que no lo tienen.
+            return { concepto: cargo?.concepto ?? 'Cargo', importe: i.aplicado, queda: i.resta ?? cargo?.saldo ?? 0 };
+          }),
+        })),
+    };
   }
 
   async estado(customerId: string) {

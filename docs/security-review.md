@@ -6,11 +6,13 @@ Revisión del backend Nest, sesiones y acciones del frontend, PostgreSQL/RLS, so
 
 | Acceso | Control efectivo |
 | --- | --- |
-| Login | Credenciales, cuenta vigente, empresa activa; límite de intentos por IP e identificador |
+| Login | Credenciales, cuenta vigente, empresa activa o suspendida (de baja no entra); límite de intentos por IP e identificador |
 | Auth interno | Secreto del servidor; no admite JWT de usuario |
 | Lecturas internas de usuarios | Secreto del servidor, sólo `findAll` y `findOne`, sin contraseñas |
 | Empresas, playas y asignaciones globales | JWT vigente + SUPER_ADMIN consultado en la base |
-| Operación | JWT vigente + empresa activa + playa autorizada + RLS |
+| Operación | JWT vigente + empresa activa + playa autorizada + RLS. Empresa suspendida: solo `SUSPENDED_ENDPOINTS` (ver su plan, cobrar salidas, cerrar turno) |
+| Planes y vencimientos de cada empresa | Escritura: SUPER_ADMIN o la tarea diaria, con el rol dueño. La empresa solo lee su cuenta (RLS + `SELECT`); pagar con MercadoPago y el débito automático escriben con el rol dueño, solo sobre la empresa de la sesión, y nunca mueven el vencimiento por lo que diga el navegador |
+| Avisos de MercadoPago de la plataforma | Sin sesión (`POST /mercadopago/plataforma/aviso`). Con `MERCADOPAGO_PLATAFORMA_WEBHOOK_SECRET`, firma HMAC obligatoria (401 si no coincide). Del aviso solo se usa el id: el pago se consulta a la API con el token propio y se asienta una vez por id (índice único) |
 | Tarifas, configuración, altas/bajas y cierres históricos | Además, rol administrador |
 | Cuenta propia | Lectura y cambio de contraseña; no permite cambiarse el rol |
 | Sockets | JWT, caducidad, empresa, playa y versión de credenciales; se revalidan antes de emitir |

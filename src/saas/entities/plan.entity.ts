@@ -2,34 +2,47 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 
-// numeric y no int: la plata operativa del estacionamiento son pesos enteros, pero el precio
-// del plan es otra cosa y quiero decimales. TypeORM devuelve numeric como string, así que el
-// transformer evita que en el código termine haciéndose "1500.00" + 100.
-const aNumero = {
-  to: (valor: number) => valor,
-  from: (valor: string | null) => (valor === null ? null : Number(valor)),
-};
-
+// La lista de precios de la plataforma: tamaño de playa × si incluye cocheras mensuales. Es un
+// catálogo, no plata de nadie: lo que paga cada playa se congela en `suscripcion_playas.precio`
+// al asignarle el plan, así que cambiar un precio acá solo afecta a las asignaciones nuevas.
 @Entity({ name: 'planes' })
 export class Plan {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  // Identificador estable para la semilla de la migración ("MEDIANA_COCHERAS"). El nombre se
+  // puede retocar; el código no.
+  @Index({ unique: true })
+  @Column('varchar', { length: 40 })
+  codigo: string;
+
   @Column('varchar', { length: 100 })
   nombre: string;
 
-  @Column('numeric', { precision: 12, scale: 2, transformer: aNumero })
+  // Estadías abiertas a la vez en la playa. Null = sin límite. Es un límite blando: nunca frena
+  // un auto en la entrada, sirve para ver quién ya necesita el plan siguiente.
+  @Column('int', { nullable: true })
+  maxActivos: number | null;
+
+  // Prende la sección Inquilinos (`playas.modulos.inquilinos`) de la playa que lo tenga.
+  @Column('boolean', { default: false })
+  incluyeCocheras: boolean;
+
+  // Pesos enteros por mes, como el resto de la plata del sistema.
+  @Column('int')
   precioMensual: number;
 
-  @Column('int')
-  maxPlayas: number;
+  // Un plan retirado deja de ofrecerse pero las playas que ya lo tienen lo conservan.
+  @Column('boolean', { default: true })
+  activo: boolean;
 
-  @Column('int')
-  maxUsuarios: number;
+  @Column('int', { default: 0 })
+  orden: number;
 
   @CreateDateColumn()
   createdAt: Date;

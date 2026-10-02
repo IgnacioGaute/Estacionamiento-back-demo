@@ -3,7 +3,8 @@ import { ListPagination, listResult } from 'src/utils/list-pagination';
 import { CreateVehicleTypeDto, UpdateVehicleTypeDto } from './dto/vehicle-type.dto';
 import { assertPricingCoverage, calculateStayPrice, validatePricingOptions } from './pricing/stay-pricing';
 import { defaultPricingOptions, PricingOptions } from './pricing/pricing.types';
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { tenantContext } from 'src/tenancy/tenant-context';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, IsNull, Repository } from 'typeorm';
 import { Ticket } from './entities/ticket.entity';
@@ -396,6 +397,12 @@ async removeTicketPrice(id: string) {
       const existing = await repository.findOne({ where: { ticket: { id: ticketId }, departureTime: IsNull() }, relations: ['ticket'] });
       // El segundo escaneo prepara el cierre; nunca registra un cobro implícito.
       if (existing) return { registration: existing, requiresClose: true };
+      // Una empresa suspendida puede escanear para sacar un auto, pero no para entrar uno nuevo.
+      if (tenantContext.getStore()?.suspendida)
+        throw new ForbiddenException({
+          code: 'EMPRESA_SUSPENDIDA',
+          message: 'La cuenta está suspendida: solo se pueden registrar salidas.',
+        });
       const pricingSnapshot = await this.capturePricing(ticket.vehicleType, manager);
       const entryOperatorName = userId ? await this.operatorName(userId, manager) : null;
       const now = dayjs(pricingSnapshot.capturedAt).tz('America/Argentina/Buenos_Aires');

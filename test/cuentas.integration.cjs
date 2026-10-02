@@ -429,6 +429,58 @@ test('un precio nuevo rige para los abonos siguientes y no reescribe cargos', { 
   assert.equal(plan.aCargar.find((x) => x.id === c.id).importe, 650, 'el próximo abono sale con el precio nuevo');
 });
 
+test('el operador ve la lista sin totales y, de cada inquilino, solo lo que debe y lo que pagó', { timeout: 30000 }, async () => {
+  const comoOperador = (fn) => tenantContext.run({ empresaId: empresa.id, playaId: playa.id, userId: user.id, role: 'USER' }, fn);
+  const { OPERATOR_ENDPOINTS } = require('../dist/tenancy/endpoint-policy');
+  assert.ok(!OPERATOR_ENDPOINTS.CuentasController.includes('estado'), 'el estado de cuenta con movimientos es de la administración');
+  assert.ok(OPERATOR_ENDPOINTS.CuentasController.includes('mostrador'));
+
+  const c = await inquilino('Mostrador');
+  const viejo = await enPlaya(() => ds.transaction((m) => receipts.createReceipt(c.id, m, 700, `${mes(-1)}-02`)));
+  await enPlaya(() => ds.transaction((m) => receipts.createReceipt(c.id, m, 500, `${mes(0)}-02`)));
+  const pago = await enPlaya(() => cuentas.registrarPago(c.id, { pagos: [{ metodo: 'CASH', importe: 700 }], receiptIds: [viejo.id] }, user.id));
+
+  const lista = await comoOperador(() => cuentas.resumen());
+  assert.equal(lista.kpis, null, 'sin los números de la playa');
+  assert.ok(lista.inquilinos.some((i) => i.id === c.id && i.saldo === 500));
+  assert.ok((await enPlaya(() => cuentas.resumen())).kpis, 'la administración los sigue viendo');
+
+  const vista = await comoOperador(() => cuentas.mostrador(c.id));
+  assert.deepEqual(Object.keys(vista).sort(), ['cliente', 'deudas', 'pagos', 'saldo', 'vencido']);
+  assert.equal(vista.saldo, 500);
+  assert.deepEqual(vista.deudas.map((d) => d.saldo), [500]);
+  assert.equal(vista.deudas[0].origen, undefined, 'nada que anular');
+  assert.deepEqual(vista.pagos.map((p) => [p.numero, p.total]), [[pago.numero, 700]]);
+  assert.deepEqual(vista.pagos[0].aplicado, [{ concepto: vista.pagos[0].aplicado[0].concepto, importe: 700, queda: 0 }], 'lo que cubrió, para el recibo');
+  assert.equal(vista.pagos[0].saldoDespues, 500);
+  assert.equal(vista.pagos[0].anulable, undefined);
+});
+
+test('la planilla del día trae los cobros a inquilinos por medio de pago', { timeout: 30000 }, async () => {
+  const c = await inquilino('Planilla');
+  await enPlaya(() => ds.transaction((m) => receipts.createReceipt(c.id, m, 900, `${mes(0)}-02`)));
+  const mixto = await enPlaya(() =>
+    cuentas.registrarPago(c.id, { pagos: [{ metodo: 'CASH', importe: 300 }, { metodo: 'TRANSFER', importe: 200 }] }, user.id),
+  );
+  const errado = await enPlaya(() => cuentas.registrarPago(c.id, { pagos: [{ metodo: 'CASH', importe: 100 }] }, user.id));
+  await enPlaya(() => cuentas.anular(errado.id, { motivo: 'Se cobró dos veces', confirmacion: 100 }, user.id));
+
+  const dia = await enPlaya(() => boxes.findBoxByDate(hoy()));
+  const suyos = dia.cobrosInquilinos.filter((f) => f.cliente === 'Prueba Planilla');
+  assert.deepEqual(
+    suyos.map((f) => [f.tipo, f.metodo, f.monto, f.numero]),
+    [['PAGO', 'CASH', 300, mixto.numero], ['PAGO', 'TRANSFER', 200, mixto.numero]],
+    'cada medio en su fila; el anulado en el día no aparece (se compensa)',
+  );
+
+  await ds.getRepository(Playa).update(playa.id, { modulos: { inquilinos: false } });
+  try {
+    assert.equal((await enPlaya(() => boxes.findBoxByDate(hoy()))).cobrosInquilinos, null, 'sección apagada: nada');
+  } finally {
+    await ds.getRepository(Playa).update(playa.id, { modulos: { inquilinos: true } });
+  }
+});
+
 test('cocheras de inquilino con número y precio, sin propietario', { timeout: 30000 }, async () => {
   const clientes = new CustomersService(
     ds.getRepository(Customer), ds.getRepository(Receipt), ds.getRepository(InterestSettings),

@@ -23,6 +23,8 @@ import { CreatePlayaDto } from './dto/create-playa.dto';
 import { UpdatePlayaDto } from './dto/update-playa.dto';
 import { AsignarPlayasDto } from './dto/asignar-playas.dto';
 import { AuthenticatedRequest } from 'src/types/request';
+import { SuscripcionesService } from 'src/saas/suscripciones.service';
+import { hoyAR } from 'src/saas/estado-cuenta';
 
 // Administración de la plataforma. El guard exige super admin en TODAS las rutas y, a
 // diferencia del resto del backend, no acepta el token estático.
@@ -33,7 +35,10 @@ import { AuthenticatedRequest } from 'src/types/request';
 @Controller('tenancy')
 @UseGuards(SuperAdminGuard)
 export class TenancyController {
-  constructor(private readonly tenancyService: TenancyService) {}
+  constructor(
+    private readonly tenancyService: TenancyService,
+    private readonly suscripciones: SuscripcionesService,
+  ) {}
 
   private actor(req: AuthenticatedRequest) {
     return req.user?.userId ?? null;
@@ -147,6 +152,14 @@ export class TenancyController {
       entidad: empresa.nombre,
       entidadId: empresa.id,
     });
+    // Con días de prueba se da de alta la cuenta hoy; sin ellos queda «sin activar» hasta que se
+    // le dé el alta desde su ficha. No hace falta plan para darla.
+    if (dto.diasPrueba)
+      await this.suscripciones.activar(
+        empresa.id,
+        { alta: hoyAR(), diasPrueba: dto.diasPrueba },
+        this.actor(req),
+      );
     return empresa;
   }
 
@@ -157,6 +170,9 @@ export class TenancyController {
     @Body() dto: UpdateEmpresaDto,
   ) {
     const empresa = await this.tenancyService.updateEmpresa(id, dto);
+    // Suspender o dar de baja a mano queda como MANUAL: la tarea diaria y los pagos no la
+    // reactivan. Reactivar a mano limpia el motivo.
+    if (dto.estado) await this.suscripciones.cambioManualDeEstado(id, dto.estado);
     await this.tenancyService.registrarAuditoria({
       empresaId: id,
       usuarioId: this.actor(req),

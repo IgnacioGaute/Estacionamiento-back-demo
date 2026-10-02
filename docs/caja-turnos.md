@@ -23,6 +23,8 @@ Ejemplo: se cuentan $90.000, se retiran $70.000 y se dejan $20.000. El primer tu
 
 `BoxList.totalPrice` representa efectivo neto de operaciones del día, sin transferencias ni cheques. Se conserva separado del saldo disponible del turno y de los retiros/relevos; no se borra la recaudación al cerrar. La tarjeta de la planilla se llama «Efectivo neto del día» y el PDF indica «Efectivo del día».
 
+Con la sección Inquilinos habilitada en la playa, la planilla muestra los cobros a inquilinos del día: en pantalla, cuánto entró por cada medio (efectivo, transferencia, MercadoPago); en el PDF, una sección «Inquilinos» con cada cobro, su medio y su recibo, y el total por medio. Salen del libro de la cuenta corriente (`cobrosInquilinos` en la caja del día), así que incluyen lo que quedó a favor. El efectivo entra (o sale, en una devolución o en la anulación de un cobro de otro día); transferencia y MercadoPago van en entradas y salidas por igual, como en «varios», porque no tocan el cajón. Un cobro anulado el mismo día no aparece: se compensa con su anulación.
+
 «Caja y turnos», accesible desde tickets y la planilla, muestra el efectivo esperado del turno activo o el fondo pendiente de relevo, el formulario de cierre y el historial con retirado, entregado y saldo pendiente. El historial del turno anterior pasa a cero pendiente cuando se recibe el relevo, conservando los importes originales del arqueo.
 
 ## Consistencia y contratos

@@ -22,6 +22,7 @@ import { UpdateEmpresaDto } from './dto/update-empresa.dto';
 import { CreatePlayaDto } from './dto/create-playa.dto';
 import { UpdatePlayaDto } from './dto/update-playa.dto';
 import { AsignarPlayasDto } from './dto/asignar-playas.dto';
+import { SuscripcionesService } from 'src/saas/suscripciones.service';
 
 // Administración de la plataforma. Todo lo de acá lo usa únicamente el super admin.
 @Injectable()
@@ -37,6 +38,7 @@ export class TenancyService {
     private readonly usuarioPlayaRepository: Repository<UsuarioPlaya>,
     @InjectRepository(User) private readonly userRepository: Repository<User>,
     private readonly dataSource: DataSource,
+    private readonly suscripciones: SuscripcionesService,
   ) {}
 
   async createUsuario(empresaId: string, dto: CreateEmpresaUsuarioDto) {
@@ -131,9 +133,12 @@ export class TenancyService {
        WHERE "empresaId" = ANY($1)`,
       [empresas.map((e) => e.id)],
     );
+    // Plan, vencimiento y estado de la cuenta con la plataforma, en lote.
+    const cuentas = await this.suscripciones.resumenes(empresas.map((e) => e.id));
 
     return empresas.map((empresa) => ({
       ...empresa,
+      suscripcion: cuentas.get(empresa.id) ?? null,
       mercadoPago: (() => {
         const cuenta = cuentasMp.find((c) => c.empresaId === empresa.id);
         return cuenta
@@ -236,6 +241,22 @@ export class TenancyService {
     const playa = await this.playaRepository.findOne({ where: { id } });
     if (!playa) throw new NotFoundException('Playa no encontrada.');
     const { modulos, ...datos } = dto;
+    // Con plan asignado, las cocheras mensuales las define el plan: para prenderlas o apagarlas
+    // se cambia el plan, que además cambia lo que paga.
+    if (modulos?.inquilinos !== undefined) {
+      const [linea] = await this.dataSource.query(
+        `SELECT p."incluyeCocheras" FROM suscripcion_playas sp JOIN planes p ON p.id = sp."planId"
+         WHERE sp."playaId" = $1`,
+        [id],
+      );
+      if (linea && linea.incluyeCocheras !== modulos.inquilinos)
+        throw new BadRequestException({
+          code: 'MODULO_DEFINIDO_POR_PLAN',
+          message: modulos.inquilinos
+            ? 'El plan de esta playa no incluye cocheras mensuales. Cambiale el plan para habilitar Inquilinos.'
+            : 'El plan de esta playa incluye cocheras mensuales. Cambiale el plan para quitar Inquilinos.',
+        });
+    }
     this.playaRepository.merge(playa, datos);
     // Se combinan: prender una sección no apaga las demás.
     if (modulos) playa.modulos = { ...(playa.modulos ?? {}), ...modulos };
@@ -277,6 +298,8 @@ export class TenancyService {
       (meta) =>
         meta.target !== UsuarioPlaya &&
         meta.tableName !== 'ticket_vehicle_types' &&
+        // El plan de la playa es configuración, no operación: se borra con ella (ON DELETE CASCADE).
+        meta.tableName !== 'suscripcion_playas' &&
         meta.columns.some((c) => c.propertyName === 'playaId'),
     );
     let total = 0;

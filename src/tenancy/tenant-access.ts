@@ -17,7 +17,8 @@ import { DataSource } from 'typeorm';
 import { Observable } from 'rxjs';
 import { JwtAuthGuard } from '../utils/guards/auth.guard';
 import { tenantContext, TenantScope } from './tenant-context';
-import { OPERATOR_ENDPOINTS } from './endpoint-policy';
+import { OPERATOR_ENDPOINTS, SUSPENDED_ENDPOINTS } from './endpoint-policy';
+import { SuscripcionesService } from '../saas/suscripciones.service';
 import { limitLogin } from '../auth/login-limiter';
 
 class AssignOperatorPlayaDto {
@@ -41,8 +42,9 @@ export class TenantAccessService {
           'SELECT id, nombre, "empresaId", modulos FROM playas ORDER BY nombre',
         ),
       };
+    // Suspendida sigue resolviendo su playa: TenantGuard ya acotó qué puede hacer.
     const [empresa] = await this.ds.query(
-      "SELECT id,nombre FROM empresas WHERE id=$1 AND estado='ACTIVA'",
+      "SELECT id,nombre,estado FROM empresas WHERE id=$1 AND estado IN ('ACTIVA','SUSPENDIDA')",
       [user.empresaId],
     );
     if (!empresa)
@@ -107,6 +109,37 @@ export class TenantAccessService {
       };
     });
   }
+  async operatorAssignments(actorId: string) {
+    const [actor] = await this.ds.query(
+      'SELECT role,"empresaId" FROM users WHERE id=$1 AND "deletedAt" IS NULL',
+      [actorId],
+    );
+    if (!actor || !['ADMIN', 'SUPER_ADMIN'].includes(actor.role))
+      throw new ForbiddenException(
+        'Solo un administrador puede consultar asignaciones.',
+      );
+    const rows = await this.ds.query(
+      `SELECT u.id AS "usuarioId", p.id AS "playaId", p.nombre AS "playaNombre"
+       FROM users u
+       LEFT JOIN usuario_playas up ON up."usuarioId"=u.id
+       LEFT JOIN playas p ON p.id=up."playaId" AND p."empresaId"=u."empresaId"
+       WHERE u.role='USER' AND u."deletedAt" IS NULL
+         AND ($1::uuid IS NULL OR u."empresaId"=$1)
+       ORDER BY u.id, p.nombre`,
+      [actor.role === 'SUPER_ADMIN' ? null : actor.empresaId],
+    );
+    const assignments: Record<string, { id: string; nombre: string } | null> =
+      {};
+    for (const row of rows) {
+      if (!(row.usuarioId in assignments)) assignments[row.usuarioId] = null;
+      if (row.playaId)
+        assignments[row.usuarioId] = {
+          id: row.playaId,
+          nombre: row.playaNombre,
+        };
+    }
+    return assignments;
+  }
   async resolve(userId: string, requested?: string): Promise<TenantScope> {
     const context = await this.context(userId);
     if (context.user.role === 'USER' && context.playas.length !== 1)
@@ -130,6 +163,7 @@ export class TenantAccessService {
       empresaId: playa.empresaId,
       playaId: playa.id,
       platform: context.user.role === 'SUPER_ADMIN',
+      suspendida: context.empresa?.estado === 'SUSPENDIDA',
     };
   }
 }
@@ -142,38 +176,58 @@ export class TenantGuard implements CanActivate {
     const req = context.switchToHttp().getRequest();
     const controller = context.getClass().name;
     const handler = context.getHandler().name;
-    if (controller === 'PublicParkingReceiptsController' && handler === 'read') return true;
+    if (controller === 'PublicParkingReceiptsController' && handler === 'read')
+      return true;
+    // Los avisos de MercadoPago de la plataforma: no hay sesión. El controlador valida la firma y
+    // no le cree nada al aviso (solo usa el id para consultar a MercadoPago con el token propio).
+    if (controller === 'AvisoMercadoPagoController' && handler === 'aviso')
+      return true;
     const serviceSecret = this.config.getOrThrow<string>('API_SECRET_TOKEN');
     if (controller === 'AuthController' && handler === 'login') {
-      limitLogin(req.ip ?? req.socket?.remoteAddress ?? 'unknown', req.body?.identifier);
+      limitLogin(
+        req.ip ?? req.socket?.remoteAddress ?? 'unknown',
+        req.body?.identifier,
+      );
       return true;
     }
     if (controller === 'AuthController') {
-      if (
-        req.headers.authorization !==
-        `Bearer ${serviceSecret}`
-      )
+      if (req.headers.authorization !== `Bearer ${serviceSecret}`)
         throw new UnauthorizedException();
       return true;
     }
     // Trusted server-side account lookup used by NextAuth, never by operational APIs.
-    const staticToken =
-      req.headers.authorization ===
-      `Bearer ${serviceSecret}`;
-    if (controller === 'UsersController' && staticToken && ['findAll', 'findOne'].includes(handler)) {
+    const staticToken = req.headers.authorization === `Bearer ${serviceSecret}`;
+    if (
+      controller === 'UsersController' &&
+      staticToken &&
+      ['findAll', 'findOne'].includes(handler)
+    ) {
       req.platformAccountService = true;
       return true;
     }
     if (!(await new JwtAuthGuard().canActivate(context)))
       throw new UnauthorizedException();
+    if (
+      req.user.empresaEstado === 'SUSPENDIDA' &&
+      !SUSPENDED_ENDPOINTS[controller]?.includes(handler)
+    )
+      throw new ForbiddenException({
+        code: 'EMPRESA_SUSPENDIDA',
+        message:
+          'La cuenta está suspendida: solo se pueden registrar salidas y cerrar el turno. El administrador puede ver cómo regularizarla en Mi plan.',
+      });
     if (controller === 'UsersController') {
       const self =
-        req.params.id === req.user.userId && ['findOne', 'updatePassword'].includes(handler);
+        req.params.id === req.user.userId &&
+        ['findOne', 'updatePassword'].includes(handler);
       if (!self && !['ADMIN', 'SUPER_ADMIN'].includes(req.user.role))
         throw new ForbiddenException(
           'Solo el administrador gestiona usuarios.',
         );
-    } else if (req.user.role === 'USER' && !OPERATOR_ENDPOINTS[controller]?.includes(handler)) {
+    } else if (
+      req.user.role === 'USER' &&
+      !OPERATOR_ENDPOINTS[controller]?.includes(handler)
+    ) {
       throw new ForbiddenException('Esta acción requiere un administrador.');
     }
     return true;
@@ -188,7 +242,14 @@ export class TenantInterceptor implements NestInterceptor {
     const req = context.switchToHttp().getRequest();
     const controller = context.getClass().name;
     if (
-      ['AuthController', 'TenancyController', 'TenantContextController', 'PublicParkingReceiptsController'].includes(controller) ||
+      [
+        'AuthController',
+        'TenancyController',
+        'SuscripcionesController',
+        'TenantContextController',
+        'PublicParkingReceiptsController',
+        'AvisoMercadoPagoController',
+      ].includes(controller) ||
       req.platformAccountService
     )
       return next.handle();
@@ -211,7 +272,14 @@ export class TenantInterceptor implements NestInterceptor {
 
 @Controller('tenant')
 export class TenantContextController {
-  constructor(private readonly access: TenantAccessService) {}
+  constructor(
+    private readonly access: TenantAccessService,
+    private readonly suscripciones: SuscripcionesService,
+  ) {}
+  @Get('operators/assignments')
+  assignments(@Req() req: any) {
+    return this.access.operatorAssignments(req.user.userId);
+  }
   @Get('operators/:id/playa')
   assignment(@Req() req: any, @Param('id') id: string) {
     return this.access.operatorAssignment(req.user.userId, id);
@@ -229,6 +297,11 @@ export class TenantContextController {
     const { user, empresa, playas } = await this.access.context(
       req.user.userId,
     );
-    return { role: user.role, empresa, playas };
+    // El estado de la cuenta con la plataforma, para los avisos del menú (prueba por vencer,
+    // vencida, suspendida). Lo ven todos los roles; el detalle y los pagos quedan en Mi plan.
+    const cuenta = empresa
+      ? await this.suscripciones.situacion(empresa.id)
+      : null;
+    return { role: user.role, empresa, playas, cuenta };
   }
 }

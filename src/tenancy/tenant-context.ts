@@ -1,7 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { DataSource } from 'typeorm';
 
-export interface TenantScope { empresaId: string; playaId: string; userId: string; role?: string; platform?: boolean }
+// `suspendida`: la empresa está suspendida y solo puede terminar lo que quedó abierto (ver
+// SUSPENDED_ENDPOINTS). Los servicios que abren algo nuevo por un camino compartido con un cierre
+// (el escáner) lo miran acá.
+export interface TenantScope { empresaId: string; playaId: string; userId: string; role?: string; platform?: boolean; suspendida?: boolean }
 export const tenantContext = new AsyncLocalStorage<TenantScope>();
 
 /** Every QueryRunner owns one pool connection. Set its scope before its first query,

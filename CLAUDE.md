@@ -27,7 +27,8 @@ The real coverage lives in `test/*.cjs`, run with `node --test` **after `pnpm bu
 ```bash
 node --test test/tickets.integration.cjs          # pricing, cierre, caja, turnos
 node --test test/tenancy.integration.cjs          # empresa/playa scoping
-node --test test/tenant-isolation.integration.cjs # RLS, permisos, comprobantes públicos
+node --test test/tenant-isolation.integration.cjs # RLS, permisos, comprobantes públicos, empresa suspendida
+node --test test/suscripciones.integration.cjs    # planes, vencimientos, suspensión, pagos de la plataforma
 node --test test/assistant.test.cjs test/gemini-request.test.cjs test/image-signature.test.cjs
 ```
 
@@ -42,7 +43,11 @@ db/user/password `estacionamiento_demo`/`admin`/`admin`). Env vars read at boot:
 `ALLOWED_ORIGINS` (comma-separated), `POSTGRES_{HOST,PORT,NAME,USER,PASSWORD}`, `DB_BOOTSTRAP`, `NEXTAUTH_SECRET`,
 `API_SECRET_TOKEN`, `CLOUDINARY_{NAME,API_KEY,API_SECRET}`, `PLATE_RECOGNIZER_API_KEY`,
 `GEMINI_{API_KEY,MODEL,FALLBACK_MODELS}`,
-`MERCADOPAGO_TOKEN_KEY` (32 bytes en hex, `openssl rand -hex 32`; cifra los tokens de MercadoPago de cada empresa).
+`MERCADOPAGO_TOKEN_KEY` (32 bytes en hex, `openssl rand -hex 32`; cifra los tokens de MercadoPago de cada empresa),
+`PLATAFORMA_DATOS_PAGO` / `PLATAFORMA_WHATSAPP` (opcionales: datos de transferencia y WhatsApp que ve una empresa
+en «Mi plan» para pagarle a la plataforma),
+`MERCADOPAGO_PLATAFORMA_{ACCESS_TOKEN,PUBLIC_KEY,WEBHOOK_SECRET,WEBHOOK_URL}` y `PLATAFORMA_URL_FRONT` (la cuenta de
+MercadoPago donde la plataforma cobra el plan; otra aplicación que la de los QR de las empresas).
 
 `scripts/start-compiled.cjs` registers `tsconfig-paths` before `dist/main` — sources import each other as
 `src/...`, so plain `node dist/main` only works where those paths resolve.
@@ -51,7 +56,8 @@ first, one transaction, only unassigned rows, safe to rerun).
 
 Domain docs: `docs/tickets-tarifas.md` (tarifas y cierres), `docs/caja-turnos.md` (caja/turnos),
 `docs/administracion-plataforma.md` (empresas, playas, RLS), `docs/comprobantes.md` (entrega de comprobantes),
-`docs/security-review.md` (controles vigentes), `src/assistant/README.md` (asistente).
+`docs/security-review.md` (controles vigentes), `docs/planes-y-cuentas.md` (planes, vencimientos y suspensión de
+empresas), `src/assistant/README.md` (asistente).
 
 ## Architecture
 
@@ -103,14 +109,21 @@ Consequences for new code:
 - `JwtStrategy` (`src/utils/strategies/jwt.strategy.ts`) validates bearer tokens signed with `NEXTAUTH_SECRET`
   (tokens are minted by a NextAuth frontend, not here), then re-reads the user from the database: the account must
   exist, `payload.authVersion` must match `user.authVersion` (bumped on password change, so old sessions die), and
-  a non-`SUPER_ADMIN` user's empresa must be `ACTIVA`.
+  a non-`SUPER_ADMIN` user's empresa must be `ACTIVA` or `SUSPENDIDA` (`BAJA` is locked out; the strategy returns
+  `empresaEstado` on `req.user`). Login applies the same rule.
 - `TenantGuard` (global `APP_GUARD`, `src/tenancy/tenant-access.ts`) is the real gate — controller-level
   `@UseGuards(AuthOrTokenAuthGuard)` is still present but no longer decides access on its own. It:
-  - lets `PublicParkingReceiptsController.read` through unauthenticated (public comprobante links);
+  - lets `PublicParkingReceiptsController.read` through unauthenticated (public comprobante links), and
+    `AvisoMercadoPagoController.aviso` (the platform's MercadoPago webhook: it checks the signature and only uses
+    the id to re-query MercadoPago with its own token);
   - rate-limits `AuthController.login` (`src/auth/login-limiter.ts`: per-IP and per-identifier, using the
     connection IP, never a forwarded header) and requires `Bearer API_SECRET_TOKEN` for every *other*
     `AuthController` handler. The static token is now reserved for those server-side auth calls plus
     `UsersController.findAll`/`findOne` — **no operational route accepts it**;
+  - lets a `SUSPENDIDA` empresa (any role) reach only `SUSPENDED_ENDPOINTS` (context, «Mi plan», finding and
+    charging exits, receipts, MercadoPago QR, turnos, reading the caja), answering `EMPRESA_SUSPENDIDA` otherwise.
+    The scanner stays reachable for the second scan; `TicketsService.createRegistration` rejects the opening one
+    via `tenantContext` `suspendida`;
   - restricts `UsersController` to ADMIN/SUPER_ADMIN, except a user reading or re-passwording themselves;
   - allows role `USER` only the handlers listed in `src/tenancy/endpoint-policy.ts`.
 - `OPERATOR_ENDPOINTS` is an allowlist keyed by **controller class + handler name** (not URL spelling, so casing
@@ -191,7 +204,11 @@ update/cancel/delete for renters return `USAR_CUENTA_CORRIENTE`. Anulación is d
 the month they were loaded, payments and devoluciones only while their turno is open (same day without
 turnos), never migrated history; it needs a 10+ character reason and the exact amount typed back. Anulled pairs
 are hidden in the account view and the printed statement; `GET /cuentas/anulaciones` is the admin's control
-list. Amounts are whole pesos: DTOs reject decimals and the UI never reinterprets a "1.000,50".
+list. `BoxListsService.findBoxByDate` adds `cobrosInquilinos` (the day's PAGO/DEVOLUCION rows from the ledger, one per
+medio, plus anulaciones of other days; `null` when the module is off) for the planilla's «Inquilinos» section and
+per-method totals. The operator (USER) gets the list without playa totals (`resumen` returns `kpis: null`) and, per renter,
+only `GET /cuentas/:id/mostrador` (pending cargos + non-anulled payments with what each covered, so the operator can re-issue its recibo; no ledger); `estado` is admin-only and the
+frontend redirects `/renters/[id]` to the list. Amounts are whole pesos: DTOs reject decimals and the UI never reinterprets a "1.000,50".
 
 ### Pricing brackets
 
@@ -230,7 +247,7 @@ bytes so a disguised document is rejected before anything parses it.
 `TicketScheduleSettings.receiptDelivery` (`{whatsapp, qr, print, paperWidth: 58|80}`, all off by default).
 Issuing freezes a `snapshot` and a random 256-bit token; `ParkingReceipt` is unique per
 `playaId + registrationId + kind` (`ENTRY`/`EXIT`), so a retry reuses the same link instead of charging again.
-`GET /public/parking-receipts/:token` is the only unauthenticated route in the app: it returns vehicle, playa,
+`GET /public/parking-receipts/:token` is the only unauthenticated read route in the app: it returns vehicle, playa,
 times and amounts — never users or internal movements — with `no-store`/`noindex` headers. Its only consumer is
 `../estacionamiento-comprobantes-demo`, a separate Next app on its own domain whose whole job is rendering that
 response (`/c/<token>`), so the link a customer receives never exposes the system's domain. It fetches
@@ -253,7 +270,7 @@ questions/minute, one concurrent per user/playa) are per-process in memory; mult
 storage. Each question (text, topic from `temas.ts`, answered or not — never the answer) is also persisted in the
 playa-scoped `assistant_preguntas` table, which feeds the super admin's metrics screen. `gemini-request.ts` owns retries and fallback models within a 65s budget. See `src/assistant/README.md`.
 
-### Receipts / customers / parking / saas
+### Receipts / customers / parking
 
 `src/customers/` holds recurring-customer billing (monthly parking, renters, receipt payments,
 payment-history-on-account). `src/parking/` owns the spots: `ParkingOwner` (a garage spot belonging to a customer,
@@ -267,8 +284,35 @@ table `vehicles`, `ParkingRenter` → `vehicle_renters`, `OwnerParkingType` → 
 property mapped to the physical column `parkingType`). On `Customer` the relations are
 `parkingOwners`/`parkingRenters`. Raw SQL, RLS migrations and relation strings must use these physical names.
 
-`src/saas/` (`Plan`, `Suscripcion`, `FacturaSaas`) is what the platform bills the empresa for using the system —
-not what a playa bills its abonados (that is `receipts`). Entities only; no controller yet.
+### Plans and the empresa's account with the platform (`src/saas/`)
+
+What the platform bills the empresa for using the system — not what a playa bills its abonados (that is
+`receipts`/`cuentas`). Lifecycle: **alta** (editable `suscripciones.alta`) → optional free-trial days (no plan
+needed; `diasPrueba` on empresa creation or `POST …/suscripcion/alta`) → when the trial ends the first month's
+invoice is issued and is due that same day → days of delay count from there → more than 5 days late, the daily
+`@Cron` (`SuscripcionesScheduler`, outside any tenant scope, advisory-locked, idempotent) suspends it
+(`FALTA_DE_PAGO`); 60 days suspended → `BAJA`. Every payment moves the due date a month; the next invoice is issued
+on its due date. `planes` is the price list (landing sizes: up to 50 / 51–120 / over 120 vehicles at once, each with
+or without «alquileres mensuales»); `suscripcion_playas` gives each playa a plan with a frozen **precio pactado**
+(list changes never touch it; additional playas default to 30% off) and the empresa pays the sum; `suscripciones`
+holds only dates (`alta`, `pruebaHasta`, `pagadoHasta`, `prorrogaHasta`), `bonificada` and `motivoSuspension`;
+`facturas_saas` are billed periods (one `PENDIENTE` per empresa, `ANULADA` instead of deleting). The account state
+(`SIN_ACTIVAR`, `PRUEBA`, `AL_DIA`, `VENCIDA` + `diasDeAtraso`, …) is never stored: `estado-cuenta.ts` derives it
+from the dates and `empresas.estado`, which stays the only access switch. «Días extra» is a single action: it
+extends the trial if never paid, otherwise it is a prórroga (moves the suspension, not the due date). Payments,
+días extra and alta changes reactivate only `FALTA_DE_PAGO` suspensions; `MANUAL` ones need the super admin. A plan
+defines `playas.modulos.inquilinos` (manual toggle then answers `MODULO_DEFINIDO_POR_PLAN`). The `activos` limit
+is soft and only the super admin sees usage; `MiPlanController` never returns it. Mutations live in
+`SuscripcionesController` (super admin, skipped by `TenantInterceptor`); the empresa only reads through
+`MiPlanController` with RLS and `SELECT`-only grants; its payment handlers (MercadoPago link, débito automático,
+verify) write through `tenantContext.exit` on the session's empresa only. The platform collects with its own
+MercadoPago app (`MercadoPagoPlataforma`, never the empresas' OAuth tokens): Checkout Pro links
+(`plan:<empresaId>:<desde>`) and a monthly `preapproval`: with `MERCADOPAGO_PLATAFORMA_PUBLIC_KEY` the panel embeds
+MercadoPago's card form and sends only its one-time token (`authorized` on the spot, no MercadoPago account needed);
+without it the customer confirms it in MercadoPago. `CobrosPlataformaService`
+credits approved payments from the webhook, the return from MercadoPago and a cron every 2h (plus 05:00, before
+suspending), always re-querying the API and once per payment id (lock + unique index). An authorized débito
+stretches the grace to 10 days. See `docs/planes-y-cuentas.md`.
 
 ### Config & cross-cutting
 

@@ -9,13 +9,16 @@ import { AuditLog } from './entities/audit-log.entity';
 import { User } from 'src/users/entities/user.entity';
 import { TenancyService } from './tenancy.service';
 import { TenancyController } from './tenancy.controller';
+import { SaasModule } from 'src/saas/saas.module';
 
 // Empresas, playas y el acceso de cada usuario a cada playa. Se exporta TypeOrmModule para que
 // los guards y servicios de otros módulos puedan resolver el contexto de playa sin duplicar el
 // registro de los repositorios.
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([Empresa, Playa, UsuarioPlaya, AuditLog, User])],
+  // SaasModule: la ficha, el contexto y el alta de empresas leen y escriben la cuenta de cada
+  // empresa con la plataforma.
+  imports: [TypeOrmModule.forFeature([Empresa, Playa, UsuarioPlaya, AuditLog, User]), SaasModule],
   controllers: [TenancyController, TenantContextController],
   providers: [TenancyService, TenantAccessService, TenantSocketAccess],
   exports: [TypeOrmModule, TenancyService, TenantAccessService, TenantSocketAccess],

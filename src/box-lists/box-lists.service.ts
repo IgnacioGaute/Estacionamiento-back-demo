@@ -255,6 +255,55 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     return Object.assign(box, { turnosDelDia });
   }
 
+  // Los cobros a inquilinos del día, desde su cuenta corriente, para la planilla: cada medio en su
+  // fila. Solo si la sección está habilitada en la playa (si no, `null`). Es el libro y no los
+  // pagos por recibo porque lo que queda a favor también es plata que entró.
+  //
+  // Para que cuadre con el efectivo de la caja: un pago y su anulación del mismo día no se
+  // muestran (se compensan); anulado otro día, el pago queda en su día y la anulación sale en el
+  // suyo. Lo mismo con las devoluciones de saldo a favor. `monto`: positivo entra, negativo sale.
+  private async withCobrosInquilinos(box: BoxList, manager?: EntityManager) {
+    const repository = manager ?? this.dataSource.manager;
+    const playaId = tenantContext.getStore()?.playaId;
+    const [playa] = playaId ? await repository.query('SELECT modulos FROM playas WHERE id = $1', [playaId]) : [];
+    if (!playa?.modulos?.inquilinos) return Object.assign(box, { cobrosInquilinos: null });
+
+    const dia = String(box.date).slice(0, 10);
+    const filas: any[] = await repository.query(
+      `SELECT m.id, m.tipo, m.metodo, m.importe, m.numero, m.detalle, m."createdAt", m."anulaId",
+              c."firstName", c."lastName",
+              o.tipo AS "tipoOriginal", to_char(o.fecha, 'YYYY-MM-DD') AS "fechaOriginal"
+       FROM cuenta_movimientos m
+       JOIN customers c ON c.id = m."customerId"
+       LEFT JOIN cuenta_movimientos o ON o.id = m."anulaId"
+       WHERE m.fecha = $1 AND m.tipo IN ('PAGO', 'DEVOLUCION', 'ANULACION')
+       ORDER BY m.sequence`,
+      [dia],
+    );
+    const anuladosEnElDia = new Set<string>(
+      filas.filter((f) => f.tipo === 'ANULACION' && f.fechaOriginal === dia).map((f) => f.anulaId),
+    );
+
+    const cobrosInquilinos = filas
+      .filter((f) =>
+        f.tipo === 'ANULACION'
+          ? (f.tipoOriginal === 'PAGO' || f.tipoOriginal === 'DEVOLUCION') && f.fechaOriginal !== dia
+          : !anuladosEnElDia.has(f.id),
+      )
+      .map((f) => ({
+        id: f.id as string,
+        tipo: f.tipo as 'PAGO' | 'DEVOLUCION' | 'ANULACION',
+        tipoOriginal: (f.tipoOriginal ?? null) as 'PAGO' | 'DEVOLUCION' | null,
+        metodo: f.metodo as 'CASH' | 'TRANSFER' | 'CHECK' | 'MERCADOPAGO',
+        monto: -Number(f.importe),
+        numero: (f.numero ?? null) as string | null,
+        cliente: `${f.lastName ?? ''} ${f.firstName ?? ''}`.trim() || 'Sin nombre',
+        aFavor: f.tipo === 'PAGO' ? Number(f.detalle?.aFavor ?? 0) : 0,
+        hora: f.createdAt as Date,
+      }));
+    return Object.assign(box, { cobrosInquilinos });
+  }
+
   async findBoxByDate(date: string, manager?: EntityManager): Promise<BoxList | null> {
     try {
       if (manager) await manager.query('SELECT pg_advisory_xact_lock(718904)');
@@ -294,7 +343,10 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
         return null;
       }
   
-      return this.withTurnos(await this.withTicketMovements(boxList, manager), manager);
+      return this.withCobrosInquilinos(
+        await this.withTurnos(await this.withTicketMovements(boxList, manager), manager),
+        manager,
+      );
     } catch (error: any) {
       this.logger.error(`Error buscando BoxList por fecha: ${error.message}`, error.stack);
       throw error;

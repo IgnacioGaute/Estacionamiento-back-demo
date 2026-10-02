@@ -13,9 +13,10 @@ import {
   SaldoInicialDto,
 } from './dto/cuentas.dto';
 
-// Cuenta corriente de inquilinos. Consultar y cobrar lo puede hacer el operador (ver
-// endpoint-policy); saldo inicial, ajustes, devoluciones, anulaciones (y su listado) y cargar
-// los abonos del mes, sólo administración.
+// Cuenta corriente de inquilinos. El operador ve la lista y, de cada inquilino, lo que debe y lo
+// que pagó (`mostrador`), y cobra (ver endpoint-policy). El estado de cuenta completo, saldo
+// inicial, ajustes, devoluciones, anulaciones (y su listado) y cargar los abonos del mes, sólo
+// administración.
 @Controller('cuentas')
 export class CuentasController {
   constructor(private readonly cuentas: CuentasService) {}
@@ -47,6 +48,12 @@ export class CuentasController {
   @Get(':customerId')
   estado(@Param('customerId', ParseUUIDPipe) customerId: string) {
     return this.cuentas.estado(customerId);
+  }
+
+  // Lo que debe y lo que pagó, sin el libro: lo único de la cuenta que ve el operador.
+  @Get(':customerId/mostrador')
+  mostrador(@Param('customerId', ParseUUIDPipe) customerId: string) {
+    return this.cuentas.mostrador(customerId);
   }
 
   @Post(':customerId/pagos')

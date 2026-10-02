@@ -137,6 +137,10 @@ before(async () => {
     await new (load('database/migrations/1790000004000-parking-receipts', 'ParkingReceipts1790000004000'))().up(migrationRunner);
     await new (load('database/migrations/1790000010000-offline-sessions', 'OfflineSessions1790000010000'))().up(migrationRunner);
     await new (load('database/migrations/1790000013000-offline-multiple-devices', 'OfflineMultipleDevices1790000013000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000021000-suscripciones', 'Suscripciones1790000021000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000022000-cuenta-alta', 'CuentaAlta1790000022000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000023000-facturas-anticipadas', 'FacturasAnticipadas1790000023000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000024000-debito-automatico', 'DebitoAutomatico1790000024000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -151,6 +155,7 @@ before(async () => {
           () => ({
             NEXTAUTH_SECRET: 'isolated-tenancy-test-secret',
             API_SECRET_TOKEN: 'test-static-secret',
+            MERCADOPAGO_PLATAFORMA_WEBHOOK_SECRET: 'test-webhook-secret',
           }),
         ],
       }),
@@ -594,6 +599,7 @@ test('todos los endpoints rechazan acceso anónimo y el secreto interno no permi
       const method = methods[Reflect.getMetadata('method', handler)];
       if (!method || (ctor.name === 'AuthController' && name === 'login')) continue;
       if (ctor.name === 'PublicParkingReceiptsController' && name === 'read') continue;
+      if (ctor.name === 'AvisoMercadoPagoController' && name === 'aviso') continue;
       const suffix = Reflect.getMetadata('path', handler);
       const route = ('/' + prefix + '/' + suffix).replace(/\/+/g, '/').replace(/:[^/]+/g, '11111111-1111-4111-8111-111111111111');
       await request(app.getHttpServer())[method](route).send({}).expect(401);
@@ -602,6 +608,15 @@ test('todos los endpoints rechazan acceso anónimo y el secreto interno no permi
   }
   assert.ok(checked > 90, `Only ${checked} routes checked`);
   t.diagnostic(`${checked} endpoints protegidos verificados sin credenciales`);
+  // La otra ruta sin sesión: los avisos de MercadoPago. Sin un id reconocible no hace nada; con id,
+  // exige la firma de la clave del webhook.
+  const { createHmac } = require('node:crypto');
+  const aviso = () => request(app.getHttpServer()).post('/mercadopago/plataforma/aviso?type=payment&data.id=123');
+  await request(app.getHttpServer()).post('/mercadopago/plataforma/aviso').send({}).expect(200);
+  await aviso().send({}).expect(401);
+  await aviso().set('x-request-id', 'r-1').set('x-signature', 'ts=1,v1=00').send({}).expect(401);
+  const v1 = createHmac('sha256', 'test-webhook-secret').update('id:123;request-id:r-1;ts:1;').digest('hex');
+  await aviso().set('x-request-id', 'r-1').set('x-signature', `ts=1,v1=${v1}`).send({}).expect(200);
   for (const method of ['post', 'patch', 'delete']) {
     const path = method === 'post' ? '/users' : `/users/${adminB.id}`;
     await request(app.getHttpServer())[method](path).set('Authorization', 'Bearer test-static-secret').send({ role: 'ADMIN' }).expect(401);
@@ -642,7 +657,11 @@ test('login y recuperación: sin hashes, consumo único del enlace y revocación
   assert.equal(modified.body.password, undefined);
   await request(app.getHttpServer()).get('/tenant/context').set('Authorization', 'Bearer ' + jwt.sign({ id: user.id })).expect(401);
   await request(app.getHttpServer()).get('/tenant/context').set('Authorization', 'Bearer ' + jwt.sign({ id: user.id }, { expiresIn: -1 })).expect(401);
+  // Suspendida entra en modo restringido (ver SUSPENDED_ENDPOINTS); de baja no entra.
   await ds.getRepository(Empresa).update(b.empresaId, { estado: 'SUSPENDIDA' });
+  await request(app.getHttpServer()).get('/tenant/context').set('Authorization', 'Bearer ' + token(adminB)).expect(200);
+  await request(app.getHttpServer()).post('/auth/login').send({ identifier: user.email, password: 'admin-changed-pass' }).expect(201);
+  await ds.getRepository(Empresa).update(b.empresaId, { estado: 'BAJA' });
   await request(app.getHttpServer()).get('/tenant/context').set('Authorization', 'Bearer ' + token(adminB)).expect(403);
   await request(app.getHttpServer()).post('/auth/login').send({ identifier: user.email, password: 'admin-changed-pass' }).expect(401);
   await ds.getRepository(Empresa).update(b.empresaId, { estado: 'ACTIVA' });
@@ -844,4 +863,42 @@ test('sockets autenticados: eventos solo a su playa y revocación de acceso efec
   } finally {
     connections.forEach((s) => s.disconnect());
   }
+});
+
+test('empresa suspendida: entra, ve su plan y saca autos; no registra entradas ni configura. De baja no entra', async () => {
+  const empresa = await ds.getRepository(Empresa).save({ nombre: 'Empresa suspendida' });
+  const playa = await ds.getRepository(Playa).save({ nombre: 'S1', empresaId: empresa.id });
+  const admin = await ds.getRepository(User).save({ username: 'adminSusp', email: 'susp@example.test', firstName: 'S', lastName: 'Admin', role: 'ADMIN', empresaId: empresa.id });
+  await ds.query(`INSERT INTO suscripciones ("empresaId", "pruebaHasta", "motivoSuspension", "suspendidaEl") VALUES ($1, CURRENT_DATE - 20, 'FALTA_DE_PAGO', now())`, [empresa.id]);
+  await ds.getRepository(Empresa).update(empresa.id, { estado: 'SUSPENDIDA' });
+  const http = (method, route) => request(app.getHttpServer())[method](route).set('Authorization', 'Bearer ' + token(admin)).set('X-Playa-Id', playa.id);
+
+  const contexto = await http('get', '/tenant/context').expect(200);
+  assert.equal(contexto.body.cuenta.estado, 'SUSPENDIDA');
+  assert.equal(contexto.body.cuenta.motivoSuspension, 'FALTA_DE_PAGO');
+  // El aviso del menú dice el importe sin abrir Mi plan (acá no tiene plan: 0).
+  assert.equal(contexto.body.cuenta.aPagar, 0);
+  const plan = await http('get', '/mi-plan').expect(200);
+  assert.equal(plan.body.cuenta.estado, 'SUSPENDIDA');
+  assert.equal(plan.body.mercadoPago, false, 'sin token de la plataforma no se ofrece MercadoPago');
+  // Puede pagar para volver (acá no tiene nada que pagar: no tiene plan), pero no activar el
+  // débito automático con deuda.
+  const pagar = await http('post', '/mi-plan/pagar').send({}).expect(400);
+  assert.match(pagar.body.message, /nada para pagar/);
+  await http('post', '/mi-plan/verificar').send({}).expect(201);
+  const debito = await http('post', '/mi-plan/debito').send({ email: 'susp@example.test' }).expect(403);
+  assert.equal(debito.body.code, 'EMPRESA_SUSPENDIDA');
+  await http('get', '/tickets/registrations/active/search?q=AB1').expect(200);
+  const entrada = await http('post', '/tickets/registrations/by-plate').send({ licensePlate: 'AB123CD', vehicleType: 'AUTO' }).expect(403);
+  assert.equal(entrada.body.code, 'EMPRESA_SUSPENDIDA');
+  const config = await http('patch', '/TICKETS/schedule-settings/').send({}).expect(403);
+  assert.equal(config.body.code, 'EMPRESA_SUSPENDIDA');
+  // El rol de la empresa solo lee su cuenta: no puede cambiar su vencimiento.
+  await assert.rejects(
+    scoped({ empresaId: empresa.id, playaId: playa.id, userId: admin.id }, () => ds.query(`UPDATE suscripciones SET "pagadoHasta" = CURRENT_DATE + 365`)),
+    /permission denied/,
+  );
+
+  await ds.getRepository(Empresa).update(empresa.id, { estado: 'BAJA' });
+  await http('get', '/tenant/context').expect(403);
 });

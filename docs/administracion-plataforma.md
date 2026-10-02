@@ -51,7 +51,8 @@ En este proyecto se asignaron a Estacionamiento Calle Mitre / Playa Mitre 1543.
 Las contraseñas, importes, tickets y recibos históricos se conservan.
 
 Las bajas de usuarios son lógicas en plataforma. Empresas con historial no se borran.
-Los estados/planes SaaS no implementan facturación automática. ADMIN todavía no tiene
+Planes, vencimientos, suspensión por falta de pago y registro de pagos: ver `docs/planes-y-cuentas.md`
+(el cobro automático con MercadoPago de la plataforma todavía no está). ADMIN todavía no tiene
 un formulario para crear playas; SUPER_ADMIN lo hace desde la administración.
 
 ## Pruebas

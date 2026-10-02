@@ -243,3 +243,21 @@ test('offline sin configuracion guardada: sincroniza con tarifas y bloquea si ac
     await ds.getRepository(Empresa).delete(empresa.id);
   }
 });
+
+test('alta de empresa: la prueba gratis es opcional', async () => {
+  const sin = (await call('post', 'empresas').send({ nombre: 'Alta sin prueba' }).expect(201)).body;
+  assert.equal((await call('get', `empresas/${sin.id}/suscripcion`).expect(200)).body.cuenta.estado, 'SIN_ACTIVAR');
+  const con = (await call('post', 'empresas').send({ nombre: 'Alta con prueba', diasPrueba: 7 }).expect(201)).body;
+  assert.equal((await call('get', `empresas/${con.id}/suscripcion`).expect(200)).body.cuenta.estado, 'PRUEBA');
+  await call('post', 'empresas').send({ nombre: 'Prueba de más', diasPrueba: 90 }).expect(400);
+  await call('patch', `empresas/${sin.id}`).send({ diasPrueba: 7 }).expect(400);
+  // El alta se da después, desde la ficha, sin plan: fecha de alta y días de prueba.
+  const hoy = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).format(new Date());
+  const dada = (await call('post', `empresas/${sin.id}/suscripcion/alta`).send({ alta: hoy, diasPrueba: 7 }).expect(201)).body;
+  assert.equal(dada.cuenta.estado, 'PRUEBA');
+  assert.equal(dada.cuenta.alta, hoy);
+  // Días extra piden motivo, y solo el super admin puede.
+  await call('post', `empresas/${sin.id}/suscripcion/dias-extra`).send({ hasta: '2099-01-01' }).expect(400);
+  await call('post', `empresas/${sin.id}/suscripcion/dias-extra`, adminUser).send({ hasta: hoy, motivo: 'intento' }).expect(403);
+  await call('patch', `empresas/${sin.id}/suscripcion`).send({ alta: 'ayer' }).expect(400);
+});
