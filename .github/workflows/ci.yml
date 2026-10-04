@@ -63,10 +63,14 @@ jobs:
       - run: pnpm build
       # Cada suite levanta su propio cluster temporal con initdb/pg_ctl: el runner trae PostgreSQL
       # instalado (con el servicio apagado), solo hay que decirles dónde están los binarios.
-      - name: Ubicar binarios de PostgreSQL
+      # Los binarios de Ubuntu además abren su socket en /var/run/postgresql, que es del usuario
+      # postgres: sin permiso de escritura ahí, pg_ctl start falla (en Windows no pasa: usa solo TCP).
+      - name: Preparar PostgreSQL
         run: |
           bin=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)
           test -x "$bin/initdb" && test -x "$bin/pg_ctl"
           "$bin/postgres" --version
           echo "PG_TEST_BIN=$bin" >> "$GITHUB_ENV"
+          sudo mkdir -p /var/run/postgresql
+          sudo chmod a+w /var/run/postgresql
       - run: pnpm test:integration
