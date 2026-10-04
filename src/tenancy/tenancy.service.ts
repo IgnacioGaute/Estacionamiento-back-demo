@@ -297,6 +297,9 @@ export class TenancyService {
     const entidades = this.dataSource.entityMetadatas.filter(
       (meta) =>
         meta.target !== UsuarioPlaya &&
+        // La auditoría tampoco es operación: crear o renombrar la playa ya deja filas, y contarlas
+        // hacía imposible borrar cualquier playa. Se conserva (no tiene FK a playas) como historial.
+        meta.target !== AuditLog &&
         meta.tableName !== 'ticket_vehicle_types' &&
         // El plan de la playa es configuración, no operación: se borra con ella (ON DELETE CASCADE).
         meta.tableName !== 'suscripcion_playas' &&
