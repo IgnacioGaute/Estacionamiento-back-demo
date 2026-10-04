@@ -6,7 +6,6 @@ import { Customer } from './entities/customer.entity';
 import { ReceiptsModule } from 'src/receipts/receipts.module';
 import { Receipt } from 'src/receipts/entities/receipt.entity';
 import { InterestSettings } from './entities/interest-setting.entity';
-import { NotificationGateway } from 'src/notes/notification-gateway';
 import { NotificationInterestGateway } from './notification-interest-gateway';
 import { ParkingModule } from 'src/parking/parking.module';
 import { CuentasModule } from 'src/cuentas/cuentas.module';

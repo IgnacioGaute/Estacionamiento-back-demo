@@ -1,6 +1,4 @@
 
-import { Receipt } from 'src/receipts/entities/receipt.entity';
-import { TicketRegistration } from 'src/tickets/entities/ticket-registration.entity';
 import {
   Column,
   Entity,

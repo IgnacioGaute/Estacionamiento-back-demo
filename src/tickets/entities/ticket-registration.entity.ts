@@ -12,7 +12,7 @@ import {
 } from 'typeorm';
 import { Playa } from 'src/tenancy/entities/playa.entity';
 import { Ticket } from './ticket.entity';
-import { TICKET_TYPE, TicketType } from './ticket.constants';
+import { TicketType } from './ticket.constants';
 import { BoxList } from 'src/box-lists/entities/box-list.entity';
 import { PricingSnapshot, PricingDayType, PricingLine } from '../pricing/pricing.types';
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';

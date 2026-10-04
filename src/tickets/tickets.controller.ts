@@ -25,7 +25,6 @@ import { TicketPriceBracket } from './entities/ticket-price-bracket.entity';
 import { CreateTicketPriceBracketDto } from './dto/create-ticket-price-bracket.dto';
 import { UpdateTicketPriceBracketDto } from './dto/update-ticket-price-bracket.dto';
 import { AdvancePaymentTicketRegistrationDto } from './dto/advance-payment-ticket-registration.dto';
-import { TicketRegistrationForDay } from './entities/ticket-registration-for-day.entity';
 import { UpdateTicketScheduleDto } from './dto/update-ticket-schedule.dto';
 import { CreateTicketRegistrationForDayDto, UpdateTicketStatusDto } from './dto/create-ticket-registration-for-day.dto';
 

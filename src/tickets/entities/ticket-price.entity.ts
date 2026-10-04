@@ -7,7 +7,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Playa } from 'src/tenancy/entities/playa.entity';
-import { TICKET_DAY_TYPE, TicketDayType, VEHICLE_TYPE, VehicleType, TICKET_TIME_TYPE, TicketTimeType } from './ticket.constants';
+import { TICKET_DAY_TYPE, TicketDayType, VehicleType, TICKET_TIME_TYPE, TicketTimeType } from './ticket.constants';
 export { VEHICLE_TYPE, VehicleType, TICKET_TIME_TYPE, TicketTimeType } from './ticket.constants';
 
 @Entity({ name: 'tickets-price' })

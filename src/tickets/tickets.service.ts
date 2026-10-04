@@ -6,7 +6,7 @@ import { defaultPricingOptions, PricingOptions } from './pricing/pricing.types';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { tenantContext } from 'src/tenancy/tenant-context';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, In, IsNull, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { Ticket } from './entities/ticket.entity';
 import { TicketRegistration } from './entities/ticket-registration.entity';
 import { CreateTicketDto } from './dto/create-ticket.dto';
@@ -30,14 +30,13 @@ import { UpdateTicketPriceBracketDto } from './dto/update-ticket-price-bracket.d
 import { AdvancePaymentTicketRegistrationDto } from './dto/advance-payment-ticket-registration.dto';
 import { TicketScheduleSettings } from './entities/ticket-schedule-settings.entity';
 import { UpdateTicketScheduleDto } from './dto/update-ticket-schedule.dto';
-import { TicketDayType } from './entities/ticket.entity';
 import { MovimientosService } from 'src/movimientos/movimientos.service';
 import { MovimientoMetodo } from 'src/movimientos/entities/movimiento.entity';
 import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate.dto';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
 import { normalizePlate, toSearchKey } from './utils/license-plate.util';
 import { Brackets } from 'typeorm';
-import { calculatePrice, resolveDayType, selectBrackets, validateBracket } from './pricing/pricing';
+import { resolveDayType, validateBracket } from './pricing/pricing';
 import { PricingSnapshot } from './pricing/pricing.types';
 import { CreateTicketRegistrationForDayDto, UpdateTicketStatusDto } from './dto/create-ticket-registration-for-day.dto';
 

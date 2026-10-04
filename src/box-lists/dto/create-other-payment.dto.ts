@@ -1,4 +1,4 @@
-import { IsArray, IsDate, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Matches, Min } from "class-validator"
+import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from "class-validator"
 import { PAYMENT_METHOD, PAYMENT_TYPE, PaymentMethod, PaymentType } from "../entities/other-payment.entity";
 
 export class CreateOtherPaymentDto {

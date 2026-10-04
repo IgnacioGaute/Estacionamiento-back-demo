@@ -2,22 +2,17 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, DataSource, ILike, In, QueryFailedError, Repository } from 'typeorm';
+import { DataSource, ILike, Repository } from 'typeorm';
 import { Customer, CustomerType } from './entities/customer.entity';
 import { ReceiptsService } from 'src/receipts/receipts.service';
-import { addMonths, startOfMonth } from 'date-fns';
 import { PaymentStatusType, Receipt } from 'src/receipts/entities/receipt.entity';
 import { InterestSettings } from './entities/interest-setting.entity';
 import { CreateInterestSettingDto } from './dto/interest-setting.dto';
-import { Cron } from '@nestjs/schedule';
-import { isUUID } from 'class-validator';
 
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import isBetween from 'dayjs/plugin/isBetween';
-import { NotificationGateway } from 'src/notes/notification-gateway';
-import { v4 as uuidv4 } from 'uuid';
 import { NotificationInterestGateway } from './notification-interest-gateway';
 import { ParkingOwnersService } from 'src/parking/parking-owners.service';
 import { ParkingRentersService } from 'src/parking/parking-renters.service';

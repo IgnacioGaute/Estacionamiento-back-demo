@@ -5,13 +5,11 @@ import {
   Index,
   JoinColumn,
   ManyToOne,
-  OneToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Playa } from 'src/tenancy/entities/playa.entity';
 import { BoxList } from 'src/box-lists/entities/box-list.entity';
 import { TICKET_TIME_TYPE, TicketTimeType } from './ticket.constants';
-import { TICKET_TYPE } from './ticket.constants';
 
 @Entity({ name: 'ticket_registration_for_days' })
 export class TicketRegistrationForDay {

@@ -732,7 +732,7 @@ test('telefono: primera entrada figura en frecuentes, normaliza, recupera contac
   await http('post', '/tickets/registrations/by-plate').send({ licensePlate: 'PHONE1', vehicleType: 'AUTO', phoneCustomer: 'not a phone' }).expect(400);
   const entry = await http('post', '/tickets/registrations/by-plate').send({ licensePlate: 'PHONE1', vehicleType: 'AUTO', phoneCustomer: '+54 9 (11) 1234-5678' }).expect(201);
   assert.equal(entry.body.phoneCustomer, '5491112345678');
-  let customers = (await http('get', '/tickets/registrations/frequent?minVisits=2').expect(200)).body;
+  let customers = (await http('get', '/tickets/registrations/frequent?minVisits=2').expect(200)).body.data;
   const contact = customers.find(row => row.licensePlateNormalized === 'PHONE1');
   assert.ok(contact);
   assert.equal(contact.visits, 1);
@@ -748,7 +748,7 @@ test('telefono: primera entrada figura en frecuentes, normaliza, recupera contac
   assert.ok(!JSON.stringify(publicReceipt.body).includes('5491112345678'));
   await ds.getRepository(Registration).update(entry.body.id, { departureDay: '2026-09-23', departureTime: '15:00:00' });
   await http('post', '/tickets/registrations/by-plate').send({ licensePlate: 'PHONE1', vehicleType: 'AUTO', phoneCustomer: '+54 9 11 1111 1111' }).expect(201);
-  customers = (await http('get', '/tickets/registrations/frequent?minVisits=2').expect(200)).body;
+  customers = (await http('get', '/tickets/registrations/frequent?minVisits=2').expect(200)).body.data;
   assert.equal(customers.find(row => row.licensePlateNormalized === 'PHONE1').phoneCustomer, '5491111111111');
 });
 
@@ -816,9 +816,7 @@ test('login limita intentos repetidos', async () => {
 });
 
 test('sockets autenticados: eventos solo a su playa y revocación de acceso efectiva', async () => {
-  const {
-    io,
-  } = require('../../estacionamiento-front-demo/node_modules/socket.io-client');
+  const { io } = require('socket.io-client');
   const gateway = app.get(load('tickets/register-gateway', 'TicketGateway'));
   const url = await app.getUrl();
   const connections = [];

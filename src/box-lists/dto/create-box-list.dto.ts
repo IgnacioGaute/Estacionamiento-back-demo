@@ -1,4 +1,4 @@
-import { IsArray, IsDate, IsNumber, IsOptional, IsString, Matches } from "class-validator"
+import { IsNumber, IsOptional, IsString } from "class-validator"
 
 export class CreateBoxListDto {
 

@@ -13,14 +13,22 @@ pnpm start:debug          # watch mode + node inspector
 pnpm build                # compile (nest build)
 pnpm start:prod           # run compiled output (node dist/main)
 pnpm lint                 # eslint --fix over {src,apps,libs,test}/**/*.ts
-pnpm format               # prettier --write src/test
+pnpm lint:ci              # eslint without --fix, zero warnings (what CI runs)
+pnpm typecheck            # tsc -p tsconfig.json --noEmit (src + specs + test/; the build config skips specs)
+pnpm format               # prettier --write src/test (formatting is NOT part of lint or CI)
 pnpm test                 # jest unit tests (rootDir: src, matches *.spec.ts)
-pnpm test:cov             # jest with coverage
-pnpm exec tsc -p tsconfig.build.json --incremental false   # typecheck only
+pnpm test:ci              # jest --ci --coverage
+pnpm test:integration     # node --test over the self-contained test/*.cjs (needs dist/)
 ```
 
-Jest unit tests cover only the pricing engines (`src/tickets/pricing/*.spec.ts`). Run one file with
-`pnpm exec jest --runInBand pricing.spec.ts` (or `stay-pricing.spec.ts`), a single case with `-t "<name>"`.
+ESLint is flat config (`eslint.config.mjs`, same rules as the old `plugin:@typescript-eslint/recommended`);
+unused parameters/variables are allowed only with a `_` prefix.
+
+Jest specs sit next to the code as `*.spec.ts` and test logic without a database: pure functions
+(`pricing.spec.ts`, `estado-cuenta.spec.ts`, `license-plate.util.spec.ts`) or services with mocked repositories and
+`dataSource.transaction` (`turnos.service.spec.ts`, `offline-shift.spec.ts`). ts-jest runs with `isolatedModules`
+(transpile only, ~5 s for the suite) — type errors are caught by `pnpm typecheck`, not by Jest. Run one file with
+`pnpm test pricing.spec.ts`, a single case with `pnpm test -- -t "<name>"` (pnpm 9 swallows a bare `-t`).
 
 The real coverage lives in `test/*.cjs`, run with `node --test` **after `pnpm build`** (they load from `dist/`):
 
@@ -29,14 +37,21 @@ node --test test/tickets.integration.cjs          # pricing, cierre, caja, turno
 node --test test/tenancy.integration.cjs          # empresa/playa scoping
 node --test test/tenant-isolation.integration.cjs # RLS, permisos, comprobantes públicos, empresa suspendida
 node --test test/suscripciones.integration.cjs    # planes, vencimientos, suspensión, pagos de la plataforma
+node --test test/cuentas.integration.cjs test/tariff-plan.integration.cjs
 node --test test/assistant.test.cjs test/gemini-request.test.cjs test/image-signature.test.cjs
 ```
 
-The three `*.integration.cjs` create and remove an isolated temporary PostgreSQL cluster and never read `.env`.
-Set `PG_TEST_BIN` if PostgreSQL binaries are not in `C:/Program Files/PostgreSQL/18/bin`.
-Two puppeteer tests read **sibling repos** and fail without them: `test/receipt-mobile-layout.test.cjs` needs
-`../estacionamiento-front-demo` and `test/parking-receipt-export.test.cjs` needs
+The `*.integration.cjs` create and remove an isolated temporary PostgreSQL cluster and never read `.env`.
+Set `PG_TEST_BIN` if PostgreSQL binaries are not in `C:/Program Files/PostgreSQL/18/bin`. A new self-contained
+test file must also be added to `test:integration` in `package.json`, or CI never runs it.
+The other `test/*.cjs` (puppeteer and UI tests) read **sibling repos** and fail without them, so CI does not run
+them: `receipt-mobile-layout`, `receipt-history-panel`, `assistant-message-render`, `tariff-editor-rules`,
+`pwa-offline` and `admin-*.ui` need `../estacionamiento-front-demo`, and `parking-receipt-export` needs
 `../estacionamiento-comprobantes-demo` (both with `node_modules` installed).
+
+**CI/CD.** `.github/workflows/ci.yml` runs on every push to `main` and every PR: one job does typecheck, lint,
+Jest and build; another builds and runs `test:integration` against the runner's preinstalled PostgreSQL. Railway
+deploys `main` itself; with «Wait for CI» enabled on the service it only deploys a green commit.
 
 Requires a Postgres database. `docker-compose.yaml` provides one (postgres:16.2, published on host port **5430**,
 db/user/password `estacionamiento_demo`/`admin`/`admin`). Env vars read at boot: `PORT` (default 3030),
@@ -128,6 +143,9 @@ Consequences for new code:
   - allows role `USER` only the handlers listed in `src/tenancy/endpoint-policy.ts`.
 - `OPERATOR_ENDPOINTS` is an allowlist keyed by **controller class + handler name** (not URL spelling, so casing
   or a trailing slash cannot bypass it). A new handler is administrator-only until it is added there.
+  `endpoint-policy.spec.ts` fails if a name in `OPERATOR_ENDPOINTS`/`SUSPENDED_ENDPOINTS` is not a real method of
+  that controller (a rename would otherwise surface as 403s in production); `tenant-access.spec.ts` covers the
+  guard's decisions per role and empresa state.
 - Endpoints that write money still need a real user on top of all this:
   `if (!req.user?.userId) throw new UnauthorizedException(...)` (see `TicketsController.closeRegistrationByPlate`,
   `requireUserId` in `TurnosController`) — `Movimiento.usuario` is not nullable.

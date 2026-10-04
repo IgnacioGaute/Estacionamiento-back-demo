@@ -1,4 +1,4 @@
-import { Body, Param, Patch, BadRequestException } from '@nestjs/common';
+import { Body, Param, Patch } from '@nestjs/common';
 import { IsUUID } from 'class-validator';
 import {
   CallHandler,

@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString } from "class-validator";
+import { IsBoolean, IsEnum, IsOptional, IsString } from "class-validator";
 import { PAYMENT_TYPE, PaymentType } from "src/receipts/entities/receipt.entity";
 
 export class ScannerDto {

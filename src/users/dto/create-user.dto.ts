@@ -4,7 +4,7 @@ import {
     IsOptional,
     IsString, IsEmail, MinLength, MaxLength
   } from 'class-validator';
-  import { USER_ROLES, UserRole } from 'src/users/entities/user.entity';
+  import { UserRole } from 'src/users/entities/user.entity';
 
   export class CreateUserDto {
     @IsString()

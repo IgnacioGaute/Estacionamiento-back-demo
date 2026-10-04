@@ -1,7 +1,7 @@
 import { Matches } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
-import { TICKET_TYPE, TicketType } from '../entities/ticket.entity';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { TicketType } from '../entities/ticket.entity';
 
 export class CreateRegistrationByPlateDto {
   @IsOptional()

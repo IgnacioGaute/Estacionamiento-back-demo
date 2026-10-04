@@ -1,9 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, MoreThan, Not, Raw, Repository } from 'typeorm';
+import { DataSource, EntityManager, Raw, Repository } from 'typeorm';
 import { BoxListsService } from 'src/box-lists/box-lists.service';
 import { BoxList } from 'src/box-lists/entities/box-list.entity';
-import { addMonths, startOfMonth } from 'date-fns';
 import { Customer, CustomerType } from 'src/customers/entities/customer.entity';
 import { RenterParkingType } from 'src/parking/entities/renter-parking-type.entity';
 import { Receipt, TipoCargo } from './entities/receipt.entity';
@@ -13,7 +12,6 @@ import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import isBetween from 'dayjs/plugin/isBetween'; 
-import { LessThan } from "typeorm";
 import { ReceiptPayment } from './entities/receipt-payment.entity';
 import { PaymentHistoryOnAccount } from './entities/payment-history-on-account.entity';
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
@@ -227,7 +225,7 @@ async updateReceipt(
   // =========================================================
   // ✅ Helper: logs SOLO para PRIVATE
   // =========================================================
-  const logPrivate = (customer: any, message: string, data?: any) => {
+  const logPrivate = (customer: any, message: string, _data?: any) => {
     if (customer?.customerType !== "PRIVATE") return;
 
     this.logger.debug(`[updateReceipt:PRIVATE] ${message}`);
@@ -430,7 +428,6 @@ async updateReceipt(
     const argentinaTime = dayjs().tz("America/Argentina/Buenos_Aires").startOf("day");
     const now = argentinaTime.format("YYYY-MM-DD");
 
-    const tz = "America/Argentina/Buenos_Aires";
     // ✅ robusto: siempre toma el mes del receipt como YYYY-MM y construye el límite
     const privateReceiptMonth = dayjs(receipt.startDate).format("YYYY-MM"); // sin tz
     const privateNextMonthStartStr = dayjs(`${privateReceiptMonth}-01`)
@@ -898,7 +895,7 @@ async cancelReceipt(receiptId: string, customerId: string) {
       throw new BadRequestException("El recibo no tiene paymentDate, no se puede cancelar.");
     }
 
-    let boxList = await this.boxListsService.findBoxByDate(receiptDate, queryRunner.manager);
+    const boxList = await this.boxListsService.findBoxByDate(receiptDate, queryRunner.manager);
     if (!boxList) throw new NotFoundException("Box list not found");
 
     // =========================================================

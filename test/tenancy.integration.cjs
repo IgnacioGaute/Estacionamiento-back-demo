@@ -220,6 +220,7 @@ test('offline sin configuracion guardada: sincroniza con tarifas y bloquea si ac
   const now = new Date();
   const deviceId = randomUUID();
   const registrationId = randomUUID();
+  const secondId = randomUUID();
   const service = new OfflineService(ds, undefined, undefined, undefined, { emitNewRegistration() {} });
   const session = await ds.getRepository(OfflineSession).save({ playaId: playa.id, userId: adminUser.id, deviceId,
     active: true, createdAt: now, expiresAt: new Date(now.getTime() + 3600000), processed: {},
@@ -233,10 +234,17 @@ test('offline sin configuracion guardada: sincroniza con tarifas y bloquea si ac
       assert.equal(synced.status, 'SYNCED');
       assert.equal(synced.registrationId, registrationId);
       settings = await ds.getRepository(Schedule).save({ playaId: playa.id, dayStartHour: 8, dayEndHour: 20, shiftsEnabled: true });
-      await assert.rejects(service.synchronize({ ...operation, id: randomUUID(), registrationId: randomUUID(), plate: 'DEFAULT2' }), /turnos fueron activados/);
+      // Un ingreso no mueve plata: se sincroniza igual. Lo que se frena es cobrar una salida en una
+      // contingencia que empezó sin turnos, porque no habría a qué turno imputar el efectivo.
+      const second = await service.synchronize({ ...operation, id: randomUUID(), registrationId: secondId, plate: 'DEFAULT2' });
+      assert.equal(second.status, 'SYNCED');
+      await assert.rejects(
+        service.synchronize({ deviceId, sessionId: session.id, id: randomUUID(), registrationId, kind: 'EXIT', occurredAt: now.toISOString(), expectedPrice: 1000, expectedCollected: 0, method: 'CASH' }),
+        /turnos se activaron durante esta contingencia/,
+      );
     });
   } finally {
-    await ds.getRepository(Registration).delete(registrationId);
+    await ds.getRepository(Registration).delete([registrationId, secondId]);
     await ds.getRepository(OfflineSession).delete(session.id);
     if (settings) await ds.getRepository(Schedule).delete(settings.id);
     await ds.getRepository(Playa).delete(playa.id);

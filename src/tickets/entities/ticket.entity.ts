@@ -9,9 +9,8 @@ import {
 } from 'typeorm';
 import { Playa } from 'src/tenancy/entities/playa.entity';
 import { TicketRegistration } from './ticket-registration.entity';
-import { TicketPrice } from './ticket-price.entity';
 
-import { TICKET_TYPE, TICKET_DAY_TYPE } from './ticket.constants';
+import { TICKET_DAY_TYPE } from './ticket.constants';
 export { TICKET_TYPE, TICKET_DAY_TYPE, TicketType, TicketDayType } from './ticket.constants';
 
 // Las tarjetas son físicas y de una playa: el mismo código puede existir en dos playas.

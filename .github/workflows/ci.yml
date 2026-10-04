@@ -1,0 +1,72 @@
+# CI del backend. Corre en cada push a main y en cada pull request.
+#
+# El deploy (CD) no está acá: Railway despliega main por su cuenta. Con «Wait for CI» activado en el
+# servicio de Railway, espera a que este workflow termine en verde y, si falla, no despliega.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Un push nuevo a la misma rama cancela la corrida anterior.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Ningún test de este workflow abre un navegador; sin esto pnpm install baja Chromium (~150 MB).
+  PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+jobs:
+  verificar:
+    name: Tipos, lint, unitarios y build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4 # toma la versión de "packageManager" en package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint:ci
+      - run: pnpm test:ci
+      - run: pnpm build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cobertura-unitarios
+          path: coverage/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  integracion:
+    name: Integración (PostgreSQL real)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Los tests de integración cargan las clases compiladas desde dist/.
+      - run: pnpm build
+      # Cada suite levanta su propio cluster temporal con initdb/pg_ctl: el runner trae PostgreSQL
+      # instalado (con el servicio apagado), solo hay que decirles dónde están los binarios.
+      - name: Ubicar binarios de PostgreSQL
+        run: |
+          bin=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)
+          test -x "$bin/initdb" && test -x "$bin/pg_ctl"
+          "$bin/postgres" --version
+          echo "PG_TEST_BIN=$bin" >> "$GITHUB_ENV"
+      - run: pnpm test:integration

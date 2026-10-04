@@ -1,6 +1,6 @@
 import { Matches } from 'class-validator';
-import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from "class-validator";
-import { TICKET_TIME_TYPE, TicketTimeType, VEHICLE_TYPE, VehicleType } from "../entities/ticket-price.entity";
+import { IsEnum, IsNumber, IsOptional } from "class-validator";
+import { TICKET_TIME_TYPE, TicketTimeType, VehicleType } from "../entities/ticket-price.entity";
 import { TICKET_DAY_TYPE, TicketDayType } from "../entities/ticket.entity";
 
 export class CreateTicketPriceDto {

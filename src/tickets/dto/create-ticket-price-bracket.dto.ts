@@ -1,6 +1,6 @@
 import { Matches } from 'class-validator';
 import { IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
-import { TICKET_DAY_TYPE, TicketDayType, TICKET_TYPE, TicketType } from '../entities/ticket.entity';
+import { TICKET_DAY_TYPE, TicketDayType, TicketType } from '../entities/ticket.entity';
 
 export class CreateTicketPriceBracketDto {
   @Matches(/^[A-Z][A-Z0-9_]{0,31}$/)

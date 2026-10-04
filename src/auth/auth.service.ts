@@ -13,8 +13,6 @@ import { Repository } from 'typeorm';
 import { LoginUserDto } from './dto/login-user';
 import { CreatePasswordResetTokenDto } from './dto/create-password-reset-token.dto';
 import { CreateVerificationTokenDto } from './dto/create-verification-token.dto';
-import { UsersService } from 'src/users/users.service';
-import { CustomUnauthorizedException } from 'src/libs/helpers/custom-excepcions';
 import * as crypto from 'crypto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { limitLogin } from './login-limiter';
@@ -75,7 +73,7 @@ export class AuthService {
         if (estado !== 'ACTIVA' && estado !== 'SUSPENDIDA') throw new UnauthorizedException('La cuenta no tiene acceso a una empresa activa.');
       }
 
-      const { password, ...userWithoutPassword } = user; // eslint-disable-line
+      const { password, ...userWithoutPassword } = user;
 
       return userWithoutPassword as User;
     } catch (error: any) {

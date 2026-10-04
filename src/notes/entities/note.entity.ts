@@ -5,11 +5,9 @@ import {
   Index,
   JoinColumn,
   ManyToOne,
-  OneToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Playa } from 'src/tenancy/entities/playa.entity';
-import { BoxList } from 'src/box-lists/entities/box-list.entity';
 import { User } from 'src/users/entities/user.entity';
 
 @Entity({ name: 'notes' })

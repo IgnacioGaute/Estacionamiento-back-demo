@@ -1,6 +1,6 @@
 import { Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 import { Playa } from 'src/tenancy/entities/playa.entity';
-import { TICKET_DAY_TYPE, TicketDayType, TICKET_TYPE, TicketType } from './ticket.constants';
+import { TICKET_DAY_TYPE, TicketDayType, TicketType } from './ticket.constants';
 
 @Entity({ name: 'ticket_price_brackets' })
 export class TicketPriceBracket {

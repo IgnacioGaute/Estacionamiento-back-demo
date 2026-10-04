@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { CreateBoxListDto } from './dto/create-box-list.dto';
 import { UpdateBoxListDto } from './dto/update-box-list.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, DataSource, EntityManager, In, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { BoxList } from './entities/box-list.entity';
 import { CreateOtherPaymentDto } from './dto/create-other-payment.dto';
 import { OtherPayment } from './entities/other-payment.entity';

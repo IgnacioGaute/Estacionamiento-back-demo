@@ -15,7 +15,11 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "lint:ci": "eslint \"{src,test}/**/*.ts\" --max-warnings 0",
+    "typecheck": "tsc -p tsconfig.json --noEmit --incremental false",
     "test": "jest",
+    "test:ci": "jest --ci --coverage",
+    "test:integration": "node --test --test-concurrency=1 test/tickets.integration.cjs test/tenancy.integration.cjs test/tenant-isolation.integration.cjs test/suscripciones.integration.cjs test/cuentas.integration.cjs test/tariff-plan.integration.cjs test/assistant.test.cjs test/gemini-request.test.cjs test/image-signature.test.cjs",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
@@ -68,10 +72,9 @@
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "eslint": "^9.0.0",
-    "eslint-config-prettier": "^9.0.0",
-    "eslint-plugin-prettier": "^5.0.0",
     "jest": "^29.5.0",
     "prettier": "^3.0.0",
+    "socket.io-client": "^4.8.3",
     "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",
     "ts-jest": "^29.1.0",
@@ -105,10 +108,20 @@
     },
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.(t|j)s$": [
+        "ts-jest",
+        {
+          "isolatedModules": true
+        }
+      ]
     },
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "**/*.(t|j)s",
+      "!**/*.module.ts",
+      "!**/*.entity.ts",
+      "!**/dto/**",
+      "!**/database/migrations/**",
+      "!main.ts"
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
