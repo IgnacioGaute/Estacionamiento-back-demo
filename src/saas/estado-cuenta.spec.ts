@@ -51,13 +51,19 @@ describe('Estado de la cuenta con la plataforma', () => {
   });
 
   test('con débito automático la gracia es de diez días', () => {
-    const s = situacionDeCuenta(cuenta({ pagadoHasta: '2026-04-30', conDebito: true }), '2026-05-08');
+    const s = situacionDeCuenta(
+      cuenta({ pagadoHasta: '2026-04-30', conDebito: true }),
+      '2026-05-08',
+    );
     expect(s.diasDeGracia).toBe(10);
     expect(s.debeSuspenderse).toBe(false);
   });
 
   test('los días extra corren el corte, no el vencimiento', () => {
-    const s = situacionDeCuenta(cuenta({ pagadoHasta: '2026-04-30', prorrogaHasta: '2026-05-20' }), '2026-05-15');
+    const s = situacionDeCuenta(
+      cuenta({ pagadoHasta: '2026-04-30', prorrogaHasta: '2026-05-20' }),
+      '2026-05-15',
+    );
     expect(s.proximoVencimiento).toBe('2026-05-01');
     expect(s.diasDeAtraso).toBe(14);
     expect(s.debeSuspenderse).toBe(false);
@@ -65,29 +71,60 @@ describe('Estado de la cuenta con la plataforma', () => {
   });
 
   test('bonificada no vence ni acumula atraso', () => {
-    const s = situacionDeCuenta(cuenta({ bonificada: true, pagadoHasta: '2026-01-31' }), '2026-06-01');
+    const s = situacionDeCuenta(
+      cuenta({ bonificada: true, pagadoHasta: '2026-01-31' }),
+      '2026-06-01',
+    );
     expect(s.estado).toBe('BONIFICADA');
     expect(s.diasDeAtraso).toBe(0);
-    expect(correspondeFactura(cuenta({ bonificada: true, pagadoHasta: '2026-01-31' }), '2026-06-01')).toBe(false);
+    expect(
+      correspondeFactura(
+        cuenta({ bonificada: true, pagadoHasta: '2026-01-31' }),
+        '2026-06-01',
+      ),
+    ).toBe(false);
   });
 
   test('el estado de la empresa manda sobre las fechas', () => {
-    expect(situacionDeCuenta(cuenta({ empresaEstado: 'SUSPENDIDA', pagadoHasta: '2026-12-31' }), '2026-06-01').estado).toBe('SUSPENDIDA');
-    expect(situacionDeCuenta(cuenta({ empresaEstado: 'BAJA', pagadoHasta: '2026-12-31' }), '2026-06-01').estado).toBe('BAJA');
+    expect(
+      situacionDeCuenta(
+        cuenta({ empresaEstado: 'SUSPENDIDA', pagadoHasta: '2026-12-31' }),
+        '2026-06-01',
+      ).estado,
+    ).toBe('SUSPENDIDA');
+    expect(
+      situacionDeCuenta(
+        cuenta({ empresaEstado: 'BAJA', pagadoHasta: '2026-12-31' }),
+        '2026-06-01',
+      ).estado,
+    ).toBe('BAJA');
   });
 
   test.each([
     ['2026-01-31', '2026-02-28'],
     ['2026-02-28', '2026-03-31'],
     ['2026-01-15', '2026-02-15'],
-  ])('un mes después de %p es %p (el fin de mes sigue siendo fin de mes)', (desde, hasta) => {
-    expect(sumarMeses(desde, 1)).toBe(hasta);
-  });
+  ])(
+    'un mes después de %p es %p (el fin de mes sigue siendo fin de mes)',
+    (desde, hasta) => {
+      expect(sumarMeses(desde, 1)).toBe(hasta);
+    },
+  );
 
   test('un pago atrasado sigue desde el vencimiento; cortada por falta de pago arranca el día del pago', () => {
     const atrasada = cuenta({ pagadoHasta: '2026-04-30' });
-    expect(periodoDelPago(atrasada, 1, '2026-05-04')).toEqual({ desde: '2026-05-01', hasta: '2026-05-31' });
-    const cortada = cuenta({ pagadoHasta: '2026-04-30', empresaEstado: 'SUSPENDIDA', motivoSuspension: 'FALTA_DE_PAGO' });
-    expect(periodoDelPago(cortada, 1, '2026-06-10')).toEqual({ desde: '2026-06-10', hasta: '2026-07-09' });
+    expect(periodoDelPago(atrasada, 1, '2026-05-04')).toEqual({
+      desde: '2026-05-01',
+      hasta: '2026-05-31',
+    });
+    const cortada = cuenta({
+      pagadoHasta: '2026-04-30',
+      empresaEstado: 'SUSPENDIDA',
+      motivoSuspension: 'FALTA_DE_PAGO',
+    });
+    expect(periodoDelPago(cortada, 1, '2026-06-10')).toEqual({
+      desde: '2026-06-10',
+      hasta: '2026-07-09',
+    });
   });
 });

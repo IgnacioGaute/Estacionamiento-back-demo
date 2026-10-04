@@ -182,6 +182,9 @@ export class TenantGuard implements CanActivate {
     // no le cree nada al aviso (solo usa el id para consultar a MercadoPago con el token propio).
     if (controller === 'AvisoMercadoPagoController' && handler === 'aviso')
       return true;
+    // La lista de precios que muestra la landing: solo lectura, sin datos de nadie.
+    if (controller === 'PlanesPublicosController' && handler === 'catalogo')
+      return true;
     const serviceSecret = this.config.getOrThrow<string>('API_SECRET_TOKEN');
     if (controller === 'AuthController' && handler === 'login') {
       limitLogin(
@@ -249,6 +252,7 @@ export class TenantInterceptor implements NestInterceptor {
         'TenantContextController',
         'PublicParkingReceiptsController',
         'AvisoMercadoPagoController',
+        'PlanesPublicosController',
       ].includes(controller) ||
       req.platformAccountService
     )

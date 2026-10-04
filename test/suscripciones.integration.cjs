@@ -19,6 +19,7 @@ const Registration = load('tickets/entities/ticket-registration.entity', 'Ticket
 const SuscripcionesService = load('saas/suscripciones.service', 'SuscripcionesService');
 const { CobrosPlataformaService, empresaDeReferencia } = require('../dist/saas/cobros-plataforma.service');
 const MercadoPagoPlataforma = load('saas/mercadopago-plataforma', 'MercadoPagoPlataforma');
+const SuscripcionesController = load('saas/suscripciones.controller', 'SuscripcionesController');
 const reglas = require('../dist/saas/estado-cuenta');
 const { tenantContext, installTenantConnections } = require('../dist/tenancy/tenant-context');
 
@@ -52,6 +53,7 @@ before(async () => {
       await new (load('database/migrations/1790000022000-cuenta-alta', 'CuentaAlta1790000022000'))().up(runner);
       await new (load('database/migrations/1790000023000-facturas-anticipadas', 'FacturasAnticipadas1790000023000'))().up(runner);
       await new (load('database/migrations/1790000024000-debito-automatico', 'DebitoAutomatico1790000024000'))().up(runner);
+      await new (load('database/migrations/1790000025000-periodos-de-pago', 'PeriodosDePago1790000025000'))().up(runner);
     }
   } finally {
     await runner.release();
@@ -115,6 +117,11 @@ test('reglas: alta y prueba, factura el día del vencimiento, más de 5 días de
   assert.equal(s('2026-03-19', { conDebito: true }).debeSuspenderse, true);
   assert.equal(s('2026-03-08', { conDebito: true }).diasDeGracia, 10);
   assert.equal(s('2026-03-08', { conDebito: true }).suspendeEl, '2026-03-19');
+  // Períodos de la landing: el precio de los meses con el descuento, redondeado a pesos.
+  assert.equal(reglas.importeDelPeriodo(70000, 1, 0), 70000);
+  assert.equal(reglas.importeDelPeriodo(70000, 3, 10), 189000);
+  assert.equal(reglas.importeDelPeriodo(70000, 12, 15), 714000);
+  assert.equal(reglas.importeDelPeriodo(49000, 3, 10), 132300);
   assert.equal(s('2026-09-01', { bonificada: true }).estado, 'BONIFICADA');
   assert.equal(s('2026-09-01', { pruebaHasta: null }).estado, 'SIN_ACTIVAR');
   // Pagó tarde pero siguió usando el sistema: el aniversario no se mueve.
@@ -341,7 +348,8 @@ test('pico de estadías a la vez para el super admin; la empresa ve su plan pero
 });
 
 // MercadoPago en memoria: lo que respondería la API, sin red ni plata de verdad.
-function mercadoPagoFalso() {
+// `prefijo`: los ids de débito son únicos en MercadoPago; entre pruebas también tienen que serlo.
+function mercadoPagoFalso(prefijo = 'deb') {
   const mp = {
     llamadas: [],
     pagos: new Map(),
@@ -360,7 +368,7 @@ function mercadoPagoFalso() {
     },
     async crearSuscripcion(datos) {
       mp.llamadas.push(['crearSuscripcion', datos]);
-      const id = 'deb-' + (mp.debitos.size + 1);
+      const id = prefijo + '-' + (mp.debitos.size + 1);
       // Con la tarjeta del formulario queda autorizada en el acto; sin ella, a confirmar en MercadoPago.
       mp.debitos.set(id, datos.tarjeta
         ? { id, estado: 'authorized', referencia: datos.referencia, importe: datos.importe, url: null }
@@ -454,7 +462,7 @@ test('débito automático: arranca en el próximo vencimiento, se asienta solo y
   assert.equal(primero.url, 'https://mp.test/debito/deb-1');
   assert.deepEqual(
     mp.llamadas.find(([q]) => q === 'crearSuscripcion')[1],
-    { referencia: `debito:${empresa.id}`, motivo: 'Plan del sistema de estacionamiento', email: 'duenio@example.test', importe: mensual, inicio: dia(7), tarjeta: undefined },
+    { referencia: `debito:${empresa.id}`, motivo: 'Plan del sistema de estacionamiento', email: 'duenio@example.test', importe: mensual, meses: 1, inicio: dia(7), tarjeta: undefined },
     'el primer cobro, el día después de la prueba',
   );
   let cuenta = await servicio.resumen(empresa.id);
@@ -521,7 +529,7 @@ test('débito automático: arranca en el próximo vencimiento, se asienta solo y
 });
 
 test('débito con la tarjeta en el panel: sin cuenta de MercadoPago, queda activo en el acto', async () => {
-  const mp = mercadoPagoFalso();
+  const mp = mercadoPagoFalso('tar');
   const cobros = new CobrosPlataformaService(servicio, mp);
   const { empresa, playas } = await nuevaEmpresa('Débito con tarjeta');
   await servicio.asignarPlan(empresa.id, playas[0].id, { planId: (await plan('MEDIANA')).id }, superUser.id);
@@ -574,6 +582,12 @@ test('cliente de MercadoPago: firma de los avisos, pedidos a la API y errores si
     assert.equal(p.body.auto_recurring.start_date, '2026-03-10T12:00:00.000Z', 'a las 9 de la mañana de Argentina');
     assert.equal(p.body.back_url, 'https://panel.example.test/admin/plan/pagar?mp=debito');
     assert.equal(p.body.card_token_id, undefined);
+    assert.equal(p.body.auto_recurring.frequency, 1, 'sin período, uno por mes');
+    assert.equal(p.body.auto_recurring.frequency_type, 'months');
+    respuesta = { status: 201, body: { id: 'pre-3', status: 'pending', init_point: 'https://mp.test/y', auto_recurring: { transaction_amount: 189000 } } };
+    await mp.crearSuscripcion({ referencia: 'debito:x', motivo: 'Plan', email: 'a@example.test', importe: 189000, meses: 3, inicio: '2026-03-10' });
+    assert.equal(pedidos.at(-1).body.auto_recurring.frequency, 3, 'trimestral: un cobro cada 3 meses');
+    assert.equal(pedidos.at(-1).body.auto_recurring.transaction_amount, 189000);
 
     // Con la tarjeta del formulario: autorizada en el acto, con el token y nada más de la tarjeta.
     respuesta = { status: 201, body: { id: 'pre-2', status: 'authorized', external_reference: 'debito:x', auto_recurring: { transaction_amount: 50000 } } };
@@ -627,4 +641,85 @@ test('cliente de MercadoPago: firma de los avisos, pedidos a la API y errores si
   assert.equal(empresaDeReferencia(`plan:${id}x`), null);
   assert.equal(empresaDeReferencia('pedido-12'), null);
   assert.equal(empresaDeReferencia(null), null);
+});
+
+test('períodos de pago: trimestral factura 3 meses con 10% menos, se paga y se debita por período', async () => {
+  const periodos = await servicio.periodos();
+  assert.deepEqual(
+    periodos.map((p) => [p.codigo, p.meses, p.descuento, p.activo]),
+    [['MENSUAL', 1, 0, true], ['TRIMESTRAL', 3, 10, true], ['ANUAL', 12, 15, true]],
+    'los de la landing',
+  );
+
+  const mp = mercadoPagoFalso('tri');
+  const cobros = new CobrosPlataformaService(servicio, mp);
+  const { empresa, playas } = await nuevaEmpresa('Trimestral');
+  await servicio.asignarPlan(empresa.id, playas[0].id, { planId: (await plan('MEDIANA')).id }, superUser.id);
+  let cuenta = await servicio.resumen(empresa.id);
+  assert.equal(cuenta.periodo.codigo, 'MENSUAL', 'arranca mensual');
+  assert.equal(cuenta.importePeriodo, cuenta.mensual);
+
+  const d = await servicio.editar(empresa.id, { periodo: 'TRIMESTRAL' }, superUser.id);
+  cuenta = d.cuenta;
+  assert.deepEqual(cuenta.periodo, { codigo: 'TRIMESTRAL', nombre: 'Trimestral', meses: 3, descuento: 10 });
+  assert.equal(cuenta.importePeriodo, reglas.importeDelPeriodo(cuenta.mensual, 3, 10));
+  assert.equal(d.historial[0].accion, 'SUSCRIPCION_EDITADA');
+  assert.equal(d.historial[0].detalle.periodo, 'TRIMESTRAL');
+
+  // Termina la prueba: la primera factura cubre tres meses, con el descuento.
+  await fijar(empresa.id, { pruebaHasta: dia(-1) });
+  await servicio.revisarVencimientos();
+  cuenta = await servicio.resumen(empresa.id);
+  assert.equal(cuenta.facturaPendiente.meses, 3);
+  assert.equal(cuenta.facturaPendiente.descuento, 10);
+  assert.equal(cuenta.facturaPendiente.importe, cuenta.importePeriodo);
+  assert.equal(cuenta.facturaPendiente.hasta, reglas.sumarMeses(dia(-1), 3));
+  assert.equal((await servicio.situacion(empresa.id)).aPagar, cuenta.importePeriodo, 'el aviso del menú dice el total');
+
+  // Lo paga con MercadoPago: cubre los tres meses.
+  await cobros.pagar(empresa.id);
+  const [, link] = mp.llamadas.find(([q]) => q === 'crearPago');
+  assert.equal(link.importe, cuenta.importePeriodo);
+  mp.pagos.set('801', { id: '801', estado: 'approved', monto: cuenta.importePeriodo, fecha: hoy, referencia: link.referencia });
+  assert.equal((await cobros.conciliar(empresa.id)).acreditados, 1);
+  cuenta = await servicio.resumen(empresa.id);
+  assert.equal(cuenta.estado, 'AL_DIA');
+  assert.equal(cuenta.pagadoHasta, reglas.sumarMeses(dia(-1), 3));
+  const [pagada] = (await servicio.detalle(empresa.id)).facturas;
+  assert.equal(pagada.meses, 3);
+  assert.equal(pagada.descuento, 10);
+
+  // El débito cobra cada tres meses el total del período.
+  await cobros.activarDebito(empresa.id, 'duenio@example.test', superUser.id, 'tok1234567890abcdef');
+  const [, pedido] = mp.llamadas.find(([q]) => q === 'crearSuscripcion');
+  assert.equal(pedido.meses, 3);
+  assert.equal(pedido.importe, cuenta.importePeriodo);
+  assert.match(pedido.motivo, /trimestral/);
+  // Un cobro del débito también corre tres meses.
+  const debitoId = (await servicio.datosDebito(empresa.id)).debitoId;
+  mp.cobros.set('c-t', { id: 'c-t', suscripcionId: debitoId, pago: { id: '802', estado: 'approved', monto: cuenta.importePeriodo, fecha: hoy, referencia: null } });
+  await cobros.procesarAviso('subscription_authorized_payment', 'c-t');
+  assert.equal((await servicio.resumen(empresa.id)).pagadoHasta, reglas.sumarMeses(dia(-1), 6));
+
+  // Pasa a anual: el débito viejo cobraría mal, así que se da de baja primero en MercadoPago.
+  const controller = new SuscripcionesController(servicio, cobros);
+  const anual = await controller.editar({ user: { userId: superUser.id } }, empresa.id, { periodo: 'ANUAL' });
+  assert.equal(anual.cuenta.periodo.codigo, 'ANUAL');
+  assert.equal(anual.cuenta.importePeriodo, reglas.importeDelPeriodo(anual.cuenta.mensual, 12, 15));
+  assert.equal(anual.cuenta.debito, null, 'hay que volver a activarlo con el período nuevo');
+  assert.equal(mp.debitos.get(debitoId).estado, 'cancelled');
+
+  // El catálogo: lo mensual no lleva descuento; un cambio de descuento no toca a quien ya lo tiene.
+  await assert.rejects(servicio.editarPeriodo('MENSUAL', { descuento: 5 }), /mensual/);
+  await assert.rejects(servicio.editarPeriodo('MENSUAL', { activo: false }), /mensual/);
+  await servicio.editarPeriodo('ANUAL', { descuento: 20 });
+  assert.equal((await servicio.resumen(empresa.id)).periodo.descuento, 15, 'conserva el descuento con que se le asignó');
+  await servicio.editarPeriodo('TRIMESTRAL', { activo: false });
+  const otra = await nuevaEmpresa('Sin trimestral');
+  await assert.rejects(servicio.editar(otra.empresa.id, { periodo: 'TRIMESTRAL' }, superUser.id), /ya no se ofrece/);
+  const scope = { empresaId: otra.empresa.id, playaId: otra.playas[0].id, userId: superUser.id, role: 'ADMIN' };
+  const miPlan = await tenantContext.run(scope, () => servicio.miPlan(otra.empresa.id));
+  assert.deepEqual(miPlan.periodos.map((p) => p.codigo), ['MENSUAL', 'ANUAL'], 'la empresa ve los que se ofrecen');
+  await servicio.editarPeriodo('TRIMESTRAL', { activo: true });
+  await servicio.editarPeriodo('ANUAL', { descuento: 15 });
 });
