@@ -68,6 +68,10 @@ export class FacturaSaas {
   @Column('int')
   importe: number;
 
+  // Descuento por período (porcentaje entero) con que se calculó: importe = mensual × meses × (1 − descuento).
+  @Column('int', { default: 0 })
+  descuento: number;
+
   // Las playas y planes con que se calculó, para que el historial no cambie si después cambia
   // el plan.
   @Column('jsonb', { default: () => "'[]'::jsonb" })

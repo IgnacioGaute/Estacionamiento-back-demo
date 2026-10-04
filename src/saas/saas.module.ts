@@ -12,6 +12,7 @@ import { SuscripcionesScheduler } from './suscripciones.scheduler';
 import { MercadoPagoPlataforma } from './mercadopago-plataforma';
 import { CobrosPlataformaService } from './cobros-plataforma.service';
 import { AvisoMercadoPagoController } from './aviso-mercadopago.controller';
+import { PlanesPublicosController } from './planes-publicos.controller';
 
 // El plan que cada empresa contrata y lo que se le factura por usar el sistema. Es lo que le
 // cobrás vos a la empresa, no lo que la playa le cobra a sus abonados (eso es `receipts`).
@@ -33,6 +34,7 @@ import { AvisoMercadoPagoController } from './aviso-mercadopago.controller';
     SuscripcionesController,
     MiPlanController,
     AvisoMercadoPagoController,
+    PlanesPublicosController,
   ],
   providers: [
     SuscripcionesService,

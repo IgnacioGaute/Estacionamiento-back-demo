@@ -130,7 +130,9 @@ Consequences for new code:
   `@UseGuards(AuthOrTokenAuthGuard)` is still present but no longer decides access on its own. It:
   - lets `PublicParkingReceiptsController.read` through unauthenticated (public comprobante links), and
     `AvisoMercadoPagoController.aviso` (the platform's MercadoPago webhook: it checks the signature and only uses
-    the id to re-query MercadoPago with its own token);
+    the id to re-query MercadoPago with its own token), and `PlanesPublicosController.catalogo`
+    (`GET /public/planes`: the active price list and payment periods the landing shows, readable from any origin
+    — `Access-Control-Allow-Origin: *` on that response only — and nothing about empresas);
   - rate-limits `AuthController.login` (`src/auth/login-limiter.ts`: per-IP and per-identifier, using the
     connection IP, never a forwarded header) and requires `Bearer API_SECRET_TOKEN` for every *other*
     `AuthController` handler. The static token is now reserved for those server-side auth calls plus
@@ -265,7 +267,8 @@ bytes so a disguised document is rejected before anything parses it.
 `TicketScheduleSettings.receiptDelivery` (`{whatsapp, qr, print, paperWidth: 58|80}`, all off by default).
 Issuing freezes a `snapshot` and a random 256-bit token; `ParkingReceipt` is unique per
 `playaId + registrationId + kind` (`ENTRY`/`EXIT`), so a retry reuses the same link instead of charging again.
-`GET /public/parking-receipts/:token` is the only unauthenticated read route in the app: it returns vehicle, playa,
+`GET /public/parking-receipts/:token` is the only unauthenticated read route with customer data (the other public
+read, `GET /public/planes`, is just the price list): it returns vehicle, playa,
 times and amounts — never users or internal movements — with `no-store`/`noindex` headers. Its only consumer is
 `../estacionamiento-comprobantes-demo`, a separate Next app on its own domain whose whole job is rendering that
 response (`/c/<token>`), so the link a customer receives never exposes the system's domain. It fetches
@@ -325,12 +328,17 @@ is soft and only the super admin sees usage; `MiPlanController` never returns it
 `MiPlanController` with RLS and `SELECT`-only grants; its payment handlers (MercadoPago link, débito automático,
 verify) write through `tenantContext.exit` on the session's empresa only. The platform collects with its own
 MercadoPago app (`MercadoPagoPlataforma`, never the empresas' OAuth tokens): Checkout Pro links
-(`plan:<empresaId>:<desde>`) and a monthly `preapproval`: with `MERCADOPAGO_PLATAFORMA_PUBLIC_KEY` the panel embeds
+(`plan:<empresaId>:<desde>`) and a `preapproval` charging every period: with `MERCADOPAGO_PLATAFORMA_PUBLIC_KEY` the panel embeds
 MercadoPago's card form and sends only its one-time token (`authorized` on the spot, no MercadoPago account needed);
 without it the customer confirms it in MercadoPago. `CobrosPlataformaService`
 credits approved payments from the webhook, the return from MercadoPago and a cron every 2h (plus 05:00, before
 suspending), always re-querying the API and once per payment id (lock + unique index). An authorized débito
-stretches the grace to 10 days. See `docs/planes-y-cuentas.md`.
+stretches the grace to 10 days. **Payment periods** (`periodos_pago`: MENSUAL, TRIMESTRAL −10%, ANUAL −15%, as on
+the landing) are a catalog like `planes`: the super admin assigns one per empresa and its months and discount are
+frozen in `suscripciones.periodoMeses`/`periodoDescuento`; every factura, MercadoPago link and débito then covers a
+whole period for `importeDelPeriodo(mensual, meses, descuento)`. `mensual` stays the monthly list sum;
+`importePeriodo` is what is actually charged. Changing an empresa's period cancels its débito first (MercadoPago
+would keep charging the old amount and frequency). See `docs/planes-y-cuentas.md`.
 
 ### Config & cross-cutting
 

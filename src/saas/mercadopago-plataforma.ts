@@ -145,7 +145,8 @@ export class MercadoPagoPlataforma {
   }
 
   /**
-   * El débito automático: una suscripción mensual de MercadoPago. Dos formas:
+   * El débito automático: una suscripción de MercadoPago que cobra cada `meses` meses (uno, tres
+   * o doce, según el período de pago de la empresa). Dos formas:
    *
    * - Con `tarjeta` (el token del formulario de tarjeta de MercadoPago en nuestra pantalla): queda
    *   autorizada en el acto y no hace falta cuenta de MercadoPago. MercadoPago valida la tarjeta con
@@ -159,6 +160,7 @@ export class MercadoPagoPlataforma {
     motivo: string;
     email: string;
     importe: number;
+    meses?: number;
     inicio: string | null;
     tarjeta?: string;
   }): Promise<SuscripcionMp> {
@@ -175,7 +177,7 @@ export class MercadoPagoPlataforma {
             ? { card_token_id: datos.tarjeta, status: 'authorized' }
             : { status: 'pending' }),
           auto_recurring: {
-            frequency: 1,
+            frequency: datos.meses ?? 1,
             frequency_type: 'months',
             transaction_amount: datos.importe,
             currency_id: 'ARS',

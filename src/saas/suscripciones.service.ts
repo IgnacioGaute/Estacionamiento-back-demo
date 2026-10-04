@@ -11,9 +11,11 @@ import { Plan } from './entities/plan.entity';
 import { PlanDePlaya } from './entities/plan-de-playa.entity';
 import { DebitoEstado, Suscripcion } from './entities/suscripcion.entity';
 import { FacturaSaas, LineaFactura } from './entities/factura-saas.entity';
+import { PeriodoPago } from './entities/periodo-pago.entity';
 import {
   ActivarCuentaDto,
   AsignarPlanDto,
+  EditarPeriodoDto,
   EditarPlanDto,
   EditarSuscripcionDto,
   RegistrarPagoSaasDto,
@@ -28,6 +30,7 @@ import {
   diasEntre,
   finDePrueba,
   hoyAR,
+  importeDelPeriodo,
   periodoDelPago,
   periodoSiguiente,
   situacionDeCuenta,
@@ -45,7 +48,9 @@ const CAMPOS_CUENTA = `e.estado AS "empresaEstado", ${ALTA},
   s."prorrogaHasta"::text AS "prorrogaHasta", COALESCE(s.bonificada, false) AS bonificada,
   s."motivoSuspension", s."suspendidaEl", s.notas,
   COALESCE(s."debitoEstado" = 'authorized', false) AS "conDebito",
-  s."debitoId", s."debitoEstado", s."debitoEmail", s."debitoUrl", s."debitoImporte"`;
+  s."debitoId", s."debitoEstado", s."debitoEmail", s."debitoUrl", s."debitoImporte",
+  COALESCE(s.periodo, 'MENSUAL') AS periodo, COALESCE(s."periodoMeses", 1) AS "periodoMeses",
+  COALESCE(s."periodoDescuento", 0) AS "periodoDescuento"`;
 
 type FilaCuenta = DatosCuenta & {
   empresaId: string;
@@ -56,7 +61,21 @@ type FilaCuenta = DatosCuenta & {
   debitoEmail: string | null;
   debitoUrl: string | null;
   debitoImporte: number | null;
+  periodo: string;
+  periodoMeses: number;
+  periodoDescuento: number;
 };
+
+/** Lo que paga una cuenta por cada período, con su descuento. */
+const importeDeCuenta = (
+  cuenta: Pick<FilaCuenta, 'periodoMeses' | 'periodoDescuento'>,
+  mensual: number,
+) =>
+  importeDelPeriodo(
+    mensual,
+    Number(cuenta.periodoMeses),
+    Number(cuenta.periodoDescuento),
+  );
 
 type LineaPlan = {
   playaId: string;
@@ -81,12 +100,18 @@ export type ResumenCuenta = SituacionCuenta & {
   suspendidaEl: string | null;
   // Lo que paga por mes: la suma de los planes de sus playas.
   mensual: number;
+  // Cada cuánto paga, con los meses y el descuento que tiene congelados.
+  periodo: { codigo: string; nombre: string; meses: number; descuento: number };
+  // Lo que paga cada período: lo mensual por los meses, con el descuento.
+  importePeriodo: number;
   planes: LineaPlan[];
   facturaPendiente: {
     id: string;
     importe: number;
     desde: string;
     hasta: string;
+    meses: number;
+    descuento: number;
   } | null;
   ultimoPago: { fecha: string; importe: number; medio: string | null } | null;
   // Débito automático con MercadoPago. `url` solo mientras falta confirmarlo.
@@ -130,7 +155,7 @@ export class SuscripcionesService {
     if (!empresaIds.length) return resultado;
     const q = (sql: string) => this.dataSource.query(sql, [empresaIds]);
     // Una empresa sin fila (creada antes de los planes y todavía sin migrar) se lee SIN_ACTIVAR.
-    const [cuentas, lineas, pendientes, ultimos] = await Promise.all([
+    const [cuentas, lineas, pendientes, ultimos, periodos] = await Promise.all([
       q(`SELECT e.id AS "empresaId", ${CAMPOS_CUENTA}
          FROM empresas e LEFT JOIN suscripciones s ON s."empresaId" = e.id
          WHERE e.id = ANY($1)`),
@@ -142,11 +167,12 @@ export class SuscripcionesService {
          JOIN playas pl ON pl.id = sp."playaId"
          WHERE sp."empresaId" = ANY($1)
          ORDER BY pl.nombre, pl.id`),
-      q(`SELECT id, "empresaId", importe, desde::text AS desde, hasta::text AS hasta
+      q(`SELECT id, "empresaId", importe, desde::text AS desde, hasta::text AS hasta, meses, descuento
          FROM facturas_saas WHERE estado = 'PENDIENTE' AND "empresaId" = ANY($1)`),
       q(`SELECT DISTINCT ON ("empresaId") "empresaId", importe, "pagadaEl"::text AS fecha, medio
          FROM facturas_saas WHERE estado = 'PAGADA' AND "empresaId" = ANY($1)
          ORDER BY "empresaId", "pagadaEl" DESC, "createdAt" DESC`),
+      this.dataSource.query('SELECT codigo, nombre FROM periodos_pago'),
     ]);
     for (const fila of cuentas as FilaCuenta[]) {
       const planes: LineaPlan[] = lineas
@@ -167,6 +193,7 @@ export class SuscripcionesService {
         (p: any) => p.empresaId === fila.empresaId,
       );
       const ultimo = ultimos.find((p: any) => p.empresaId === fila.empresaId);
+      const mensual = planes.reduce((n, l) => n + l.precio, 0);
       resultado.set(fila.empresaId, {
         ...situacionDeCuenta(fila, hoy),
         alta: fila.alta,
@@ -178,7 +205,16 @@ export class SuscripcionesService {
         suspendidaEl: fila.suspendidaEl
           ? new Date(fila.suspendidaEl).toISOString()
           : null,
-        mensual: planes.reduce((n, l) => n + l.precio, 0),
+        mensual,
+        periodo: {
+          codigo: fila.periodo,
+          nombre:
+            periodos.find((p: any) => p.codigo === fila.periodo)?.nombre ??
+            fila.periodo,
+          meses: Number(fila.periodoMeses),
+          descuento: Number(fila.periodoDescuento),
+        },
+        importePeriodo: importeDeCuenta(fila, mensual),
         planes,
         facturaPendiente: pendiente
           ? {
@@ -186,6 +222,8 @@ export class SuscripcionesService {
               importe: Number(pendiente.importe),
               desde: pendiente.desde,
               hasta: pendiente.hasta,
+              meses: Number(pendiente.meses),
+              descuento: Number(pendiente.descuento),
             }
           : null,
         ultimoPago: ultimo
@@ -232,7 +270,11 @@ export class SuscripcionesService {
     return {
       ...situacionDeCuenta(fila),
       motivoSuspension: fila.motivoSuspension ?? null,
-      aPagar: Number(fila.pendiente ?? fila.mensual ?? 0),
+      aPagar: Number(
+        fila.pendiente ?? importeDeCuenta(fila, Number(fila.mensual ?? 0)),
+      ),
+      // Para decir «por mes» o «cada 3 meses».
+      periodoMeses: Number(fila.periodoMeses),
       // Con débito automático el aviso de «vence en unos días» sobra: se cobra solo.
       conDebito: !!fila.conDebito,
     };
@@ -305,7 +347,7 @@ export class SuscripcionesService {
    */
   async miPlan(empresaId: string) {
     const cuenta = await this.resumen(empresaId);
-    const [playas, facturas, catalogo] = await Promise.all([
+    const [playas, facturas, catalogo, periodos] = await Promise.all([
       this.dataSource.query(
         `SELECT id, nombre FROM playas WHERE "empresaId" = $1 ORDER BY nombre, id`,
         [empresaId],
@@ -315,6 +357,13 @@ export class SuscripcionesService {
         `SELECT id, codigo, nombre, "maxActivos", "incluyeCocheras", "precioMensual", orden
          FROM planes WHERE activo OR id = ANY($1) ORDER BY orden, "precioMensual"`,
         [cuenta.planes.map((l) => l.planId)],
+      ),
+      // Los períodos que se ofrecen hoy (y el suyo, aunque se haya retirado), para mostrarle
+      // cuánto ahorraría pagando por más tiempo.
+      this.dataSource.query(
+        `SELECT codigo, nombre, meses, descuento FROM periodos_pago
+         WHERE activo OR codigo = $1 ORDER BY orden, meses`,
+        [cuenta.periodo.codigo],
       ),
     ]);
     return {
@@ -332,6 +381,12 @@ export class SuscripcionesService {
         incluyeCocheras: !!p.incluyeCocheras,
         precioMensual: Number(p.precioMensual),
       })),
+      periodos: periodos.map((p: any) => ({
+        codigo: p.codigo,
+        nombre: p.nombre,
+        meses: Number(p.meses),
+        descuento: Number(p.descuento),
+      })),
       // Una factura anulada sin haberse pagado es un recálculo interno (cambio de plan, días
       // extra): a la empresa no le dice nada. Un pago anulado sí se muestra.
       facturas: facturas
@@ -341,6 +396,7 @@ export class SuscripcionesService {
           desde: f.desde,
           hasta: f.hasta,
           meses: f.meses,
+          descuento: f.descuento,
           importe: f.importe,
           detalle: f.detalle,
           estado: f.estado,
@@ -353,8 +409,8 @@ export class SuscripcionesService {
 
   private async facturas(empresaId: string, limite: number) {
     const filas = await this.dataSource.query(
-      `SELECT f.id, f.desde::text AS desde, f.hasta::text AS hasta, f.meses, f.importe, f.detalle,
-              f.estado, f."pagadaEl"::text AS "pagadaEl", f.medio, f.referencia, f.nota,
+      `SELECT f.id, f.desde::text AS desde, f.hasta::text AS hasta, f.meses, f.importe, f.descuento,
+              f.detalle, f.estado, f."pagadaEl"::text AS "pagadaEl", f.medio, f.referencia, f.nota,
               f."motivoAnulacion", f."anuladaEl", f."createdAt",
               NULLIF(TRIM(CONCAT(u."firstName", ' ', u."lastName")), '') AS "registradaPor"
        FROM facturas_saas f LEFT JOIN users u ON u.id = f."registradaPor"
@@ -369,6 +425,7 @@ export class SuscripcionesService {
       hasta: f.hasta as string,
       meses: Number(f.meses),
       importe: Number(f.importe),
+      descuento: Number(f.descuento ?? 0),
       detalle: (f.detalle ?? []) as LineaFactura[],
       estado: f.estado as string,
       pagadaEl: f.pagadaEl as string | null,
@@ -459,6 +516,73 @@ export class SuscripcionesService {
       maxActivos: p.maxActivos === null ? null : Number(p.maxActivos),
       precioMensual: Number(p.precioMensual),
     }));
+  }
+
+  /**
+   * Lo que publica la landing: los planes y los períodos que se ofrecen hoy, con su precio de
+   * lista. Nada de empresas, playas ni uso: es la misma información que la landing ya muestra.
+   */
+  async catalogoPublico() {
+    const [planes, periodos] = await Promise.all([
+      this.dataSource.query(
+        `SELECT codigo, nombre, "maxActivos", "incluyeCocheras", "precioMensual", orden
+         FROM planes WHERE activo ORDER BY orden, "precioMensual"`,
+      ),
+      this.dataSource.query(
+        `SELECT codigo, nombre, meses, descuento, orden
+         FROM periodos_pago WHERE activo ORDER BY orden, meses`,
+      ),
+    ]);
+    return {
+      planes: planes.map((p: any) => ({
+        codigo: p.codigo as string,
+        nombre: p.nombre as string,
+        maxActivos: p.maxActivos === null ? null : Number(p.maxActivos),
+        incluyeCocheras: !!p.incluyeCocheras,
+        precioMensual: Number(p.precioMensual),
+      })),
+      periodos: periodos.map((p: any) => ({
+        codigo: p.codigo as string,
+        nombre: p.nombre as string,
+        meses: Number(p.meses),
+        descuento: Number(p.descuento),
+      })),
+    };
+  }
+
+  /** El catálogo de períodos de pago, con cuántas empresas tiene cada uno. */
+  async periodos() {
+    const filas = await this.dataSource.query(
+      `SELECT p.codigo, p.nombre, p.meses, p.descuento, p.activo, p.orden,
+              COUNT(s.id)::int AS empresas
+       FROM periodos_pago p LEFT JOIN suscripciones s ON s.periodo = p.codigo
+       GROUP BY p.id ORDER BY p.orden, p.meses`,
+    );
+    return filas.map((p: any) => ({
+      ...p,
+      meses: Number(p.meses),
+      descuento: Number(p.descuento),
+    }));
+  }
+
+  /**
+   * El descuento y si se ofrece. Lo mensual es la base: no lleva descuento ni se puede retirar.
+   * Las empresas que ya tienen el período conservan el descuento con que se les asignó.
+   */
+  async editarPeriodo(codigo: string, dto: EditarPeriodoDto) {
+    const repo = this.dataSource.getRepository(PeriodoPago);
+    const periodo = await repo.findOneBy({ codigo });
+    if (!periodo) throw new NotFoundException('Período no encontrado.');
+    if (
+      periodo.meses === 1 &&
+      ((dto.descuento !== undefined && dto.descuento !== 0) ||
+        dto.activo === false)
+    )
+      throw new BadRequestException(
+        'El pago mensual es la base: no lleva descuento y siempre se ofrece.',
+      );
+    await repo.save(repo.merge(periodo, dto));
+    return this.periodos();
   }
 
   /** Pagos registrados en un rango de fechas, de todas las empresas. */
@@ -636,6 +760,25 @@ export class SuscripcionesService {
         set.bonificada = dto.bonificada;
         cambios.bonificada = dto.bonificada;
       }
+      if (dto.periodo !== undefined && dto.periodo !== cuenta.periodo) {
+        const periodo = await m
+          .getRepository(PeriodoPago)
+          .findOneBy({ codigo: dto.periodo });
+        if (!periodo) throw new NotFoundException('Período no encontrado.');
+        if (!periodo.activo)
+          throw new BadRequestException({
+            code: 'PERIODO_RETIRADO',
+            message: 'Ese período ya no se ofrece. Elegí uno de los vigentes.',
+          });
+        // Se congelan los meses y el descuento de hoy, como el precio pactado de un plan. La
+        // factura pendiente, si la hay, se recalcula con el período nuevo (sincronizarPendiente).
+        set.periodo = periodo.codigo;
+        set.periodoMeses = periodo.meses;
+        set.periodoDescuento = periodo.descuento;
+        cambios.periodo = periodo.codigo;
+        cambios.periodoAnterior = cuenta.periodo;
+        cambios.descuento = periodo.descuento;
+      }
       if (dto.notas !== undefined) set.notas = dto.notas || null;
       if (!Object.keys(set).length) return;
       await m.getRepository(Suscripcion).update({ empresaId }, set);
@@ -729,11 +872,16 @@ export class SuscripcionesService {
         .existsBy({ medio: 'MERCADOPAGO', referencia: pago.id });
       if (ya) return;
       const hoy = hoyAR();
+      // Un pago de MercadoPago cubre un período: el de la factura que debía o, si se adelantó, el
+      // de su cuenta (un débito trimestral cobra 3 meses).
+      const pendiente = await m
+        .getRepository(FacturaSaas)
+        .findOneBy({ empresaId, estado: 'PENDIENTE' });
       await this.asentarPago(
         m,
         cuenta,
         {
-          meses: 1,
+          meses: pendiente?.meses ?? Number(cuenta.periodoMeses),
           importe: pago.monto,
           medio: 'MERCADOPAGO',
           fecha: pago.fecha > hoy ? hoy : pago.fecha,
@@ -848,6 +996,13 @@ export class SuscripcionesService {
       hasta: periodo.hasta,
       meses: dto.meses,
       importe: dto.importe,
+      // El de la factura que paga o, si paga su período, el de su cuenta. Es informativo: lo que
+      // vale es el importe que entró.
+      descuento:
+        pendiente?.descuento ??
+        (dto.meses === Number(cuenta.periodoMeses)
+          ? Number(cuenta.periodoDescuento)
+          : 0),
       detalle: await this.lineasDeFactura(m, empresaId),
       estado: 'PAGADA' as const,
       pagadaEl: dto.fecha,
@@ -1129,7 +1284,13 @@ export class SuscripcionesService {
       estado: 'PENDIENTE',
     });
     const detalle = await this.lineasDeFactura(m, cuenta.empresaId);
-    const importe = detalle.reduce((n, l) => n + l.precio, 0);
+    // Un período entero por factura: tres meses con su descuento si paga trimestral.
+    const meses = Number(cuenta.periodoMeses ?? 1);
+    const descuento = Number(cuenta.periodoDescuento ?? 0);
+    const importe = importeDeCuenta(
+      { periodoMeses: meses, periodoDescuento: descuento },
+      detalle.reduce((n, l) => n + l.precio, 0),
+    );
     const venceEl = cuenta.pagadoHasta ?? cuenta.pruebaHasta;
     const corresponde =
       correspondeFactura(cuenta, hoy) && importe > 0 && !!venceEl;
@@ -1145,7 +1306,7 @@ export class SuscripcionesService {
         );
       return false;
     }
-    const periodo = periodoSiguiente(venceEl);
+    const periodo = periodoSiguiente(venceEl, meses);
     if (pendiente) {
       await repo.update(
         { id: pendiente.id },
@@ -1154,7 +1315,8 @@ export class SuscripcionesService {
           hasta: periodo.hasta,
           importe,
           detalle,
-          meses: 1,
+          meses,
+          descuento,
         },
       );
       return false;
@@ -1164,7 +1326,8 @@ export class SuscripcionesService {
         empresaId: cuenta.empresaId,
         desde: periodo.desde,
         hasta: periodo.hasta,
-        meses: 1,
+        meses,
+        descuento,
         importe,
         detalle,
         estado: 'PENDIENTE',

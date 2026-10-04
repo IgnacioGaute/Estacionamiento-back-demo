@@ -94,6 +94,18 @@ export class Suscripcion {
   @Column('int', { nullable: true })
   debitoImporte: number | null;
 
+  // Cada cuánto paga (`periodos_pago.codigo`). Los meses y el descuento se congelan al asignarlo,
+  // como el precio pactado de cada playa: cambiar el catálogo no le cambia la cuenta a nadie.
+  @Column('varchar', { length: 20, default: 'MENSUAL' })
+  periodo: string;
+
+  @Column('int', { default: 1 })
+  periodoMeses: number;
+
+  // Porcentaje entero sobre el precio de esos meses.
+  @Column('int', { default: 0 })
+  periodoDescuento: number;
+
   @CreateDateColumn()
   createdAt: Date;
 

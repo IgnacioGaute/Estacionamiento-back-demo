@@ -81,12 +81,50 @@ diario de los últimos 30 días y los días que pasó el límite. La empresa no 
 El plan define `playas.modulos.inquilinos`: con alquileres la prende, sin ellos la apaga (los
 datos quedan). Con plan asignado, el interruptor manual responde `MODULO_DEFINIDO_POR_PLAN`.
 
+## Períodos de pago
+
+Los de la landing: **mensual** (sin descuento), **trimestral** (10% menos) y **anual** (15% menos).
+Se paga el período completo: `importeDelPeriodo(mensual, meses, descuento)` =
+mensual × meses × (100 − descuento) / 100, redondeado a pesos.
+
+- `periodos_pago` es un catálogo como `planes` (sin RLS; el rol de las empresas solo lo lee). El
+  super admin edita el descuento y si se ofrece en `/admin/planes` (`GET/PATCH /tenancy/periodos`).
+  Lo mensual es la base: sin descuento y siempre vigente.
+- Cada cuenta tiene su período (`suscripciones.periodo`, por defecto MENSUAL) con los meses y el
+  descuento **congelados** al asignarlo (`periodoMeses`, `periodoDescuento`), como el precio pactado:
+  cambiar el catálogo no le cambia la cuenta a nadie. Se asigna desde la ficha (`PATCH …/suscripcion`
+  con `periodo`), queda en el historial y recalcula la factura pendiente si la hay.
+- Cada factura cubre un período entero (`meses`, `descuento` y su importe); la tarea diaria la emite
+  el día en que vence, como siempre. Un pago de MercadoPago (link o débito) cubre los meses de la
+  factura que paga o, si se adelantó, los del período de la cuenta.
+- El débito automático cobra cada `meses` meses el importe del período. Cambiarle el período a una
+  empresa con débito lo da de baja primero en MercadoPago (si MercadoPago no responde, no se cambia
+  nada): la empresa lo vuelve a activar con el período nuevo.
+- La empresa ve en Mi plan su período y cuánto pagaría (y ahorraría) en los otros; para cambiarlo
+  escribe por WhatsApp, como dice la landing.
+
+## La landing lee la lista de precios
+
+`GET /public/planes` (sin sesión, `PlanesPublicosController`) devuelve los planes y períodos que se
+ofrecen (`activo`), con nombre, tamaño (`maxActivos`), precio de lista y descuento. Nada de cuentas.
+Esa respuesta, y solo esa, se puede leer desde cualquier origen y se cachea 5 minutos.
+
+La landing (`../estacionamiento-landing`, exportación estática) la lee con
+`NEXT_PUBLIC_PLATAFORMA_API_URL` (la dirección del backend): al compilarse y otra vez en el navegador
+de cada visitante, así un cambio de precio, tamaño o descuento se ve sin volver a publicarla. Sin la
+variable o sin respuesta, usa los valores de `app/catalogo.ts`. Un tamaño retirado («Se ofrece en la
+landing» apagado) deja de mostrarse. Lo pactado con cada playa no cambia.
+
 ## Pantallas
 
+- Las tarjetas de planes son las de la landing en los colores del panel
+  (`src/components/plataforma/planes-landing.tsx`: nombre y tamaño, precio por mes, total del
+  período con el ahorro, tres puntos y una acción; selectores «Qué incluye» y «Período de pago»).
 - Super admin: `/admin/planes` (ingreso mensual, por cobrar, cobrado por mes, cuentas por estado,
-  cuentas ordenadas por urgencia, lista de precios editable, pagos), columna «Plan» y filtro
-  «Cobro» en `/admin/empresas`, solapa «Plan» en la ficha (estado, ciclo con hoy marcado, tarjetas
-  de plan por playa, uso, ajustes, facturas con días de atraso, historial).
+  cuentas ordenadas por urgencia, lista de precios y períodos editables en el lugar con vista previa
+  de la landing y «Guardar y publicar», pagos), columna «Plan» y filtro «Cobro» en
+  `/admin/empresas`, solapa «Plan» en la ficha (estado, ciclo con hoy marcado, plan de cada playa
+  con el período de la empresa, uso, ajustes, facturas con días de atraso, historial).
 - Administrador: `/admin/plan` («Mi plan»), con las tarjetas de la landing y su plan resaltado.
   Datos de transferencia y WhatsApp desde `PLATAFORMA_DATOS_PAGO` y `PLATAFORMA_WHATSAPP`.
 - Administrador: `/admin/plan/pagar`, a donde lleva el aviso: importe, qué cubre, vencimiento o

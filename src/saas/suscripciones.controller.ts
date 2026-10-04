@@ -18,6 +18,7 @@ import { CobrosPlataformaService } from './cobros-plataforma.service';
 import {
   AnularPagoSaasDto,
   AsignarPlanDto,
+  EditarPeriodoDto,
   EditarPlanDto,
   EditarSuscripcionDto,
   ActivarCuentaDto,
@@ -55,6 +56,20 @@ export class SuscripcionesController {
     return this.suscripciones.editarPlan(id, dto);
   }
 
+  // Los períodos de pago (mensual, trimestral, anual) y su descuento.
+  @Get('periodos')
+  periodos() {
+    return this.suscripciones.periodos();
+  }
+
+  @Patch('periodos/:codigo')
+  editarPeriodo(
+    @Param('codigo') codigo: string,
+    @Body() dto: EditarPeriodoDto,
+  ) {
+    return this.suscripciones.editarPeriodo(codigo, dto);
+  }
+
   // Pagos de todas las empresas en un rango: lo cobrado en el mes.
   @Get('suscripciones/pagos')
   pagos(@Query() query: PagosSaasQueryDto) {
@@ -75,11 +90,19 @@ export class SuscripcionesController {
   }
 
   @Patch('empresas/:id/suscripcion')
-  editar(
+  async editar(
     @Req() req: AuthenticatedRequest,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: EditarSuscripcionDto,
   ) {
+    // El débito automático de MercadoPago cobra cada tantos meses un importe fijo: con otro
+    // período cobraría mal. Se da de baja primero (si MercadoPago no responde, no se cambia nada)
+    // y la empresa lo vuelve a activar con el período nuevo.
+    if (dto.periodo) {
+      const cuenta = await this.suscripciones.resumen(id);
+      if (cuenta.periodo.codigo !== dto.periodo && cuenta.debito)
+        await this.cobros.desactivarDebito(id, this.actor(req));
+    }
     return this.suscripciones.editar(id, dto, this.actor(req));
   }
 

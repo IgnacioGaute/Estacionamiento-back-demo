@@ -141,6 +141,7 @@ before(async () => {
     await new (load('database/migrations/1790000022000-cuenta-alta', 'CuentaAlta1790000022000'))().up(migrationRunner);
     await new (load('database/migrations/1790000023000-facturas-anticipadas', 'FacturasAnticipadas1790000023000'))().up(migrationRunner);
     await new (load('database/migrations/1790000024000-debito-automatico', 'DebitoAutomatico1790000024000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000025000-periodos-de-pago', 'PeriodosDePago1790000025000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -600,6 +601,7 @@ test('todos los endpoints rechazan acceso anónimo y el secreto interno no permi
       if (!method || (ctor.name === 'AuthController' && name === 'login')) continue;
       if (ctor.name === 'PublicParkingReceiptsController' && name === 'read') continue;
       if (ctor.name === 'AvisoMercadoPagoController' && name === 'aviso') continue;
+      if (ctor.name === 'PlanesPublicosController' && name === 'catalogo') continue;
       const suffix = Reflect.getMetadata('path', handler);
       const route = ('/' + prefix + '/' + suffix).replace(/\/+/g, '/').replace(/:[^/]+/g, '11111111-1111-4111-8111-111111111111');
       await request(app.getHttpServer())[method](route).send({}).expect(401);
@@ -608,6 +610,13 @@ test('todos los endpoints rechazan acceso anónimo y el secreto interno no permi
   }
   assert.ok(checked > 90, `Only ${checked} routes checked`);
   t.diagnostic(`${checked} endpoints protegidos verificados sin credenciales`);
+  // La lista de precios de la landing: pública, legible desde cualquier origen y sin datos de cuentas.
+  const catalogo = await request(app.getHttpServer()).get('/public/planes').set('Origin', 'https://landing.example.test').expect(200);
+  assert.equal(catalogo.headers['access-control-allow-origin'], '*');
+  assert.ok(Array.isArray(catalogo.body.planes) && Array.isArray(catalogo.body.periodos));
+  assert.deepEqual(Object.keys(catalogo.body).sort(), ['periodos', 'planes']);
+  for (const p of catalogo.body.planes)
+    assert.deepEqual(Object.keys(p).sort(), ['codigo', 'incluyeCocheras', 'maxActivos', 'nombre', 'precioMensual']);
   // La otra ruta sin sesión: los avisos de MercadoPago. Sin un id reconocible no hace nada; con id,
   // exige la firma de la clave del webhook.
   const { createHmac } = require('node:crypto');

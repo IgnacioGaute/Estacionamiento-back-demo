@@ -18,9 +18,10 @@ const fechaCorta = (ymd: string) => {
 
 // Cobrar el plan con MercadoPago, de dos formas:
 //
-// - Débito automático: una suscripción mensual de MercadoPago que el cliente confirma una vez con
-//   su tarjeta. El primer cobro es el día de su próximo vencimiento; después, uno por mes.
-// - Pago con MercadoPago: un link por lo que debe (o por el mes que viene, si quiere adelantarlo).
+// - Débito automático: una suscripción de MercadoPago que el cliente confirma una vez con su
+//   tarjeta. El primer cobro es el día de su próximo vencimiento; después, uno por período (cada
+//   mes, cada 3 meses o cada año, con el descuento de su período de pago).
+// - Pago con MercadoPago: un link por lo que debe (o por su próximo período, si quiere adelantarlo).
 //
 // Cada pago lleva una referencia nuestra («plan:<empresa>:<desde>» o «debito:<empresa>») y se
 // asienta solo, por cualquiera de tres caminos que pueden llegar juntos: el aviso de MercadoPago,
@@ -44,20 +45,20 @@ export class CobrosPlataformaService {
     return this.mp.clavePublica();
   }
 
-  /** Lo que hay para pagar ahora: lo que debe o, si está al día, el mes que viene. */
+  /** Lo que hay para pagar ahora: lo que debe o, si está al día, su próximo período. */
   private aPagar(cuenta: ResumenCuenta) {
     const pendiente = cuenta.facturaPendiente;
     if (pendiente) return pendiente;
     if (
       ['PRUEBA', 'AL_DIA', 'VENCIDA', 'SUSPENDIDA'].includes(cuenta.estado) &&
-      cuenta.mensual > 0 &&
+      cuenta.importePeriodo > 0 &&
       cuenta.venceEl &&
       cuenta.proximoVencimiento
     )
       return {
-        importe: cuenta.mensual,
+        importe: cuenta.importePeriodo,
         desde: cuenta.proximoVencimiento,
-        hasta: sumarMeses(cuenta.venceEl, 1),
+        hasta: sumarMeses(cuenta.venceEl, cuenta.periodo.meses),
       };
     return null;
   }
@@ -127,11 +128,16 @@ export class CobrosPlataformaService {
         .actualizarSuscripcion(previo.debitoId, { estado: 'cancelled' })
         .catch(() => undefined);
 
+    // Un cobro por período: cada 3 meses con el descuento si paga trimestral.
     const debito = await this.mp.crearSuscripcion({
       referencia: `debito:${empresaId}`,
-      motivo: 'Plan del sistema de estacionamiento',
+      motivo:
+        cuenta.periodo.meses > 1
+          ? `Plan del sistema de estacionamiento (${cuenta.periodo.nombre.toLowerCase()})`
+          : 'Plan del sistema de estacionamiento',
       email,
-      importe: cuenta.mensual,
+      importe: cuenta.importePeriodo,
+      meses: cuenta.periodo.meses,
       inicio: cuenta.proximoVencimiento,
       tarjeta,
     });
@@ -146,7 +152,7 @@ export class CobrosPlataformaService {
         debitoEstado: debito.estado,
         debitoEmail: email,
         debitoUrl: debito.estado === 'pending' ? debito.url : null,
-        debitoImporte: debito.importe || cuenta.mensual,
+        debitoImporte: debito.importe || cuenta.importePeriodo,
       },
       actor,
     );
@@ -236,7 +242,7 @@ export class CobrosPlataformaService {
     return { acreditados };
   }
 
-  /** Si cambió lo que paga por mes, MercadoPago tiene que cobrar lo nuevo desde el próximo débito. */
+  /** Si cambió lo que paga por período, MercadoPago tiene que cobrar lo nuevo desde el próximo débito. */
   async sincronizarImporte(
     empresaId: string,
     debitoId?: string,
@@ -248,14 +254,13 @@ export class CobrosPlataformaService {
       : await this.suscripciones.datosDebito(empresaId);
     if (!d.debitoId) return;
     const cuenta = await this.suscripciones.resumen(empresaId);
-    if (cuenta.debito?.estado !== 'authorized' || !cuenta.mensual) return;
-    if (d.debitoImporte === cuenta.mensual) return;
-    await this.mp.actualizarSuscripcion(d.debitoId, {
-      importe: cuenta.mensual,
-    });
+    const importe = cuenta.importePeriodo;
+    if (cuenta.debito?.estado !== 'authorized' || !importe) return;
+    if (d.debitoImporte === importe) return;
+    await this.mp.actualizarSuscripcion(d.debitoId, { importe });
     await this.suscripciones.guardarDebito(
       empresaId,
-      { debitoImporte: cuenta.mensual },
+      { debitoImporte: importe },
       null,
     );
   }

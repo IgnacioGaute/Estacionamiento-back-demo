@@ -147,6 +147,16 @@ export function situacionDeCuenta(
   };
 }
 
+/**
+ * Lo que se paga por un período: lo mensual por los meses, con el descuento del período (un
+ * porcentaje entero). Redondeado a pesos, como lo muestra la landing.
+ */
+export const importeDelPeriodo = (
+  mensual: number,
+  meses: number,
+  descuento: number,
+) => Math.round((mensual * meses * (100 - descuento)) / 100);
+
 /** Cortada por falta de pago: no tuvo el servicio, así que no se le cobra ese tiempo. */
 export const cortadaPorFaltaDePago = (d: DatosCuenta) =>
   d.empresaEstado !== 'ACTIVA' && d.motivoSuspension === 'FALTA_DE_PAGO';

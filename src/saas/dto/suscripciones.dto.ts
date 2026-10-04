@@ -57,12 +57,37 @@ export class EditarSuscripcionDto {
   @IsBoolean()
   bonificada?: boolean;
 
+  // Cada cuánto paga: el código de un período del catálogo (MENSUAL, TRIMESTRAL, ANUAL).
+  @IsOptional()
+  @Matches(/^[A-Z_]{3,20}$/, { message: 'Elegí un período de pago.' })
+  periodo?: string;
+
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
   @Transform(recortar)
   @IsString()
   @MaxLength(1000)
   notas?: string | null;
+}
+
+export class EditarPeriodoDto {
+  @IsOptional()
+  @Transform(recortar)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  nombre?: string;
+
+  // Porcentaje entero. Más de la mitad sería regalar el sistema: si hace falta, bonificar.
+  @IsOptional()
+  @IsInt({ message: 'El descuento va en porcentaje entero.' })
+  @Min(0)
+  @Max(50)
+  descuento?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  activo?: boolean;
 }
 
 // Dar de alta la cuenta: desde qué día es cliente y cuántos días de prueba gratis tiene antes de
