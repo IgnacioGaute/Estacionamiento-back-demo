@@ -30,7 +30,7 @@ Al unirse a una caja abierta, el nuevo turno tiene fondo inicial cero: el efecti
 
 CashSession conserva el fondo y el arqueo físico. El saldo esperado es su fondo inicial más cash_entries.amount de todos los turnos participantes, incluidos los que ya terminaron, más aportes y retiros de cash_session_movements. Los egresos y devoluciones restan; transferencias, cheques y cortesías no suman billetes.
 
-Cobros, ingresos, gastos y devoluciones pertenecen al turno del operador que realiza la operación. Los retiros y aportes de fondo tienen importe, autor y motivo; afectan el efectivo físico pero no BoxList ni las ventas. Un operador sólo puede registrarlos en la caja de su turno abierto; administración puede hacerlo en cualquier caja abierta de la playa.
+Cobros, ingresos, gastos y devoluciones pertenecen al turno del operador que realiza la operación. Los retiros y aportes de fondo tienen importe, autor y motivo; afectan el efectivo físico pero no BoxList ni las ventas. Sólo administración puede registrarlos en cualquier caja abierta de la playa; los operadores no tienen acceso a esa acción.
 
 Si quedan otros participantes abiertos, el usuario cierra sólo su turno: sin conteo, retiro ni saldo congelado de caja. La sesión y sus operaciones continúan. El último operador debe contar el efectivo de todos los turnos de la sesión, indicar cuánto retira y cuánto deja. El servidor vuelve a comprobar participantes y saldo dentro de una transacción; si cambiaron, exige revisar el formulario.
 
@@ -43,7 +43,7 @@ En Administración → Caja → Turnos, las tarjetas agrupan los participantes p
 - GET /turnos/caja: turno propio, cajas habilitadas con sesión, último cierre, saldo y participantes; openTurnos sólo para administración.
 - GET /turnos/configuracion: cajas y existencia de turnos abiertos; exclusivo de administración.
 - POST /turnos/cajas y PATCH /turnos/cajas/:id: crear y editar cajas; administración.
-- POST /turnos/sesiones/:id/movimientos: aporte o retiro con saldo esperado y motivo.
+- POST /turnos/sesiones/:id/movimientos: aporte o retiro con saldo esperado y motivo; exclusivo de administración.
 - POST /turnos/open: caja, fondo, cambio agregado y referencia a sesión anterior o sesión activa.
 - PATCH /turnos/:id/close: cerrarCaja=false para participante; cerrarCaja=true y arqueo para último operador.
 - GET /turnos y GET /turnos/operadores: historial y filtros de administración.

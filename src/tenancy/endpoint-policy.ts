@@ -64,7 +64,7 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     'unread',
     'markRead',
   ],
-  TurnosController: ['open', 'close', 'getCashContext', 'getMyOpenTurno', 'addCashMovement'],
+  TurnosController: ['open', 'close', 'getCashContext', 'getMyOpenTurno'],
   TenantContextController: ['context'],
   // El operador ve la lista (sin los totales de la playa), lo que debe y lo que pagó cada
   // inquilino, le cobra y le entrega el recibo. El estado de cuenta con sus movimientos, saldo

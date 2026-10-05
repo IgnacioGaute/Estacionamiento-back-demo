@@ -144,11 +144,11 @@ export class TurnosService {
   }
 
   async addCashMovement(sesionId: string, usuarioId: string, dto: CashSessionMovementDto, rol?: UserRole) {
+    if (rol !== 'ADMIN') throw new ForbiddenException('Sólo el administrador puede registrar retiros o aportes de efectivo.');
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const session = await manager.getRepository(CashSession).findOneBy({ id: sesionId, estado: 'ABIERTO' });
       if (!session) throw new ConflictException('La caja ya está cerrada.');
-      if (rol !== 'ADMIN' && !await manager.getRepository(Turno).exists({ where: { cashSessionId: sesionId, usuarioApertura: { id: usuarioId }, estado: 'ABIERTO' } })) throw new ForbiddenException('Sólo podés mover efectivo de la caja de tu turno.');
       const expected = await this.sessionTotal(sesionId, manager);
       if (dto.efectivoEsperado !== expected) throw new ConflictException('El efectivo cambió. Actualizá la caja antes de registrar el movimiento.');
       if (!dto.motivo.trim()) throw new BadRequestException('Indicá el motivo del movimiento.');

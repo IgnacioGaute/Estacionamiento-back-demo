@@ -175,8 +175,9 @@ test('cajas separadas: los cobros y retiros quedan en su caja y no duplican vent
   assert.equal((await context(user.id)).efectivoDisponible, 3000);
   assert.equal((await context(second.id)).efectivoDisponible, 8000);
   const before = await totalBox();
-  await assert.rejects(shifts.addCashMovement(a.cashSessionId, second.id, { tipo: 'RETIRO', importe: 500, efectivoEsperado: 3000, motivo: 'Retiro' }, 'USER'), /Sólo podés/);
-  await shifts.addCashMovement(b.cashSessionId, second.id, { tipo: 'RETIRO', importe: 1000, efectivoEsperado: 8000, motivo: 'Entrega al encargado' }, 'USER');
+  await assert.rejects(shifts.addCashMovement(a.cashSessionId, second.id, { tipo: 'RETIRO', importe: 500, efectivoEsperado: 3000, motivo: 'Retiro' }, 'USER'), /Sólo el administrador/);
+  await assert.rejects(shifts.addCashMovement(b.cashSessionId, second.id, { tipo: 'RETIRO', importe: 1000, efectivoEsperado: 8000, motivo: 'Entrega al encargado' }, 'USER'), /Sólo el administrador/);
+  await shifts.addCashMovement(b.cashSessionId, user.id, { tipo: 'RETIRO', importe: 1000, efectivoEsperado: 8000, motivo: 'Entrega al encargado' }, 'ADMIN');
   assert.equal((await context(second.id)).efectivoDisponible, 7000);
   await shifts.addCashMovement(b.cashSessionId, user.id, { tipo: 'APORTE', importe: 500, efectivoEsperado: 7000, motivo: 'Cambio extra' }, 'ADMIN');
   assert.equal((await context(second.id)).efectivoDisponible, 7500);

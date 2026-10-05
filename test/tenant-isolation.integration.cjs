@@ -1011,7 +1011,7 @@ test('cajas: aislamiento de sesiones, referencias y configuración administrativ
   });
   await scoped(contextA, () => service.close(shift.id, cashAdmin.id, { cerrarCaja: true, efectivoContado: 1200, efectivoEsperado: 1200, efectivoParaSiguiente: 1200 }, 'ADMIN'));
   const operator = await ds.getRepository(User).save({ username: 'cash-policy', email: 'cash-policy@test.local', firstName: 'Cash', lastName: 'Policy', role: 'USER', empresaId: b.empresaId });
-  for (const [method, route] of [['get', '/turnos/configuracion'], ['post', '/turnos/cajas'], ['patch', '/turnos/cajas/' + cajaB.id]]) {
+  for (const [method, route] of [['get', '/turnos/configuracion'], ['post', '/turnos/cajas'], ['patch', '/turnos/cajas/' + cajaB.id], ['post', '/turnos/sesiones/' + shift.cashSessionId + '/movimientos']]) {
     await request(app.getHttpServer())[method](route).set('Authorization', 'Bearer ' + token(operator)).send({ nombre: 'No permitido' }).expect(403);
   }
   const visible = await request(app.getHttpServer()).get('/turnos/configuracion').set('Authorization', 'Bearer ' + token(adminB)).expect(200);
