@@ -1,5 +1,5 @@
 // Ejecutar después de pnpm build. PostgreSQL efímero: nunca lee .env ni usa la base del proyecto.
-const { test, before, after } = require('node:test');
+const { test: nodeTest, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -27,6 +27,11 @@ const TurnosService = load('turnos/turnos.service', 'TurnosService');
 const MovimientosService = load('movimientos/movimientos.service', 'MovimientosService');
 const BoxListsService = load('box-lists/box-lists.service', 'BoxListsService');
 const ScannerService = load('scanner/scanner.service', 'ScannerService');
+const { tenantContext } = require('../dist/tenancy/tenant-context');
+function test(name, options, fn) {
+  if (typeof options === 'function') { fn = options; options = {}; }
+  return nodeTest(name, options, (...args) => tenantContext.run({ userId: user.id, role: 'ADMIN' }, () => fn(...args)));
+}
 let ds, root, pgStarted = false, tickets, movements, shifts, boxes, user, scanner;
 let counter = 0;
 const bin = process.env.PG_TEST_BIN || 'C:/Program Files/PostgreSQL/18/bin';
@@ -54,7 +59,7 @@ before(async () => {
   tickets = new TicketsService(repo(Ticket), repo(TicketPrice), repo(Bracket), repo(Registration), repo(RegistrationDay), repo(Schedule), boxes, { emitNewRegistration() {} }, movements, ds);
   scanner = new ScannerService(tickets, { getBarcodeReceipt: async () => null }, ds);
   user = await repo(User).save(repo(User).create({ username: 'test', firstName: 'Test', lastName: 'Operator', email: 'test@example.test', role: 'ADMIN' }));
-  await tickets.updateSchedule({ dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, pricingDayTypeBasis: 'ENTRY', barcodeTicketsEnabled: true, shiftsEnabled: true });
+  await tickets.updateSchedule({ dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, pricingDayTypeBasis: 'ENTRY', barcodeTicketsEnabled: true, shiftsEnabled: true, multipleShiftsEnabled: true });
   await tickets.createPriceBracket({ vehicleType: 'AUTO', label: 'Hora', uptoMinutes: 60, price: 1000 });
   await tickets.createPriceBracket({ vehicleType: 'AUTO', label: 'Extra', price: 1000, recurringUnitMinutes: 60, recurringPriceMode: 'FIXED' });
 });
@@ -256,13 +261,13 @@ test('anticipo de ficha física conserva la relación del ticket en la respuesta
 
 
 async function closeCurrent(carry = 0, operator = user.id) {
-  const ctx = await shifts.getCashContext();
+  const ctx = await shifts.getCashContext(operator);
   return shifts.close(ctx.active.id, operator, { efectivoContado: ctx.efectivoDisponible, efectivoEsperado: ctx.efectivoDisponible, efectivoParaSiguiente: carry });
 }
 
-test('caja compartida: un turno de 24 h admite varias fechas y sólo suma efectivo', async () => {
+test('turno por usuario: un turno de 24 h admite varias fechas y sólo suma efectivo', async () => {
   const prior = await closeCurrent();
-  const shift = await shifts.open(user.id, { fondoInicial: 100, turnoAnteriorId: prior.id, nombre: 'Diario', duracionPrevistaHoras: 24 });
+  const shift = await shifts.open(user.id, { fondoInicial: 100, cambioAgregado: 100, turnoAnteriorId: prior.id, nombre: 'Diario', duracionPrevistaHoras: 24 });
   await ds.getRepository(Turno).update(shift.id, { fechaApertura: dayjs().subtract(23, 'hour').toDate() });
   const cash = await openPlate();
   const transfer = await openPlate();
@@ -291,28 +296,36 @@ test('abonos: transferencia no entra al efectivo y cambiar de medio registra só
   assert.equal((await shifts.getCashContext()).efectivoDisponible, before);
 });
 
-test('relevo: retiro parcial, recepción única y tres turnos en el mismo día', async () => {
-  const secondUser = await ds.getRepository(User).save({ username: 'second', firstName: 'Second', lastName: 'Operator', email: 'second@example.test', role: 'USER' });
+test('caja compartida: aperturas simultáneas, cobros propios y un único arqueo', async () => {
+  const other = await ds.getRepository(User).save({ username: 'second', firstName: 'Second', lastName: 'Operator', email: 'second@example.test', role: 'USER' });
   const ctx = await shifts.getCashContext();
-  await assert.rejects(shifts.close(ctx.active.id, secondUser.id, { efectivoContado: 900, efectivoEsperado: 900 }), /responsable/);
-  await assert.rejects(shifts.open(secondUser.id, { fondoInicial: 0 }), /turno abierto/);
-  await assert.rejects(shifts.close(ctx.active.id, user.id, { efectivoContado: 900, efectivoParaSiguiente: 1000, efectivoEsperado: 900 }), /más efectivo/);
-  const first = await closeCurrent(300);
-  assert.equal(first.efectivoRetirado, 600);
-  assert.equal((await shifts.getCashContext()).efectivoDisponible, 300);
-  const before = await totalBox();
-  await assert.rejects(shifts.open(secondUser.id, { fondoInicial: 200, turnoAnteriorId: first.id }), /menor/);
-  const results = await Promise.allSettled([1, 2].map(() => shifts.open(secondUser.id, { fondoInicial: 300, turnoAnteriorId: first.id, nombre: 'Tarde', duracionPrevistaHoras: 8 })));
+  const caja = ctx.cajas[0];
+  await assert.rejects(shifts.close(ctx.active.id, other.id, {}), /responsable/);
+  const results = await Promise.allSettled([1, 2].map(() => shifts.open(other.id, { fondoInicial: 0, cajaId: caja.id, sesionActivaId: caja.session.id })));
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
-  const second = results.find(r => r.status === 'fulfilled').value;
-  assert.equal(second.fondoRecibido, 300);
-  assert.equal(await totalBox(), before); // El fondo recibido no es una venta.
-  assert.equal((await ds.getRepository(Turno).findOneBy({ id: first.id })).recibidoPorTurnoId, second.id);
-  const closedSecond = await closeCurrent(0, secondUser.id);
-  assert.equal(closedSecond.efectivoRetirado, 300);
-  const third = await shifts.open(user.id, { fondoInicial: 0, turnoAnteriorId: closedSecond.id, nombre: 'Noche', duracionPrevistaHoras: 8 });
-  assert.equal(third.fondoRecibido, 0);
-  assert.equal((await shifts.getCashContext()).efectivoDisponible, 0);
+  const joined = results.find(r => r.status === 'fulfilled').value;
+  assert.equal(joined.fondoInicial, 0);
+  const registration = await openPlate();
+  const dto = await payload(registration.id);
+  await tickets.closeRegistrationByPlate(registration.id, dto, other.id);
+  const expected = 900 + dto.expectedPrice;
+  assert.equal((await shifts.getCashContext(other.id)).efectivoDisponible, expected);
+  assert.equal((await shifts.getCashContext(user.id)).efectivoDisponible, expected);
+  const movement = await ds.getRepository(Movimiento).findOne({ where: { ticketRegistration: { id: registration.id } }, relations: ['turno'] });
+  assert.equal(movement.turno.id, joined.id);
+  await assert.rejects(closeCurrent(), /otros operadores/);
+  const individual = await shifts.close(ctx.active.id, user.id, { cerrarCaja: false });
+  assert.equal(individual.efectivoContado, null);
+  assert.equal(individual.cierreCaja, false);
+  await assert.rejects(shifts.close(joined.id, user.id, { efectivoContado: expected, efectivoEsperado: expected }, 'ADMIN'), /por qué/);
+  const last = await shifts.close(joined.id, user.id, { efectivoContado: expected, efectivoEsperado: expected, efectivoParaSiguiente: 300, motivoCierreForzado: 'Fin de jornada' }, 'ADMIN');
+  assert.equal(last.cierreCaja, true);
+  const principal = (await shifts.getCashContext()).cajas[0];
+  await assert.rejects(shifts.open(user.id, { fondoInicial: 200, sesionAnteriorId: principal.pending.id }), /diferencia/);
+  const next = await shifts.open(user.id, { fondoInicial: 300, sesionAnteriorId: principal.pending.id });
+  assert.equal(next.fondoRecibido, 300);
+  const nextClosed = await closeCurrent();
+  await shifts.open(user.id, { fondoInicial: 0, turnoAnteriorId: nextClosed.id });
 });
 
 test('cierre detecta cobros nuevos, exige motivo por diferencias y bloquea efectivo entre relevos', async () => {
@@ -325,7 +338,7 @@ test('cierre detecta cobros nuevos, exige motivo por diferencias y bloquea efect
   assert.equal(closed.diferencia, 10);
   assert.equal(closed.efectivoRetirado, 70);
   const before = await totalBox();
-  await assert.rejects(tickets.addAdvancePayment(registration.id, { advancePaidAmount: 200, metodo: 'CASH' }, user.id), /siguiente turno/);
+  await assert.rejects(tickets.addAdvancePayment(registration.id, { advancePaidAmount: 200, metodo: 'CASH' }, user.id), /tu turno/);
   assert.equal(await movements.sumByRegistration(registration.id), 100);
   assert.equal(await totalBox(), before);
   await assert.rejects(shifts.close(closed.id, user.id, { efectivoContado: 90, efectivoEsperado: 100 }), /cerrado/);
@@ -358,16 +371,16 @@ test('un cierre anterior al modelo compartido puede entregar fondo sin recalcula
   const closed = await shifts.close(legacy.id, user.id, { efectivoContado: 50, efectivoParaSiguiente: 20 });
   assert.equal(closed.efectivoTeorico, 50);
   const ctx = await shifts.getCashContext();
-  assert.equal(ctx.pending.id, legacy.id);
-  const received = await shifts.open(user.id, { fondoInicial: 20, turnoAnteriorId: legacy.id });
-  assert.equal(received.fondoRecibido, 20);
+  assert.equal(ctx.cajas[0].efectivoDisponible, 0);
+  const received = await shifts.open(user.id, { fondoInicial: 0, sesionAnteriorId: ctx.cajas[0].pending.id });
+  assert.equal(received.fondoRecibido, 0);
 });
 
 test('un admin cierra el turno de otro operador y queda registrado el motivo', async () => {
   const ausente = await ds.getRepository(User).save({ username: 'ausente', firstName: 'Ope', lastName: 'Ausente', email: 'ausente@example.test', role: 'USER' });
   const previo = await closeCurrent(0);
   const abandonado = await shifts.open(ausente.id, { fondoInicial: 0, turnoAnteriorId: previo.id, nombre: 'Tarde' });
-  const ctx = await shifts.getCashContext();
+  const ctx = await shifts.getCashContext(ausente.id);
   const arqueo = { efectivoContado: ctx.efectivoDisponible, efectivoEsperado: ctx.efectivoDisponible };
   // Sin rol de admin sigue valiendo la regla anterior: sólo cierra su responsable.
   await assert.rejects(shifts.close(abandonado.id, user.id, arqueo), /responsable/);
@@ -511,4 +524,31 @@ test('permanencia retirada: se desactiva para nuevas entradas y respeta copias a
   await ds.getRepository(Registration).update(fresh.id, { pricingSnapshot: historical });
   const summary = await tickets.getCloseSummary(fresh.id);
   assert.equal(summary.previewBracket.price, 0);
+});
+
+
+test('migración de turnos: un abierto por usuario y playa, con cierres históricos conservados', async () => {
+  const Migration = load('database/migrations/1790000027000-turnos-por-usuario', 'TurnosPorUsuario1790000027000');
+  const runner = ds.createQueryRunner();
+  await runner.connect();
+  await runner.startTransaction();
+  try {
+    await runner.query('CREATE SCHEMA turnos_index_test');
+    await runner.query('SET LOCAL search_path TO turnos_index_test');
+    await runner.query('CREATE TABLE turnos ("playaId" uuid, "usuarioAperturaId" uuid, estado varchar)');
+    const migration = new Migration();
+    await migration.up(runner);
+    await migration.up(runner);
+    await migration.down(runner);
+    await migration.up(runner);
+    const { randomUUID } = require('node:crypto');
+    const playa = randomUUID(), operator = randomUUID(), other = randomUUID();
+    const insert = (p, u, state) => runner.query('INSERT INTO turnos VALUES ($1, $2, $3)', [p, u, state]);
+    await insert(playa, operator, 'ABIERTO');
+    await insert(playa, other, 'ABIERTO');
+    await insert(randomUUID(), operator, 'ABIERTO');
+    await insert(playa, operator, 'CERRADO');
+    await insert(playa, operator, 'CERRADO');
+    await assert.rejects(insert(playa, operator, 'ABIERTO'), error => error.code === '23505');
+  } finally { await runner.rollbackTransaction(); await runner.release(); }
 });

@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { tenantContext } from 'src/tenancy/tenant-context';
+import { PlateRecognizerCuentasService } from './plate-recognizer-cuentas.service';
 
 const PLATE_RECOGNIZER_URL = 'https://api.platerecognizer.com/v1/plate-reader/';
 // Límite de Snapshot Cloud. Una foto de celular sin achicar lo supera casi siempre (el front la
@@ -49,18 +51,18 @@ function masCentrada(lecturas: LecturaVendor[], ancho?: number, alto?: number) {
 export class PlateRecognitionService {
   private readonly logger = new Logger(PlateRecognitionService.name);
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly cuentas: PlateRecognizerCuentasService) {}
 
   async recognize(file: Express.Multer.File): Promise<PlateRecognitionResult> {
-    // Plan gratuito de Plate Recognizer: 2500 consultas/mes (cuenta cada una, encuentre o no una
-    // patente) y una por segundo. La key es una sola para toda la plataforma, así que ese segundo
-    // lo comparten todos los operadores de todas las empresas.
-    const apiKey = this.configService.get<string>('PLATE_RECOGNIZER_API_KEY');
+    // Cada playa usa su propia cuenta de Plate Recognizer: cada consulta descuenta de SU plan,
+    // encuentre o no una patente, y el tope de consultas por segundo es el de su plan.
+    const playaId = tenantContext.getStore()?.playaId;
+    const apiKey = playaId ? await this.cuentas.tokenDeLaPlaya(playaId) : null;
     if (!apiKey) {
-      this.logger.error('PLATE_RECOGNIZER_API_KEY no configurada.');
-      throw new InternalServerErrorException(
-        'El reconocimiento de patente por cámara no está configurado en el servidor.',
-      );
+      throw new ForbiddenException({
+        code: 'PATENTES_SIN_PLAN',
+        message: 'Esta playa no tiene contratado el reconocimiento de patentes. Escribí la patente a mano.',
+      });
     }
 
     if (file.size > PLATE_IMAGE_MAX_BYTES) {
@@ -76,10 +78,14 @@ export class PlateRecognitionService {
     }
 
     if (response.status === 401 || response.status === 403) {
-      // El cuerpo dice si es la key o el cupo mensual agotado; al operador le da lo mismo.
+      // El cuerpo dice si es el token o el plan agotado; queda en el log para el super admin.
       const body = await response.text().catch(() => '');
-      this.logger.error(`Plate Recognizer rechazó el pedido (status ${response.status}): ${body}`);
-      throw new InternalServerErrorException('El servicio de reconocimiento de patente rechazó el pedido.');
+      this.logger.error(
+        `Plate Recognizer rechazó el pedido de la playa ${playaId} (status ${response.status}): ${body}`,
+      );
+      throw new InternalServerErrorException(
+        'Plate Recognizer rechazó el pedido: puede que se haya agotado el plan de la playa. Escribí la patente a mano.',
+      );
     }
     if (response.status === 413) {
       this.logger.warn(`Plate Recognizer rechazó una imagen de ${file.size} bytes por tamaño.`);

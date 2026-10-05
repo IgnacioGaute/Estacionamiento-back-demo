@@ -36,6 +36,8 @@ export class UpdateTicketScheduleDto {
   @IsOptional()
   shiftsEnabled?: boolean;
 
+  @IsBoolean() @IsOptional() multipleShiftsEnabled?: boolean;
+
   @IsIn(['ENTRY', 'EXIT'])
   @IsOptional()
   pricingDayTypeBasis?: 'ENTRY' | 'EXIT';

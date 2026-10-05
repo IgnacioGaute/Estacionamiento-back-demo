@@ -5,4 +5,9 @@ export class OpenTurnoDto {
   @IsString() @MaxLength(80) @IsOptional() nombre?: string;
   @IsInt() @Min(1) @Max(168) @IsOptional() duracionPrevistaHoras?: number;
   @IsUUID() @IsOptional() turnoAnteriorId?: string;
+  @IsUUID() @IsOptional() cajaId?: string;
+  @IsUUID() @IsOptional() sesionAnteriorId?: string;
+  @IsUUID() @IsOptional() sesionActivaId?: string;
+  @IsInt() @Min(0) @IsOptional() cambioAgregado?: number;
+  @IsString() @MaxLength(255) @IsOptional() motivoApertura?: string;
 }

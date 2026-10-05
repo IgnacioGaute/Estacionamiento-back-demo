@@ -1,49 +1,57 @@
-# Caja compartida y turnos flexibles
+# Turnos por operador y cajas físicas
 
-## Funcionamiento
+El turno identifica quién cobra; la caja representa el cajón donde queda el efectivo. Cada usuario tiene como máximo un turno abierto por playa. Los tickets y la planilla diaria siguen compartidos por estacionamiento.
 
-Una caja física compartida con turnos sucesivos. Se permite un turno abierto a la vez. Cada turno tiene nombre y duración prevista de 1 a 168 horas: puede ser diario, de 24 horas o uno de varios relevos del día. No hay cierre automático por horario ni por medianoche. El operador responsable confirma el arqueo.
+## Configuración en el frontend
 
-Un administrador puede cerrar el turno de otro operador cuando éste se retiró sin cerrarlo; sin esa salida la caja queda trabada, porque tampoco se puede abrir el siguiente turno. El cierre forzado exige un motivo y no autocompleta el arqueo: el administrador cuenta los billetes igual, de lo contrario la diferencia desaparecería. El turno registra `cierreForzado`, `motivoCierreForzado` y, en `usuarioCierre`, quién lo confirmó.
+En Administración → Configuración → Operación:
 
-El efectivo esperado es `fondoInicial + suma(cash_entries.amount del turno)`. Incluye tickets por hora, abonos, recibos y otros ingresos/egresos en efectivo. Transferencias, cheques, crédito y cortesías no suman billetes. Devoluciones en efectivo restan.
+1. Activar «Activar turnos de caja» para exigir turno propio al operar.
+2. Elegir «Permitir turnos múltiples» según cómo trabajan y guardar configuración.
+3. En «Cajas físicas», nombrar una caja por cada cajón real. Caja principal siempre permanece disponible. Se pueden agregar y desactivar las otras cajas.
 
-Al cerrar se registran:
+| Caso | Turnos múltiples | Cajas |
+| --- | --- | --- |
+| Una entrada, operadores por relevos | Apagado | Caja principal, un operador a la vez |
+| Varias entradas con cajones separados | Activado | Una caja por cajón; cada operador elige la suya |
+| Dos personas cobrando del mismo cajón | Activado | Ambos eligen la misma caja |
 
-- Efectivo esperado y contado; la diferencia conserva la convención `esperado - contado` (positivo = faltante).
-- Efectivo retirado = contado - fondo para el siguiente turno.
-- Fondo pendiente de relevo, que no puede superar lo contado.
-- Observaciones obligatorias si hay diferencia.
+Una puerta no necesariamente equivale a una caja: dos puertas pueden compartir el mismo cajón. El frontend incluye estos tres ejemplos y los pasos posteriores. Para cambiar de modo o desactivar turnos deben cerrarse todos los turnos abiertos. Para desactivar una caja secundaria, debe estar cerrada sin fondo pendiente; se conserva su historial.
 
-El siguiente operador confirma el fondo recibido al abrir. Se conserva la referencia al turno anterior y la recepción sólo se puede efectuar una vez. El fondo recibido forma parte del fondo inicial; nunca genera una venta ni incrementa el total diario. Se puede aportar cambio adicional declarando un fondo inicial mayor.
+## Fondo y traspaso
 
-Ejemplo: se cuentan $90.000, se retiran $70.000 y se dejan $20.000. El primer turno queda con $20.000 pendientes de entrega. Al abrir el segundo, recibe $20.000, el primero queda en cero pendiente y el segundo empieza con esos $20.000.
+El fondo sigue al último cierre de la caja física, independientemente del operador. Si A deja $20.000 y luego B deja $40.000 en la misma caja, cuando vuelve A recibe la referencia de $40.000. Los fondos de otras cajas no se mezclan.
 
-## Totales e interfaz
+El primero en abrir una caja declara el efectivo que realmente recibió y el cambio que agrega ahora. El fondo inicial es recibido más cambio agregado. Puede declarar menos o más que el cierre anterior: una diferencia exige motivo y queda registrada sin alterar el arqueo anterior. El cambio agregado queda separado de ventas y discrepancias. Las referencias a la sesión anterior o a la sesión abierta se validan para rechazar formularios desactualizados.
 
-`BoxList.totalPrice` representa efectivo neto de operaciones del día, sin transferencias ni cheques. Se conserva separado del saldo disponible del turno y de los retiros/relevos; no se borra la recaudación al cerrar. La tarjeta de la planilla se llama «Efectivo neto del día» y el PDF indica «Efectivo del día».
+Al unirse a una caja abierta, el nuevo turno tiene fondo inicial cero: el efectivo ya pertenece a la sesión compartida y no se vuelve a sumar.
 
-Con la sección Inquilinos habilitada en la playa, la planilla muestra los cobros a inquilinos del día: en pantalla, cuánto entró por cada medio (efectivo, transferencia, MercadoPago); en el PDF, una sección «Inquilinos» con cada cobro, su medio y su recibo, y el total por medio. Salen del libro de la cuenta corriente (`cobrosInquilinos` en la caja del día), así que incluyen lo que quedó a favor. El efectivo entra (o sale, en una devolución o en la anulación de un cobro de otro día); transferencia y MercadoPago van en entradas y salidas por igual, como en «varios», porque no tocan el cajón. Un cobro anulado el mismo día no aparece: se compensa con su anulación.
+## Operaciones, retiros y cierres
 
-«Caja y turnos», accesible desde tickets y la planilla, muestra el efectivo esperado del turno activo o el fondo pendiente de relevo, el formulario de cierre y el historial con retirado, entregado y saldo pendiente. El historial del turno anterior pasa a cero pendiente cuando se recibe el relevo, conservando los importes originales del arqueo.
+CashSession conserva el fondo y el arqueo físico. El saldo esperado es su fondo inicial más cash_entries.amount de todos los turnos participantes, incluidos los que ya terminaron, más aportes y retiros de cash_session_movements. Los egresos y devoluciones restan; transferencias, cheques y cortesías no suman billetes.
 
-## Consistencia y contratos
+Cobros, ingresos, gastos y devoluciones pertenecen al turno del operador que realiza la operación. Los retiros y aportes de fondo tienen importe, autor y motivo; afectan el efectivo físico pero no BoxList ni las ventas. Un operador sólo puede registrarlos en la caja de su turno abierto; administración puede hacerlo en cualquier caja abierta de la playa.
 
-Tabla nueva `cash_entries`: importe firmado, caja diaria, turno, descripción y fecha. Se alimenta en la misma transacción que cada cambio de efectivo. Los retiros y el traspaso quedan en el turno y no se registran como ventas.
+Si quedan otros participantes abiertos, el usuario cierra sólo su turno: sin conteo, retiro ni saldo congelado de caja. La sesión y sus operaciones continúan. El último operador debe contar el efectivo de todos los turnos de la sesión, indicar cuánto retira y cuánto deja. El servidor vuelve a comprobar participantes y saldo dentro de una transacción; si cambiaron, exige revisar el formulario.
 
-Campos aditivos de `turnos`: `cashVersion`, `nombre`, `duracionPrevistaHoras`, `turnoAnteriorId`, `fondoRecibido`, `efectivoRetirado`, `efectivoParaSiguiente`, `recibidoPorTurnoId`, `cierreForzado`, `motivoCierreForzado`. Se mantiene el resto del esquema.
+Administración puede cerrar cualquier turno de la playa, incluso de un operador dado de baja, dejando motivo al cerrar un turno ajeno. Las mismas reglas determinan si corresponde sólo cierre personal o arqueo final. Una diferencia positiva significa faltante (esperado menos contado) y requiere explicación. El arqueo final se congela tanto en la sesión como en el turno que la cerró.
 
-- `GET /turnos/caja`: turno activo, relevo pendiente y efectivo disponible.
-- `POST /turnos/open`: fondo total, nombre, duración prevista y referencia al relevo pendiente.
-- `PATCH /turnos/:id/close`: contado, esperado de la vista previa, fondo para el siguiente y observaciones.
-- `GET /turnos`: historial.
+En Administración → Caja → Turnos, las tarjetas agrupan los participantes por caja, suman el efectivo una sola vez y permiten cierre individual y movimientos de fondo. El historial distingue «Caja compartida» de un cierre antiguo sin conteo y muestra fondo inicial físico y discrepancias de apertura. Mi turno separa saldo físico de caja del efectivo neto de operaciones propias.
 
-Apertura, cierre y cobros comparten el bloqueo transaccional de caja. Se rechaza una apertura duplicada, un cierre por otro operador que no sea administrador, un cierre forzado sin motivo, una recepción repetida y un cierre basado en efectivo esperado desactualizado. El cierre no modifica movimientos anteriores.
+## Contratos
 
-## Puesta en uso y compatibilidad
+- GET /turnos/caja: turno propio, cajas habilitadas con sesión, último cierre, saldo y participantes; openTurnos sólo para administración.
+- GET /turnos/configuracion: cajas y existencia de turnos abiertos; exclusivo de administración.
+- POST /turnos/cajas y PATCH /turnos/cajas/:id: crear y editar cajas; administración.
+- POST /turnos/sesiones/:id/movimientos: aporte o retiro con saldo esperado y motivo.
+- POST /turnos/open: caja, fondo, cambio agregado y referencia a sesión anterior o sesión activa.
+- PATCH /turnos/:id/close: cerrarCaja=false para participante; cerrarCaja=true y arqueo para último operador.
+- GET /turnos y GET /turnos/operadores: historial y filtros de administración.
 
-Para iniciar el primer turno se cuenta el efectivo existente y se declara como fondo inicial. Después de abrir el primer turno nuevo, no se puede registrar efectivo entre un cierre y la siguiente apertura; una operación rechazada revierte también sus movimientos. Antes de adoptar el esquema se conserva la operación sin turno para compatibilidad.
+## Compatibilidad y despliegue
 
-Los turnos históricos conservan su cálculo anterior de movimientos de tickets (`cashVersion=1`). No se recalculan cierres ni totales diarios históricos; algunos podían incluir transferencias o cheques por el comportamiento anterior. Deben conciliarse antes de usar esos históricos como arqueo de billetes. Los turnos abiertos del modelo anterior deben cerrarse antes de iniciar la caja compartida.
+Las migraciones 1790000027000-turnos-por-usuario y 1790000028000-cajas-compartidas conservan cierres y operaciones previas. La segunda crea las cajas, sesiones, movimientos, aislamiento RLS por playa y la opción múltiple apagada por defecto. No convierte arqueos históricos ni suma fondos personales. Los turnos antiguos abiertos deben cerrarse antes de las primeras aperturas nuevas. Caja principal toma sólo el último cierre antiguo con fondo disponible como referencia; el operador confirma el dinero real con motivo si difiere.
 
-Las pruebas se ejecutan en PostgreSQL temporal con `pnpm build` y `node --test test/tickets.integration.cjs`; no se aplicó este esquema a la base del proyecto ni se desplegó. Backend y frontend deben actualizarse juntos. Se mantiene `synchronize: true`, preexistente en el proyecto.
+cashVersion=1 conserva el cálculo histórico y los nuevos turnos usan cashVersion=2. Las operaciones offline conservan el turno propio capturado: si ya cerró, no se reasignan a otro. Se conserva la compatibilidad de operaciones sin turno cuando estaban desactivados. Las operaciones de caja usan el mismo bloqueo transaccional para evitar doble apertura, fondos duplicados o pérdidas de totales.
+
+Backend y frontend deben actualizarse juntos. Las migraciones están registradas para el arranque normal del backend. Las pruebas usan PostgreSQL temporal; no modifican la base del proyecto.

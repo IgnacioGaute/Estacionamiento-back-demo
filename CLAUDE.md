@@ -56,9 +56,10 @@ deploys `main` itself; with «Wait for CI» enabled on the service it only deplo
 Requires a Postgres database. `docker-compose.yaml` provides one (postgres:16.2, published on host port **5430**,
 db/user/password `estacionamiento_demo`/`admin`/`admin`). Env vars read at boot: `PORT` (default 3030),
 `ALLOWED_ORIGINS` (comma-separated), `POSTGRES_{HOST,PORT,NAME,USER,PASSWORD}`, `DB_BOOTSTRAP`, `NEXTAUTH_SECRET`,
-`API_SECRET_TOKEN`, `CLOUDINARY_{NAME,API_KEY,API_SECRET}`, `PLATE_RECOGNIZER_API_KEY`,
+`API_SECRET_TOKEN`, `CLOUDINARY_{NAME,API_KEY,API_SECRET}`,
 `GEMINI_{API_KEY,MODEL,FALLBACK_MODELS}`,
-`MERCADOPAGO_TOKEN_KEY` (32 bytes en hex, `openssl rand -hex 32`; cifra los tokens de MercadoPago de cada empresa),
+`MERCADOPAGO_TOKEN_KEY` (32 bytes en hex, `openssl rand -hex 32`; cifra los tokens de MercadoPago de cada empresa y
+los de Plate Recognizer de cada playa),
 `PLATAFORMA_DATOS_PAGO` / `PLATAFORMA_WHATSAPP` (opcionales: datos de transferencia y WhatsApp que ve una empresa
 en «Mi plan» para pagarle a la plataforma),
 `MERCADOPAGO_PLATAFORMA_{ACCESS_TOKEN,PUBLIC_KEY,WEBHOOK_SECRET,WEBHOOK_URL}` y `PLATAFORMA_URL_FRONT` (la cuenta de
@@ -181,12 +182,14 @@ reason; excess at checkout requires `refundMetodo`. `MovimientosService.create` 
 where the mandatory-`motivo` rule for `AJUSTE`/`CORTESIA` lives); `Movimiento.sequence` is an incrementing int
 because the reserved `hashAnterior`/`hash` chain needs a definite "previous row".
 
-`src/turnos/` supports one shared physical cash drawer with successive shifts, regardless of calendar date. New
-shifts (`cashVersion=2`) calculate expected cash from `fondoInicial + cash_entries`, covering tickets, day passes,
-receipts and other cash changes. Closing records counted cash, withdrawal and a handover amount; reopening
-acknowledges that handover exactly once. Transfers, checks and courtesy are excluded from physical cash. Once the
-first new shift is opened, cash mutations between shifts are rejected atomically. Legacy shifts retain their
-previous ticket-only calculation. See `docs/caja-turnos.md` for adoption and API contracts.
+`src/turnos/` separates operator shifts from physical cash drawers. `shiftsEnabled` is the master switch;
+`multipleShiftsEnabled` defaults off (one operator in Caja principal). With multiple shifts on, users choose a
+physical caja and can share its CashSession without duplicating the opening fund. Session cash equals its
+opening fund plus all participant cash_entries plus signed cash_session_movements. Participants can end their
+shift without counting; the last operator counts and closes the caja. Admin can close any shift in the playa
+with a reason. The retained fund follows the physical caja, regardless of the next operator. Legacy shifts
+without cashSessionId retain their historical calculation and must close before new caja openings.
+See `docs/caja-turnos.md` for configuration, migration and API contracts.
 
 `src/box-lists/` tracks daily net physical cash (not transfer/check revenue or shift handovers). All cash
 mutations must use its transaction-aware helpers, which append `cash_entries` in the same transaction. Receipt
@@ -259,7 +262,13 @@ through `normalizePlate`/`toSearchKey`. Opening a second active registration for
 rejected with code `DUPLICATE_ACTIVE_PLATE` unless the caller passes `duplicateOverride` + reason.
 `noPlate: true` registrations require `lastNameCustomer` instead. `src/plate-recognition/` proxies the Plate
 Recognizer ANPR API server-side so the key never reaches the browser; `image-signature.validator.ts` checks magic
-bytes so a disguised document is rejected before anything parses it.
+bytes so a disguised document is rejected before anything parses it. There is **no platform key**: each playa
+that buys the feature has its own Plate Recognizer account, whose token the super admin pastes in the empresa's
+ficha (`PUT/DELETE /tenancy/playas/:id/patentes`, usage at `GET /tenancy/empresas/:id/patentes`). Tokens live
+encrypted in `plate_recognizer_cuentas` (one row per playa, no TypeORM entity, operators get SELECT on their own
+row only); a playa without a row answers `PATENTES_SIN_PLAN` and the context's `reconocimientoPatentes: false`
+hides the camera. Every lookup is billed to that plan whether or not it finds a plate, so the front's live scanner
+(`src/utils/plate-scan.ts` there) filters frames on the phone before sending any.
 
 ### Comprobantes (parking receipts)
 

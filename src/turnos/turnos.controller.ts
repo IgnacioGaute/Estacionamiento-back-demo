@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { CajaDto, CashSessionMovementDto } from './dto/caja.dto';
 import { TurnosService } from './turnos.service';
 import { OpenTurnoDto } from './dto/open-turno.dto';
 import { CloseTurnoDto } from './dto/close-turno.dto';
@@ -29,8 +30,22 @@ export class TurnosController {
     return this.turnosService.close(id, requireUserId(req), dto, req.user?.role);
   }
 
+  @Get('configuracion')
+  getConfiguration() { return this.turnosService.getConfiguration(); }
+
+  @Post('cajas')
+  createCaja(@Body() dto: CajaDto) { return this.turnosService.saveCaja(dto); }
+
+  @Patch('cajas/:id')
+  updateCaja(@Param('id') id: string, @Body() dto: CajaDto) { return this.turnosService.saveCaja(dto, id); }
+
+  @Post('sesiones/:id/movimientos')
+  addCashMovement(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: CashSessionMovementDto) {
+    return this.turnosService.addCashMovement(id, requireUserId(req), dto, req.user?.role);
+  }
+
   @Get('caja')
-  getCashContext() { return this.turnosService.getCashContext(); }
+  getCashContext(@Req() req: AuthenticatedRequest) { return this.turnosService.getCashContext(requireUserId(req)); }
 
   @Get()
   findAll(

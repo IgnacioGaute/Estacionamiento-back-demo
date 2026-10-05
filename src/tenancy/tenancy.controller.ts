@@ -11,9 +11,12 @@ import {
   Patch,
   Query,
   Post,
+  Put,
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { PlateRecognizerCuentasService } from 'src/plate-recognition/plate-recognizer-cuentas.service';
+import { PlateRecognizerTokenDto } from './dto/plate-recognizer-token.dto';
 import { TenancyService } from './tenancy.service';
 import { listPagination } from 'src/utils/list-pagination';
 import { SuperAdminGuard } from 'src/utils/guards/super-admin.guard';
@@ -38,6 +41,7 @@ export class TenancyController {
   constructor(
     private readonly tenancyService: TenancyService,
     private readonly suscripciones: SuscripcionesService,
+    private readonly patentes: PlateRecognizerCuentasService,
   ) {}
 
   private actor(req: AuthenticatedRequest) {
@@ -137,6 +141,49 @@ export class TenancyController {
   @Get('playas/:id/eliminacion')
   resumenEliminacionPlaya(@Param('id') id: string) {
     return this.tenancyService.resumenEliminacionPlaya(id);
+  }
+
+  // Reconocimiento de patentes: cada playa que lo contrata usa su propia cuenta de Plate
+  // Recognizer. El token se carga acá y nunca vuelve al navegador: la ficha ve sus últimos cuatro
+  // caracteres, el consumo del plan y si otra playa comparte la misma cuenta.
+  @Get('empresas/:id/patentes')
+  consumoPatentes(@Param('id') id: string) {
+    return this.patentes.consumoDeEmpresa(id);
+  }
+
+  @Put('playas/:id/patentes')
+  async configurarPatentes(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: PlateRecognizerTokenDto,
+  ) {
+    const { playa, uso } = await this.patentes.configurar(id, dto.token, this.actor(req));
+    await this.tenancyService.registrarAuditoria({
+      empresaId: playa.empresaId,
+      playaId: playa.id,
+      usuarioId: this.actor(req),
+      accion: 'PLAYA_PATENTES_CONFIGURADA',
+      entidad: playa.nombre,
+      entidadId: playa.id,
+    });
+    return { uso };
+  }
+
+  @Delete('playas/:id/patentes')
+  async quitarPatentes(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    const playa = await this.patentes.quitar(id);
+    await this.tenancyService.registrarAuditoria({
+      empresaId: playa.empresaId,
+      playaId: playa.id,
+      usuarioId: this.actor(req),
+      accion: 'PLAYA_PATENTES_QUITADA',
+      entidad: playa.nombre,
+      entidadId: playa.id,
+    });
+    return { message: 'Se quitó el reconocimiento de patentes de la playa.' };
   }
 
   @Post('empresas')

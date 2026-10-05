@@ -1,3 +1,5 @@
+import { CajasCompartidas1790000028000 } from '../database/migrations/1790000028000-cajas-compartidas';
+import { TurnosPorUsuario1790000027000 } from '../database/migrations/1790000027000-turnos-por-usuario';
 import { TenantIsolation1790000001000 } from '../database/migrations/1790000001000-tenant-isolation';
 import { ParkingReceipts1790000004000 } from '../database/migrations/1790000004000-parking-receipts';
 import { RegistrationPhone1790000005000 } from '../database/migrations/1790000005000-registration-phone';
@@ -20,6 +22,7 @@ import { CuentaAlta1790000022000 } from '../database/migrations/1790000022000-cu
 import { FacturasAnticipadas1790000023000 } from '../database/migrations/1790000023000-facturas-anticipadas';
 import { DebitoAutomatico1790000024000 } from '../database/migrations/1790000024000-debito-automatico';
 import { PeriodosDePago1790000025000 } from '../database/migrations/1790000025000-periodos-de-pago';
+import { PlateRecognizerCuentas1790000026000 } from '../database/migrations/1790000026000-plate-recognizer-cuentas';
 import { OperationSettings1790000006000 } from '../database/migrations/1790000006000-operation-settings';
 import { AuthVersion1790000002000 } from '../database/migrations/1790000002000-auth-version';
 import { registerAs } from '@nestjs/config';
@@ -63,7 +66,7 @@ export default registerAs(
       // runs on the very first boot of an empty database (see DB_BOOTSTRAP above).
       synchronize: bootstrap,
       logging: false,
-      migrations: [OfflineMultipleDevices1790000013000, OfflineSessions1790000010000, FlexibleVehicleTypes1790000000000, TenantIsolation1790000001000, AuthVersion1790000002000, NoteReaders1790000003000, ParkingReceipts1790000004000, RegistrationPhone1790000005000, OperationSettings1790000006000, AuditDetalle1790000007000, AuditPermisos1790000008000, MercadoPagoCuentas1790000009000, CobrosMercadoPago1790000011000, CobrosAbonos1790000012000, AssistantPreguntas1790000014000, CuentaCorrienteInquilinos1790000015000, SimpleOperationDefaults1790000016000, CuentasCargosVencimientos1790000017000, CobrosQrInquilinos1790000018000, CocherasSinDuenio1790000019000, ReceiptOperators1790000020000, Suscripciones1790000021000, CuentaAlta1790000022000, FacturasAnticipadas1790000023000, DebitoAutomatico1790000024000, PeriodosDePago1790000025000],
+      migrations: [OfflineMultipleDevices1790000013000, OfflineSessions1790000010000, FlexibleVehicleTypes1790000000000, TenantIsolation1790000001000, AuthVersion1790000002000, NoteReaders1790000003000, ParkingReceipts1790000004000, RegistrationPhone1790000005000, OperationSettings1790000006000, AuditDetalle1790000007000, AuditPermisos1790000008000, MercadoPagoCuentas1790000009000, CobrosMercadoPago1790000011000, CobrosAbonos1790000012000, AssistantPreguntas1790000014000, CuentaCorrienteInquilinos1790000015000, SimpleOperationDefaults1790000016000, CuentasCargosVencimientos1790000017000, CobrosQrInquilinos1790000018000, CocherasSinDuenio1790000019000, ReceiptOperators1790000020000, Suscripciones1790000021000, CuentaAlta1790000022000, FacturasAnticipadas1790000023000, DebitoAutomatico1790000024000, PeriodosDePago1790000025000, PlateRecognizerCuentas1790000026000, TurnosPorUsuario1790000027000, CajasCompartidas1790000028000],
       migrationsRun: !bootstrap,
       migrationsTableName: 'migrations',
     }) as TypeOrmModuleOptions,

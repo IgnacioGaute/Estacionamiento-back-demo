@@ -8,14 +8,17 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Playa } from 'src/tenancy/entities/playa.entity';
+import { CashSession } from './cash-session.entity';
+import { CashRegister } from './cash-register.entity';
 import { User } from 'src/users/entities/user.entity';
 
 export const TURNO_ESTADO = ['ABIERTO', 'CERRADO'] as const;
 export type TurnoEstado = (typeof TURNO_ESTADO)[number];
 
-// Los turnos nuevos representan relevos sucesivos de una caja compartida.
+// Cada operador tiene su turno; el fondo y el arqueo pertenecen a la caja física.
 // cashVersion=1 conserva el cálculo de los turnos anteriores.
 @Entity({ name: 'turnos' })
+@Index('turnos_usuario_abierto', ['playaId', 'usuarioApertura'], { unique: true, where: "estado = 'ABIERTO'" })
 export class Turno {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -28,6 +31,11 @@ export class Turno {
   @JoinColumn({ name: 'playaId' })
   playa: Playa | null;
 
+  @Column('uuid', { nullable: true }) cajaId: string | null;
+  @ManyToOne(() => CashRegister, { nullable: true }) @JoinColumn({ name: 'cajaId' }) caja: CashRegister | null;
+  @Index() @Column('uuid', { nullable: true }) cashSessionId: string | null;
+  @ManyToOne(() => CashSession, { nullable: true }) @JoinColumn({ name: 'cashSessionId' }) cashSession: CashSession | null;
+  @Column('boolean', { default: false }) cierreCaja: boolean;
   @Column('int', { default: 1 }) cashVersion: number;
   @Column('varchar', { default: 'Turno' }) nombre: string;
   @Column('int', { nullable: true }) duracionPrevistaHoras: number | null;

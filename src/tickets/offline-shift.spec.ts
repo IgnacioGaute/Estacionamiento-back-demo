@@ -110,3 +110,53 @@ describe('sincronización de cobros de un turno', () => {
     expect(movements.create).toHaveBeenCalledWith(expect.objectContaining({ turno: null }));
   });
 });
+
+
+describe('efectivo por operador', () => {
+  it('busca el turno del usuario que cobra y no el de otro operador', async () => {
+    const cash = { save: jest.fn() };
+    const shift = { findOne: jest.fn().mockResolvedValue({ id: 'turno-propio' }) };
+    const manager = { getRepository: jest.fn(entity => {
+      if (entity === Turno) return shift;
+      if (entity === CashEntry) return cash;
+      if (entity === TicketScheduleSettings) return { findOne: jest.fn().mockResolvedValue({ shiftsEnabled: true }) };
+    }) };
+    const service = new BoxListsService(null!, null!, null!);
+    await (service as any).recordCash('caja', 500, manager, 'Cobro', undefined, 'usuario-propio');
+    expect(shift.findOne).toHaveBeenCalledWith({ where: { usuarioApertura: { id: 'usuario-propio' }, estado: 'ABIERTO', cashVersion: 2 } });
+    expect(cash.save).toHaveBeenCalledWith(expect.objectContaining({ turnoId: 'turno-propio' }));
+  });
+  it('rechaza el efectivo de un usuario sin turno aunque otros tengan uno abierto', async () => {
+    const cash = { save: jest.fn() };
+    const shift = { findOne: jest.fn().mockResolvedValue(null), exists: jest.fn().mockResolvedValue(true) };
+    const manager = { getRepository: jest.fn(entity => {
+      if (entity === Turno) return shift;
+      if (entity === CashEntry) return cash;
+      if (entity === TicketScheduleSettings) return { findOne: jest.fn().mockResolvedValue({ shiftsEnabled: true }) };
+    }) };
+    const service = new BoxListsService(null!, null!, null!);
+    await expect((service as any).recordCash('caja', 500, manager, 'Cobro', undefined, 'sin-turno')).rejects.toThrow('Abrí tu turno');
+    expect(cash.save).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('preparación offline por usuario', () => {
+  it('captura únicamente el turno propio para una nueva contingencia', async () => {
+    const { OfflineService } = await import('./offline.service');
+    const { OfflineSession } = await import('./entities/offline-session.entity');
+    const { tenantContext } = await import('../tenancy/tenant-context');
+    const shift = { findOne: jest.fn().mockResolvedValue({ id: 'turno-propio' }) };
+    const stop = new Error('terminar tras seleccionar turno');
+    const manager = { query: jest.fn(), getRepository: jest.fn(entity => {
+      if (entity === Turno) return shift;
+      if (entity === OfflineSession) return { findOne: jest.fn().mockRejectedValue(stop) };
+    }) };
+    const ds = { transaction: jest.fn(callback => callback(manager)) };
+    const service = new OfflineService(ds as never, { getSchedule: jest.fn().mockResolvedValue({ shiftsEnabled: true }) } as never, null!, null!, null!);
+    await tenantContext.run({ userId: 'usuario-propio', playaId: 'playa', empresaId: 'empresa', role: 'USER' }, async () => {
+      await expect(service.prepare('dispositivo')).rejects.toBe(stop);
+    });
+    expect(shift.findOne).toHaveBeenCalledWith({ where: { usuarioApertura: { id: 'usuario-propio' }, estado: 'ABIERTO', cashVersion: 2 } });
+  });
+});

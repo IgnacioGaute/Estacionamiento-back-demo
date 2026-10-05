@@ -2,9 +2,9 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 // Los tokens de MercadoPago de cada empresa se guardan cifrados. Con un token en texto plano
 // alcanza para cobrar en nombre del cliente, así que cualquiera que llegue a leer la base —un
-// backup, un dump, una consulta de soporte— podría hacerlo. Es la primera credencial por inquilino
-// del sistema: las demás claves de terceros (Cloudinary, Gemini, Plate Recognizer) son del proceso
-// y viven en el entorno, no en la base.
+// backup, un dump, una consulta de soporte— podría hacerlo. Lo mismo vale para el token de Plate
+// Recognizer de cada playa (plate_recognizer_cuentas), que se cifra con esta misma clave. Las demás
+// claves de terceros (Cloudinary, Gemini) son del proceso y viven en el entorno, no en la base.
 //
 // AES-256-GCM y no AES-CBC porque además de cifrar autentica: si alguien edita el texto guardado,
 // el descifrado falla en vez de devolver basura que después se manda a MercadoPago.

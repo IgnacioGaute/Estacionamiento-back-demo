@@ -53,6 +53,9 @@ export class TicketScheduleSettings {
   @Column('boolean', { default: false })
   shiftsEnabled: boolean;
 
+  @Column('boolean', { default: false })
+  multipleShiftsEnabled: boolean;
+
   @Column('jsonb', { nullable: true })
   pricingOptions: PricingOptions | null;
 

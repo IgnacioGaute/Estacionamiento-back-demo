@@ -142,6 +142,8 @@ before(async () => {
     await new (load('database/migrations/1790000023000-facturas-anticipadas', 'FacturasAnticipadas1790000023000'))().up(migrationRunner);
     await new (load('database/migrations/1790000024000-debito-automatico', 'DebitoAutomatico1790000024000'))().up(migrationRunner);
     await new (load('database/migrations/1790000025000-periodos-de-pago', 'PeriodosDePago1790000025000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000026000-plate-recognizer-cuentas', 'PlateRecognizerCuentas1790000026000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000028000-cajas-compartidas', 'CajasCompartidas1790000028000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -772,7 +774,7 @@ test('configuracion: turnos desactivados permiten caja diaria y bloquean apertur
     await app.get(BoxListsService).createBox({ date: '2026-09-24', totalPrice: 150 });
     await service.updateSchedule({ shiftsEnabled: true });
     const shift = await shifts.open(b.userId, { fondoInicial: 100 });
-    await assert.rejects(service.updateSchedule({ shiftsEnabled: false }), /Cerrá el turno/);
+    await assert.rejects(service.updateSchedule({ shiftsEnabled: false }), /Cerrá todos los turnos/);
     await shifts.close(shift.id, b.userId, { efectivoContado: 100, efectivoEsperado: 100, efectivoParaSiguiente: 100 }, 'ADMIN');
     await service.updateSchedule({ shiftsEnabled: false });
     // Hay historial v2, pero al desactivar no debe exigirse abrir otro turno.
@@ -908,4 +910,110 @@ test('empresa suspendida: entra, ve su plan y saca autos; no registra entradas n
 
   await ds.getRepository(Empresa).update(empresa.id, { estado: 'BAJA' });
   await http('get', '/tenant/context').expect(403);
+});
+
+test('reconocimiento de patentes: cada playa con su token, cifrado, cargado solo por el super admin', async () => {
+  const VALIDO = 'tokenvalidoA1abcdefghij1234';
+  const fetchReal = globalThis.fetch;
+  const claveReal = process.env.MERCADOPAGO_TOKEN_KEY;
+  const lecturas = [];
+  process.env.MERCADOPAGO_TOKEN_KEY = 'b'.repeat(64);
+  globalThis.fetch = async (url, init) => {
+    const destino = String(url);
+    if (!destino.startsWith('https://api.platerecognizer.com/')) return fetchReal(url, init);
+    if (init.headers.Authorization !== 'Token ' + VALIDO) return Response.json({ detail: 'Invalid token.' }, { status: 403 });
+    if (destino.endsWith('/statistics/')) return Response.json({ total_calls: 2500, usage: { calls: 40, resets_on: '2026-10-24T00:00:00Z' } });
+    lecturas.push(init.body.get('regions'));
+    return Response.json({ results: [{ plate: 'ab123cd', score: 0.93 }] });
+  };
+  // adminA ya fue dado de baja por un test anterior: la empresa A necesita un administrador vigente.
+  const admin = await ds.getRepository(User).save({ username: 'adminPatentes', email: 'patentes@example.test', firstName: 'P', lastName: 'Admin', role: 'ADMIN', empresaId: a.empresaId });
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(32)]);
+  const escanear = (playaId) =>
+    request(app.getHttpServer())
+      .post('/plate-recognition/scan')
+      .set('Authorization', 'Bearer ' + token(admin))
+      .set('X-Playa-Id', playaId)
+      .attach('image', jpeg, { filename: 'patente.jpg', contentType: 'image/jpeg' });
+  const filas = (scope) => scoped(scope, () => ds.query('SELECT "playaId" FROM plate_recognizer_cuentas'));
+
+  try {
+    // Sin token no hay reconocimiento: ninguna key de la plataforma lo reemplaza.
+    const sinPlan = await escanear(a.playaId).expect(403);
+    assert.equal(sinPlan.body.code, 'PATENTES_SIN_PLAN');
+
+    await call('put', `playas/${a.playaId}/patentes`, admin).send({ token: VALIDO }).expect(403);
+    const invalido = await call('put', `playas/${a.playaId}/patentes`).send({ token: 'tokenajeno0000000000000' }).expect(400);
+    assert.equal(invalido.body.code, 'PLATE_RECOGNIZER_TOKEN_INVALIDO');
+    assert.equal((await ds.query('SELECT count(*)::int AS n FROM plate_recognizer_cuentas'))[0].n, 0);
+
+    // Se acepta pegado con el prefijo de la documentación de Plate Recognizer.
+    const cargado = await call('put', `playas/${a.playaId}/patentes`).send({ token: 'Token ' + VALIDO }).expect(200);
+    assert.deepEqual(cargado.body.uso, { usadas: 40, total: 2500, restantes: 2460, seRenueva: '2026-10-24T00:00:00Z' });
+    const [guardado] = await ds.query('SELECT token, "terminaEn" FROM plate_recognizer_cuentas WHERE "playaId" = $1', [a.playaId]);
+    assert.ok(!guardado.token.includes(VALIDO));
+    assert.equal(guardado.terminaEn, VALIDO.slice(-4));
+    const [auditoria] = await ds.query(`SELECT accion FROM audit_log WHERE "playaId" = $1 AND accion LIKE 'PLAYA_PATENTES%'`, [a.playaId]);
+    assert.equal(auditoria.accion, 'PLAYA_PATENTES_CONFIGURADA');
+
+    const consumo = await call('get', `empresas/${a.empresaId}/patentes`).expect(200);
+    assert.deepEqual(consumo.body.map((p) => [p.nombre, p.configurado, p.uso?.restantes]), [['A1', true, 2460], ['A2', false, undefined]]);
+    assert.ok(!JSON.stringify(consumo.body).includes(VALIDO));
+
+    // El rol operativo solo lee la fila de su playa y no puede escribir ninguna.
+    assert.deepEqual(await filas(a), [{ playaId: a.playaId }]);
+    assert.deepEqual(await filas(a2), []);
+    assert.deepEqual(await filas(b), []);
+    await assert.rejects(scoped(a, () => ds.query('DELETE FROM plate_recognizer_cuentas')), /permission denied/);
+
+    const contexto = await request(app.getHttpServer()).get('/tenant/context').set('Authorization', 'Bearer ' + token(admin)).expect(200);
+    assert.deepEqual(contexto.body.playas.map((p) => [p.nombre, p.reconocimientoPatentes]), [['A1', true], ['A2', false]]);
+
+    const leida = await escanear(a.playaId).expect(201);
+    assert.deepEqual(leida.body, { plate: 'AB123CD', score: 0.93 });
+    assert.deepEqual(lecturas, ['ar']);
+    assert.equal((await escanear(a2.playaId).expect(403)).body.code, 'PATENTES_SIN_PLAN');
+
+    await call('delete', `playas/${a.playaId}/patentes`).expect(200);
+    assert.deepEqual(await filas(a), []);
+    assert.equal((await escanear(a.playaId).expect(403)).body.code, 'PATENTES_SIN_PLAN');
+  } finally {
+    globalThis.fetch = fetchReal;
+    if (claveReal === undefined) delete process.env.MERCADOPAGO_TOKEN_KEY;
+    else process.env.MERCADOPAGO_TOKEN_KEY = claveReal;
+  }
+});
+
+
+test('cajas: aislamiento de sesiones, referencias y configuración administrativa', async () => {
+  const service = app.get(TurnosService);
+  const Register = load('turnos/entities/cash-register.entity', 'CashRegister');
+  const Session = load('turnos/entities/cash-session.entity', 'CashSession');
+  const cashAdmin = await ds.getRepository(User).save({ username: 'cash-admin', email: 'cash-admin@test.local', firstName: 'Cash', lastName: 'Admin', role: 'ADMIN', empresaId: a.empresaId });
+  const contextA = { ...a2, userId: cashAdmin.id, role: 'ADMIN' };
+  const cajaA = await scoped(contextA, async () => {
+    await app.get(TicketsService).updateSchedule({ shiftsEnabled: true, multipleShiftsEnabled: true });
+    return (await service.getConfiguration()).cajas.find(c => c.principal);
+  });
+  const cajaB = await scoped(b, async () => (await service.getConfiguration()).cajas.find(c => c.principal));
+  const shift = await scoped(contextA, () => service.open(cashAdmin.id, { cajaId: cajaA.id, fondoInicial: 1200 }));
+  await scoped({ ...b, role: 'ADMIN' }, async () => {
+    assert.equal(await ds.getRepository(Register).findOneBy({ id: cajaA.id }), null);
+    assert.equal(await ds.getRepository(Session).findOneBy({ id: shift.cashSessionId }), null);
+    const ctx = await service.getCashContext();
+    assert.ok(ctx.cajas.every(c => c.playaId === b.playaId));
+    await assert.rejects(service.saveCaja({ nombre: 'Ajena' }, cajaA.id), /no encontrada/);
+    await assert.rejects(service.addCashMovement(shift.cashSessionId, b.userId, { tipo: 'RETIRO', importe: 100, efectivoEsperado: 1200, motivo: 'Ajena' }, 'ADMIN'), /cerrada/);
+    await app.get(TicketsService).updateSchedule({ shiftsEnabled: true, multipleShiftsEnabled: true });
+    await assert.rejects(service.open(b.userId, { cajaId: cajaA.id, fondoInicial: 0 }), /caja habilitada/);
+    await assert.rejects(ds.getRepository(Session).save({ cajaId: cajaA.id, fondoInicial: 0 }), /Referencia fuera/);
+    assert.ok((await service.getConfiguration()).cajas.some(c => c.id === cajaB.id));
+  });
+  await scoped(contextA, () => service.close(shift.id, cashAdmin.id, { cerrarCaja: true, efectivoContado: 1200, efectivoEsperado: 1200, efectivoParaSiguiente: 1200 }, 'ADMIN'));
+  const operator = await ds.getRepository(User).save({ username: 'cash-policy', email: 'cash-policy@test.local', firstName: 'Cash', lastName: 'Policy', role: 'USER', empresaId: b.empresaId });
+  for (const [method, route] of [['get', '/turnos/configuracion'], ['post', '/turnos/cajas'], ['patch', '/turnos/cajas/' + cajaB.id]]) {
+    await request(app.getHttpServer())[method](route).set('Authorization', 'Bearer ' + token(operator)).send({ nombre: 'No permitido' }).expect(403);
+  }
+  const visible = await request(app.getHttpServer()).get('/turnos/configuracion').set('Authorization', 'Bearer ' + token(adminB)).expect(200);
+  assert.ok(visible.body.cajas.every(c => c.playaId === b.playaId));
 });

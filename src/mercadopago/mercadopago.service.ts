@@ -19,6 +19,22 @@ const TIEMPO_LIMITE_MS = 12_000;
 // MercadoPago da tokens de 180 días; si alguna vez no informa el vencimiento, se asume ese plazo.
 const VIGENCIA_POR_DEFECTO = 15_552_000;
 
+// Solo los campos simples (texto, número, sí/no) de un objeto de MercadoPago: para mostrar en el
+// diagnóstico respuestas cuya forma todavía no se conoce, sin arrastrar estructuras enteras.
+function primitivos(
+  objeto: unknown,
+): Record<string, string | number | boolean | null> {
+  if (!objeto || typeof objeto !== 'object') return {};
+  return Object.fromEntries(
+    Object.entries(objeto)
+      .filter(
+        ([, v]) =>
+          v === null || ['string', 'number', 'boolean'].includes(typeof v),
+      )
+      .slice(0, 30),
+  ) as Record<string, string | number | boolean | null>;
+}
+
 interface RespuestaToken {
   access_token: string;
   refresh_token: string;
@@ -181,6 +197,156 @@ export class MercadoPagoService {
     if (cuenta.expiraEl.getTime() - margen > Date.now())
       return descifrarToken(cuenta.accessToken);
     return this.renovar(cuenta);
+  }
+
+  /**
+   * Diagnóstico del super admin: qué muestra MercadoPago de la plata que entró a la cuenta
+   * conectada de una empresa en los últimos días. Existe para averiguar si las transferencias al
+   * alias de la playa se ven desde acá (y con qué datos) antes de construir nada encima. Solo lee:
+   * no guarda nada ni toca cobros.
+   *
+   * Pregunta a tres lugares y devuelve lo que contestó cada uno, también si falló: los pagos
+   * (`/v1/payments/search`), los movimientos de la cuenta y el saldo. Si una transferencia no
+   * aparece como pago, el saldo al menos dice si la plata llegó.
+   */
+  async diagnosticoIngresos(empresaId: string, dias: number) {
+    const cuenta = await this.cuentas.findOneBy({ empresaId });
+    const token = await this.tokenDeEmpresa(empresaId);
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000);
+    const hasta = new Date();
+
+    const busqueda = new URLSearchParams({
+      sort: 'date_created',
+      criteria: 'desc',
+      range: 'date_created',
+      begin_date: desde.toISOString(),
+      end_date: hasta.toISOString(),
+      limit: '50',
+    });
+    const [pagos, movimientos, saldo] = await Promise.all([
+      this.consultar(`${API}/v1/payments/search?${busqueda}`, token),
+      this.consultar(
+        `${API}/mercadopago_account/movements/search?limit=50&offset=0`,
+        token,
+      ),
+      this.consultar(
+        `${API}/users/${cuenta?.mpUserId}/mercadopago_account/balance`,
+        token,
+      ),
+    ]);
+
+    return {
+      cuenta: {
+        mpUserId: cuenta?.mpUserId ?? null,
+        nickname: cuenta?.nickname ?? null,
+        email: cuenta?.email ?? null,
+      },
+      desde: desde.toISOString(),
+      hasta: hasta.toISOString(),
+      pagos: pagos.ok
+        ? {
+            ok: true as const,
+            total: pagos.datos?.paging?.total ?? null,
+            items: ((pagos.datos?.results ?? []) as any[]).map((p) =>
+              this.pagoParaDiagnostico(p, cuenta?.mpUserId),
+            ),
+          }
+        : pagos,
+      movimientos: movimientos.ok
+        ? {
+            ok: true as const,
+            total: movimientos.datos?.paging?.total ?? null,
+            items: (
+              (movimientos.datos?.results ?? movimientos.datos ?? []) as any[]
+            )
+              .slice(0, 50)
+              .map(primitivos),
+          }
+        : movimientos,
+      saldo: saldo.ok
+        ? { ok: true as const, ...primitivos(saldo.datos) }
+        : saldo,
+    };
+  }
+
+  // Lo que sirve para reconocer de dónde vino la plata. Los datos del que pagó viajan solo a esta
+  // pantalla del super admin y no se guardan.
+  private pagoParaDiagnostico(p: any, mpUserId?: string) {
+    const bancos = p.point_of_interaction?.transaction_data?.bank_info;
+    return {
+      id: p.id,
+      creado: p.date_created ?? null,
+      aprobado: p.date_approved ?? null,
+      estado: p.status ?? null,
+      detalle: p.status_detail ?? null,
+      importe: p.transaction_amount ?? null,
+      neto: p.transaction_details?.net_received_amount ?? null,
+      operacion: p.operation_type ?? null,
+      tipo: p.payment_type_id ?? null,
+      medio: p.payment_method_id ?? null,
+      descripcion: p.description ?? null,
+      referencia: p.external_reference ?? null,
+      // Si la cuenta conectada es la que cobró o la que pagó: la búsqueda puede traer los dos.
+      recibido: mpUserId ? String(p.collector_id) === String(mpUserId) : null,
+      pagador: {
+        id: p.payer?.id ?? null,
+        nombre:
+          [p.payer?.first_name, p.payer?.last_name].filter(Boolean).join(' ') ||
+          null,
+        email: p.payer?.email ?? null,
+        documento: p.payer?.identification?.number
+          ? `${p.payer.identification.type ?? ''} ${p.payer.identification.number}`.trim()
+          : null,
+      },
+      origen: p.point_of_interaction
+        ? {
+            tipo: p.point_of_interaction.type ?? null,
+            subtipo: p.point_of_interaction.sub_type ?? null,
+            banco: bancos
+              ? {
+                  pagador: primitivos(bancos.payer),
+                  cobrador: primitivos(bancos.collector),
+                  transferencia: bancos.is_same_bank_account_owner ?? null,
+                }
+              : null,
+          }
+        : null,
+      claves: Object.keys(p ?? {}),
+    };
+  }
+
+  // Como `llamar`, pero sin cortar: el diagnóstico quiere saber también qué contestó cuando falla.
+  // De un error solo se devuelve el mensaje de MercadoPago, recortado, nunca el cuerpo entero.
+  private async consultar(
+    url: string,
+    token: string,
+  ): Promise<
+    | { ok: true; datos: any }
+    | { ok: false; estado: number | null; error: string }
+  > {
+    try {
+      const respuesta = await fetch(url, {
+        headers: { authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(TIEMPO_LIMITE_MS),
+      });
+      const datos = await respuesta.json().catch(() => null);
+      if (respuesta.ok) return { ok: true, datos };
+      const mensaje = [datos?.error, datos?.message].filter(Boolean).join(': ');
+      return {
+        ok: false,
+        estado: respuesta.status,
+        error: String(mensaje || 'Sin detalle').slice(0, 200),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        estado: null,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'No se pudo contactar a MercadoPago.',
+      };
+    }
   }
 
   private async renovar(cuenta: CuentaMercadoPago): Promise<string> {

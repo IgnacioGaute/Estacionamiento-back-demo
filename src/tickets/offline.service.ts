@@ -32,7 +32,7 @@ export class OfflineService {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const schedule = await this.tickets.getSchedule(manager);
       const shift = schedule.shiftsEnabled
-        ? await manager.getRepository(Turno).findOne({ where: { estado: 'ABIERTO', cashVersion: 2 } })
+        ? await manager.getRepository(Turno).findOne({ where: { usuarioApertura: { id: scope.userId }, estado: 'ABIERTO', cashVersion: 2 } })
         : null;
       const repo = manager.getRepository(OfflineSession);
       const active = await repo.findOne({ where: { playaId: scope.playaId, userId: scope.userId, deviceId, active: true }, order: { createdAt: 'DESC' } });
@@ -109,7 +109,7 @@ export class OfflineService {
       const shiftId = session.snapshot.shiftsEnabled === true ? session.snapshot.shift?.id as string | undefined : undefined;
       if (dto.kind === 'EXIT' && shiftId) {
         if (!settings?.shiftsEnabled) throw new ConflictException('Cambió la configuración de turnos. Conservá la operación pendiente para revisión.');
-        const shift = await manager.getRepository(Turno).findOne({ where: { id: shiftId, estado: 'ABIERTO', cashVersion: 2 }, lock: { mode: 'pessimistic_write' } });
+        const shift = await manager.getRepository(Turno).findOne({ where: { id: shiftId, usuarioApertura: { id: scope.userId }, estado: 'ABIERTO', cashVersion: 2 }, lock: { mode: 'pessimistic_write' } });
         if (!shift) throw new ConflictException('El turno del corte ya está cerrado. La operación sigue pendiente; revisá el arqueo antes de sincronizarla.');
       } else if (dto.kind === 'EXIT' && session.snapshot.shiftsEnabled !== true && settings?.shiftsEnabled === true) {
         throw new ConflictException('Los turnos se activaron durante esta contingencia. La operación sigue pendiente para revisión.');

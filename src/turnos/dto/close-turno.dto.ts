@@ -1,10 +1,11 @@
-import { IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 export class CloseTurnoDto {
+  @IsBoolean() @IsOptional() cerrarCaja?: boolean;
   @IsInt()
   @Min(0)
-  @IsNotEmpty()
-  efectivoContado: number;
+  @IsOptional()
+  efectivoContado?: number;
 
   @IsInt()
   @Min(0)

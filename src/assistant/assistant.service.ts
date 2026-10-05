@@ -36,10 +36,10 @@ export class AssistantService {
     }
     if (name === 'current_cash') {
       const c = await this.turnos.getCashContext();
-      return { open: !!c.active, openedAt: c.active?.fechaApertura, openingCash: c.active?.fondoInicial, expectedCash: c.efectivoDisponible };
+      return { open: !!c.active, openedAt: c.active?.fechaApertura, register: c.active?.caja?.nombre, ownNetCash: c.active?.efectivoOperado, operatorsSharingRegister: c.active?.usuariosEnCaja, requiresCashCount: c.active?.requiereArqueo, expectedCash: c.active?.efectivoDisponible ?? null, scope: "Efectivo físico total de la caja del turno propio, incluyendo operaciones de otros usuarios que la comparten. No es recaudación individual ni total de todas las cajas." };
     }
     if (name === 'pricing_settings') {
-      const schedule = await this.ds.getRepository(TicketScheduleSettings).findOne({ where: { playaId: scope.playaId }, select: { dayStartHour: true, dayEndHour: true, graceMinutes: true, pricingDayTypeBasis: true, pricingOptions: true, barcodeTicketsEnabled: true, shiftsEnabled: true, receiptDelivery: true } });
+      const schedule = await this.ds.getRepository(TicketScheduleSettings).findOne({ where: { playaId: scope.playaId }, select: { dayStartHour: true, dayEndHour: true, graceMinutes: true, pricingDayTypeBasis: true, pricingOptions: true, barcodeTicketsEnabled: true, shiftsEnabled: true, multipleShiftsEnabled: true, receiptDelivery: true } });
       const [brackets, total] = await this.ds.getRepository(TicketPriceBracket).findAndCount({ where: { playaId: scope.playaId }, select: { vehicleType: true, ticketDayType: true, label: true, uptoMinutes: true, price: true, recurringUnitMinutes: true, recurringPriceMode: true }, order: { vehicleType: 'ASC', uptoMinutes: 'ASC' }, take: 60 });
       return { schedule, brackets, total, limited: total > brackets.length, scope: 'Configuración guardada para nuevos ingresos; las estadías existentes conservan sus tarifas.' };
     }
@@ -53,7 +53,7 @@ export class AssistantService {
     }
     if (name === 'shift_history') {
       if (scope.role !== 'ADMIN') throw new ForbiddenException('Solo administración puede consultar cierres.');
-      const rows = await this.ds.getRepository('Turno').createQueryBuilder('t').where('t.playaId = :playa', { playa: scope.playaId }).andWhere("t.estado = 'CERRADO'").select(['t.fechaApertura', 't.fechaCierre', 't.efectivoContado', 't.efectivoTeorico', 't.efectivoRetirado', 't.efectivoParaSiguiente', 't.diferencia']).orderBy('t.fechaCierre', 'DESC').take(5).getMany();
+      const rows = await this.ds.getRepository('Turno').createQueryBuilder('t').where('t.playaId = :playa', { playa: scope.playaId }).andWhere("t.estado = 'CERRADO'").select(['t.fechaApertura', 't.fechaCierre', 't.efectivoContado', 't.efectivoTeorico', 't.efectivoRetirado', 't.efectivoParaSiguiente', 't.diferencia', 't.cierreCaja', 't.cashSessionId']).orderBy('t.fechaCierre', 'DESC').take(5).getMany();
       return { scope: 'Últimos cinco turnos cerrados de esta playa; no es un total del período', rows };
     }
     throw new ForbiddenException('Consulta no habilitada.');
@@ -84,7 +84,7 @@ export class AssistantService {
       const contents: Content[] = [...(previous?.contents ?? []), { role: 'user', parts: [{ text: dto.message.trim() }] }];
       const functions = [
         { name: 'active_vehicles', description: 'Cantidad de estadías por hora activas y hasta 15 registros. Opcional buscar patente o ticket exactos.', parameters: { type: 'OBJECT', properties: { search: { type: 'STRING' } } } },
-        { name: 'current_cash', description: 'Turno abierto y efectivo esperado actual de esta playa.' },
+        { name: 'current_cash', description: 'Turno propio, caja física compartida, efectivo esperado total de esa caja y efectivo neto de operaciones propias.' },
         { name: 'pricing_settings', description: 'Tarifas por duración, horarios, forma de cobro y configuración de entrega de comprobantes de esta playa: WhatsApp, QR, impresión y ancho de papel.' },
         { name: 'ticket_amount', description: 'Importe y desglose actual de un ingreso activo. Primero obtener su id mediante active_vehicles.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' } }, required: ['id'] } },
         ...(s.role === 'ADMIN' ? [{ name: 'shift_history', description: 'Últimos cinco cierres de turno, sin totales de recaudación.' }] : []),

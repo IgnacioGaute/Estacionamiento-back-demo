@@ -197,7 +197,7 @@ async removeTicketPrice(id: string) {
 }
 
 
-  private readonly defaultTicketSchedule = { dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, barcodeTicketsEnabled: false, shiftsEnabled: false, pricingDayTypeBasis: 'EXIT' as const };
+  private readonly defaultTicketSchedule = { dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, barcodeTicketsEnabled: false, shiftsEnabled: false, multipleShiftsEnabled: false, pricingDayTypeBasis: 'EXIT' as const };
 
   async getSchedule(manager?: EntityManager) {
     const repository = manager ? manager.getRepository(TicketScheduleSettings) : this.ticketScheduleSettingsRepository;
@@ -214,7 +214,7 @@ async removeTicketPrice(id: string) {
       if (dto.shiftsEnabled === false) {
         await manager.query('SELECT pg_advisory_xact_lock(718904)');
         const open = await manager.query(`SELECT id FROM turnos WHERE estado = 'ABIERTO' LIMIT 1`);
-        if (open.length) throw new BadRequestException('Cerrá el turno abierto antes de desactivar los turnos.');
+        if (open.length) throw new BadRequestException('Cerrá todos los turnos abiertos antes de desactivar los turnos.');
       }
       if (dto.pricingOptions) {
         dto.pricingOptions = { ...dto.pricingOptions, stay: { ...dto.pricingOptions.stay, enabled: false } };
@@ -229,6 +229,13 @@ async removeTicketPrice(id: string) {
       const repository = manager.getRepository(TicketScheduleSettings);
       const [current] = await repository.find({ order: { updatedAt: 'DESC' }, take: 1 });
       const merged = { ...this.defaultTicketSchedule, ...current, ...dto };
+      if (dto.shiftsEnabled === false) merged.multipleShiftsEnabled = false;
+      if (merged.multipleShiftsEnabled && !merged.shiftsEnabled) throw new BadRequestException('Activá Turnos de caja antes de permitir turnos múltiples.');
+      if (merged.multipleShiftsEnabled !== (current?.multipleShiftsEnabled ?? false)) {
+        await manager.query('SELECT pg_advisory_xact_lock(718904)');
+        const open = await manager.query("SELECT id FROM turnos WHERE estado = 'ABIERTO' LIMIT 1");
+        if (open.length) throw new ConflictException('Cerrá todos los turnos antes de cambiar el modo de trabajo.');
+      }
       if (merged.pricingOptions) merged.pricingOptions = { ...merged.pricingOptions, stay: { ...merged.pricingOptions.stay, enabled: false } };
       if (merged.dayStartHour === merged.dayEndHour) throw new BadRequestException('El inicio y el fin del horario diurno deben ser diferentes.');
       return repository.save(repository.create(merged));
@@ -675,7 +682,7 @@ async addAdvancePayment(id: string, dto: AdvancePaymentTicketRegistrationDto, us
       if (!dto.metodo) throw new BadRequestException('Elegí el medio de pago o devolución.');
       if (delta < 0 && !dto.adjustmentReason?.trim()) throw new BadRequestException('Para reducir un anticipo, ingresá el motivo de la devolución.');
       await this.movimientosService.create({ ticketRegistrationId: id, monto: delta, metodo: dto.metodo, tipo: delta > 0 ? 'ANTICIPO' : 'AJUSTE', motivo: dto.adjustmentReason, usuarioId }, manager);
-      await this.linkToTodaysBoxList(registration, dto.metodo === 'CASH' ? delta : 0, manager);
+      await this.linkToTodaysBoxList(registration, dto.metodo === 'CASH' ? delta : 0, manager, usuarioId);
     }
     registration.advancePaidAmount = target;
     if (dto.firstNameCustomer !== undefined) registration.firstNameCustomer = dto.firstNameCustomer;
@@ -736,7 +743,7 @@ async registrarPagoExterno(
     if (!registration) throw new NotFoundException('Registro no encontrado.');
     if (registration.departureTime) throw new BadRequestException('El ticket ya está cerrado.');
     await this.movimientosService.create({ ticketRegistrationId: registrationId, monto, metodo, tipo: 'ANTICIPO', referencia, usuarioId }, manager);
-    await this.linkToTodaysBoxList(registration, metodo === 'CASH' ? monto : 0, manager);
+    await this.linkToTodaysBoxList(registration, metodo === 'CASH' ? monto : 0, manager, usuarioId);
     registration.advancePaidAmount = await this.collectedAmount(registration, manager);
     await repository.save(registration);
     return repository.findOne({ where: { id: registrationId }, relations: ['ticket'] });
@@ -1054,9 +1061,9 @@ async removePriceBracket(id: string) {
       pricingDayType: preview.ticketDayType, pricingDayTypeBasis: preview.pricingDayTypeBasis, tariffSnapshotUsed: preview.tariffSnapshotUsed };
   }
 
-  private async linkToTodaysBoxList(registration: TicketRegistration, amount: number, manager: EntityManager) {
+  private async linkToTodaysBoxList(registration: TicketRegistration, amount: number, manager: EntityManager, usuarioId?: string) {
     const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
-    const box = await this.boxListsService.applyTicketPayment(date, amount, manager);
+    const box = await this.boxListsService.applyTicketPayment(date, amount, manager, undefined, usuarioId);
     registration.dateNow = date;
     registration.boxList = { id: box.id } as BoxList;
   }
@@ -1108,7 +1115,7 @@ async removePriceBracket(id: string) {
       registration.appliedPricingDayType = preview.ticketDayType === 'MIXED' ? null : preview.ticketDayType;
       registration.exceededExpectedStay = registration.expectedUptoMinutes != null && preview.elapsedMinutes > registration.expectedUptoMinutes;
       registration.description = `${registration.entryMode === 'BARCODE' ? 'Ticket: ' + registration.codeBarTicket : 'Patente: ' + (registration.licensePlateOriginal ?? 'sin patente')}, Ent: ${registration.entryTime}, Sal: ${registration.departureTime}`;
-      await this.linkToTodaysBoxList(registration, cashDelta, manager);
+      await this.linkToTodaysBoxList(registration, cashDelta, manager, usuarioId);
       registration.ticket = null;
       return repository.save(registration);
     });
