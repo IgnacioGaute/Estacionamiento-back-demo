@@ -1,7 +1,19 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 const PLATE_RECOGNIZER_URL = 'https://api.platerecognizer.com/v1/plate-reader/';
+// Límite de Snapshot Cloud. Una foto de celular sin achicar lo supera casi siempre (el front la
+// reduce antes de subirla); se corta acá para no gastar un viaje que Plate Recognizer va a rechazar.
+export const PLATE_IMAGE_MAX_BYTES = 3 * 1024 * 1024;
+const FOTO_PESADA = {
+  code: 'PLATE_IMAGE_TOO_LARGE',
+  message: 'La foto es demasiado pesada para reconocer la patente. Probá de nuevo o escribila manualmente.',
+};
 
 export type PlateRecognitionResult = { plate: string | null; score?: number };
 
@@ -20,6 +32,10 @@ export class PlateRecognitionService {
       throw new InternalServerErrorException(
         'El reconocimiento de patente por cámara no está configurado en el servidor.',
       );
+    }
+
+    if (file.size > PLATE_IMAGE_MAX_BYTES) {
+      throw new BadRequestException(FOTO_PESADA);
     }
 
     const formData = new FormData();
@@ -46,6 +62,10 @@ export class PlateRecognitionService {
     if (response.status === 401 || response.status === 403) {
       this.logger.error(`Plate Recognizer rechazó la autenticación (status ${response.status}).`);
       throw new InternalServerErrorException('El servicio de reconocimiento de patente rechazó la autenticación.');
+    }
+    if (response.status === 413) {
+      this.logger.warn(`Plate Recognizer rechazó una imagen de ${file.size} bytes por tamaño.`);
+      throw new BadRequestException(FOTO_PESADA);
     }
     if (response.status === 429) {
       this.logger.warn('Plate Recognizer: límite de cuota mensual alcanzado.');

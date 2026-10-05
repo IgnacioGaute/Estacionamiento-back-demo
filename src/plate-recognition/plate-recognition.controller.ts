@@ -21,7 +21,9 @@ export class PlateRecognitionController {
   @UseInterceptors(
     FileInterceptor('image', {
       storage: memoryStorage(),
-      limits: { fileSize: 6 * 1024 * 1024 }, // 6MB alcanza de sobra para una foto de celular
+      // Tope duro de la subida. Plate Recognizer acepta hasta 3 MB y eso lo valida el servicio con
+      // un mensaje en castellano; multer respondería «File too large» a secas.
+      limits: { fileSize: 6 * 1024 * 1024 },
     }),
   )
   async scan(
