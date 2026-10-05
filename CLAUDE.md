@@ -63,7 +63,9 @@ los de Plate Recognizer de cada playa),
 `PLATAFORMA_DATOS_PAGO` / `PLATAFORMA_WHATSAPP` (opcionales: datos de transferencia y WhatsApp que ve una empresa
 en «Mi plan» para pagarle a la plataforma),
 `MERCADOPAGO_PLATAFORMA_{ACCESS_TOKEN,PUBLIC_KEY,WEBHOOK_SECRET,WEBHOOK_URL}` y `PLATAFORMA_URL_FRONT` (la cuenta de
-MercadoPago donde la plataforma cobra el plan; otra aplicación que la de los QR de las empresas).
+MercadoPago donde la plataforma cobra el plan; otra aplicación que la de los QR de las empresas),
+`MERCADOPAGO_PRUEBA_CUENTAS` (ids de vendedor de MercadoPago separados por coma: las únicas cuentas sobre las que
+corre la prueba de transferencias del super admin; vacío = ninguna).
 
 `scripts/start-compiled.cjs` registers `tsconfig-paths` before `dist/main` — sources import each other as
 `src/...`, so plain `node dist/main` only works where those paths resolve.
@@ -73,7 +75,8 @@ first, one transaction, only unassigned rows, safe to rerun).
 Domain docs: `docs/tickets-tarifas.md` (tarifas y cierres), `docs/caja-turnos.md` (caja/turnos),
 `docs/administracion-plataforma.md` (empresas, playas, RLS), `docs/comprobantes.md` (entrega de comprobantes),
 `docs/security-review.md` (controles vigentes), `docs/planes-y-cuentas.md` (planes, vencimientos y suspensión de
-empresas), `src/assistant/README.md` (asistente).
+empresas), `docs/verificacion-transferencias.md` (prueba de transferencias recibidas: qué está confirmado y qué
+falta), `src/assistant/README.md` (asistente).
 
 ## Architecture
 
