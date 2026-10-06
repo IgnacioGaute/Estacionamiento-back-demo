@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { CobrosMercadoPagoService } from './cobros.service';
-import { CajasQrService } from './cajas-qr.service';
+import { CajasQrService, olvidarUbicaciones } from './cajas-qr.service';
 import { TenantScope, tenantContext } from '../tenancy/tenant-context';
 
 const SCOPE: TenantScope = {
@@ -172,7 +172,7 @@ describe('Cobro con QR por caja de la playa', () => {
 describe('Sucursal y caja de una playa', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  function cajas() {
+  function cajas(direccionPlaya: string | null = null) {
     const guardadas: any[] = [];
     const servicio = new CajasQrService(
       {
@@ -195,6 +195,7 @@ describe('Sucursal y caja de una playa', () => {
             id: 'p1',
             nombre: 'Playa Centro',
             empresaId: 'e1',
+            direccion: direccionPlaya,
           }),
           find: jest.fn().mockResolvedValue([]),
         }),
@@ -213,19 +214,124 @@ describe('Sucursal y caja de una playa', () => {
   const json = (cuerpo: unknown, status = 200) =>
     new Response(JSON.stringify(cuerpo), { status });
 
+  // El listado de ubicaciones de MercadoLibre responde siempre lo mismo; las llamadas a
+  // MercadoPago devuelven, en orden, lo que arme cada prueba.
+  function falso(mp: Response[]) {
+    const llamadas: [string, RequestInit | undefined][] = [];
+    jest
+      .spyOn(global, 'fetch')
+      .mockImplementation(async (url: any, init?: any) => {
+        const u = String(url);
+        if (u.endsWith('/classified_locations/countries/AR'))
+          return json({
+            states: [
+              { id: 'SF', name: 'Santa Fe' },
+              { id: 'MZA', name: 'Mendoza' },
+              { id: 'UY', name: 'Uruguay' },
+            ],
+          });
+        if (u.endsWith('/classified_locations/states/SF'))
+          return json({ cities: [{ id: 'R', name: 'Rosario' }] });
+        if (u.endsWith('/classified_locations/states/MZA'))
+          return json({
+            cities: [
+              { id: 'G', name: 'Godoy Cruz' },
+              { id: 'L', name: 'Luján de Cuyo' },
+            ],
+          });
+        // Lo que devolvió OpenStreetMap para la ubicación real de la prueba (06/10/2026).
+        if (u.startsWith('https://nominatim.openstreetmap.org/reverse'))
+          return json({
+            address: u.includes('lat=-32.97')
+              ? {
+                  suburb: 'Distrito Carrodilla',
+                  county: 'Departamento Luján de Cuyo',
+                  state: 'Mendoza',
+                  country_code: 'ar',
+                }
+              : { state: 'Mendoza', country_code: 'ar' },
+          });
+        llamadas.push([u, init]);
+        const r = mp.shift();
+        if (!r) throw new Error('llamada inesperada a ' + u);
+        return r;
+      });
+    return llamadas;
+  }
+
+  beforeEach(() => olvidarUbicaciones());
+
+  test('con la ubicación crea la caja sola: localidad del listado y calle de la playa', async () => {
+    const { servicio, guardadas } = cajas('Malabia 705');
+    const llamadas = falso([
+      json({ results: [] }),
+      json({ id: 555 }),
+      json({ results: [] }),
+      json({ id: 777 }),
+    ]);
+    const r = await en(() =>
+      servicio.crearConUbicacion('p1', -32.976476, -68.848275, 'u1'),
+    );
+    expect(r.creada).toBe(true);
+    const sucursal = JSON.parse(String(llamadas[1][1]?.body));
+    expect(sucursal.location).toMatchObject({
+      street_name: 'Malabia',
+      street_number: '705',
+      city_name: 'Luján de Cuyo',
+      state_name: 'Mendoza',
+      latitude: -32.976476,
+      longitude: -68.848275,
+    });
+    expect(guardadas[0].direccion.ciudad).toBe('Luján de Cuyo');
+  });
+
+  test('si no reconoce la localidad no crea nada y devuelve lo detectado para completar', async () => {
+    const { servicio, guardadas } = cajas();
+    const llamadas = falso([]);
+    const r = await en(() =>
+      servicio.crearConUbicacion('p1', -34.6, -58.4, 'u1'),
+    );
+    expect(r).toMatchObject({
+      creada: false,
+      sugerencia: { provincia: 'Mendoza', latitud: -34.6, longitud: -58.4 },
+    });
+    expect(llamadas).toHaveLength(0);
+    expect(guardadas).toHaveLength(0);
+  });
+
+  test('provincias y ciudades salen del listado que acepta MercadoPago, sin países ajenos', async () => {
+    const { servicio } = cajas();
+    falso([]);
+    expect(await servicio.provincias()).toEqual([
+      { id: 'MZA', nombre: 'Mendoza' },
+      { id: 'SF', nombre: 'Santa Fe' },
+    ]);
+    expect(await servicio.ciudades('SF')).toEqual([
+      { id: 'R', nombre: 'Rosario' },
+    ]);
+  });
+
+  test('una ciudad que no está en el listado se rechaza sin llamar a MercadoPago', async () => {
+    const { servicio, guardadas } = cajas();
+    const llamadas = falso([]);
+    await expect(
+      en(() => servicio.crear('p1', { ...direccion, ciudad: 'Rosário' }, 'u1')),
+    ).rejects.toThrow(/Elegí la ciudad de la lista/);
+    expect(llamadas).toHaveLength(0);
+    expect(guardadas).toHaveLength(0);
+  });
+
   test('crea la sucursal y la caja con la dirección y guarda sus ids', async () => {
     const { servicio, guardadas } = cajas();
-    const fetch = jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(json({ results: [] }))
-      .mockResolvedValueOnce(json({ id: 555 }))
-      .mockResolvedValueOnce(json({ results: [] }))
-      .mockResolvedValueOnce(json({ id: 777 }));
+    const llamadas = falso([
+      json({ results: [] }),
+      json({ id: 555 }),
+      json({ results: [] }),
+      json({ id: 777 }),
+    ]);
     await en(() => servicio.crear('p1', direccion, 'u1'));
-    const sucursal = JSON.parse(String(fetch.mock.calls[1][1]?.body));
-    expect(String(fetch.mock.calls[1][0])).toBe(
-      'https://api.mercadopago.com/users/111/stores',
-    );
+    const sucursal = JSON.parse(String(llamadas[1][1]?.body));
+    expect(llamadas[1][0]).toBe('https://api.mercadopago.com/users/111/stores');
     expect(sucursal.location).toMatchObject({
       street_name: 'San Martín',
       street_number: '123',
@@ -234,7 +340,7 @@ describe('Sucursal y caja de una playa', () => {
       latitude: -32.95,
       longitude: -60.65,
     });
-    const caja = JSON.parse(String(fetch.mock.calls[3][1]?.body));
+    const caja = JSON.parse(String(llamadas[3][1]?.body));
     expect(caja).toMatchObject({
       store_id: 555,
       external_store_id: sucursal.external_id,
@@ -250,29 +356,27 @@ describe('Sucursal y caja de una playa', () => {
 
   test('si la sucursal y la caja ya existían (intento cortado), las reusa', async () => {
     const { servicio, guardadas } = cajas();
-    const fetch = jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(json({ results: [{ id: 555 }] }))
-      .mockResolvedValueOnce(json({ results: [{ id: 777 }] }));
+    const llamadas = falso([
+      json({ results: [{ id: 555 }] }),
+      json({ results: [{ id: 777 }] }),
+    ]);
     await en(() => servicio.crear('p1', direccion, 'u1'));
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(llamadas).toHaveLength(2);
     expect(guardadas[0]).toMatchObject({ storeId: '555', posId: '777' });
   });
 
   test('si MercadoPago rechaza la dirección, devuelve su motivo', async () => {
     const { servicio, guardadas } = cajas();
-    jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(json({ results: [] }))
-      .mockResolvedValueOnce(
-        json(
-          {
-            message: 'invalid location',
-            cause: [{ description: 'state_name inválido' }],
-          },
-          400,
-        ),
-      );
+    falso([
+      json({ results: [] }),
+      json(
+        {
+          message: 'invalid location',
+          cause: [{ description: 'state_name inválido' }],
+        },
+        400,
+      ),
+    ]);
     await expect(
       en(() => servicio.crear('p1', direccion, 'u1')),
     ).rejects.toThrow(/invalid location · state_name inválido/);

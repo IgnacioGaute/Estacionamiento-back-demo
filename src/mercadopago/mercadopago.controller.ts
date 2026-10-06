@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Param,
   Patch,
   Post,
   Req,
@@ -15,7 +16,7 @@ import { ConectarMercadoPagoDto } from './dto/conectar-mercadopago.dto';
 import { AceptarCondicionesDto } from './dto/condiciones.dto';
 import { ConfigurarVerificacionAliasDto } from './dto/verificacion-alias.dto';
 import { CajasQrService } from './cajas-qr.service';
-import { CrearCajaQrDto } from './dto/caja-qr.dto';
+import { CrearCajaConUbicacionDto, CrearCajaQrDto } from './dto/caja-qr.dto';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
 
 // Conectar y desconectar la cuenta de MercadoPago de la empresa.
@@ -38,6 +39,31 @@ export class MercadoPagoController {
   @Get('cajas')
   cajasQr() {
     return this.cajas.listar();
+  }
+
+  // Provincias y ciudades como las acepta MercadoPago para la sucursal de la caja.
+  @Get('cajas/provincias')
+  provinciasQr() {
+    return this.cajas.provincias();
+  }
+
+  @Get('cajas/provincias/:id/ciudades')
+  ciudadesQr(@Param('id') id: string) {
+    return this.cajas.ciudades(id);
+  }
+
+  // Con la ubicación del dispositivo, sin formulario.
+  @Post('cajas/con-ubicacion')
+  crearCajaQrConUbicacion(
+    @Body() dto: CrearCajaConUbicacionDto,
+    @Req() req: any,
+  ) {
+    return this.cajas.crearConUbicacion(
+      dto.playaId,
+      dto.latitud,
+      dto.longitud,
+      this.usuario(req),
+    );
   }
 
   @Post('cajas')

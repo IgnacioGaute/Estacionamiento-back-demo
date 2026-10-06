@@ -13,8 +13,24 @@ import {
 const recortar = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
-// La caja de MercadoPago de una playa. MercadoPago exige la dirección completa de la sucursal,
-// con coordenadas: se cargan una vez por playa.
+// Crear la caja con la ubicación del dispositivo: el resto lo resuelve el servidor.
+export class CrearCajaConUbicacionDto {
+  @IsUUID()
+  playaId: string;
+
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitud: number;
+
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitud: number;
+}
+
+// La caja de MercadoPago de una playa, a mano (si la ubicación no alcanzó). MercadoPago exige la
+// dirección completa de la sucursal, con coordenadas.
 export class CrearCajaQrDto {
   @IsUUID()
   playaId: string;

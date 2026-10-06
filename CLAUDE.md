@@ -89,7 +89,11 @@ once by the empresa ADMIN in Configuración → MercadoPago; MercadoPago require
 `CobrosMercadoPagoService.crear` creates a dynamic Orders API order (`POST /v1/orders`, `type: qr`, idempotency key =
 our cobro id) and draws its standard `qr_data` (interoperable QR); `consultar` reads the order status. Without a
 POS, or if the order fails, it falls back to the link. `mercadopago_cajas` is empresa-scoped (RLS by empresa,
-explicit `playaId`).
+explicit `playaId`). MercadoPago validates the store's province/city against MercadoLibre's public
+`classified_locations` list (exact spelling, accents included), so the admin activates a playa with one tap
+(`POST /mercadopago/cajas/con-ubicacion`): the device location is reverse-geocoded with OpenStreetMap Nominatim
+and matched to that list by `ubicacion.ts` (street/number from the playa's `direccion` first); if the city can't be
+matched nothing is created and the manual form (lists, not free text) takes over.
 
 `scripts/start-compiled.cjs` registers `tsconfig-paths` before `dist/main` — sources import each other as
 `src/...`, so plain `node dist/main` only works where those paths resolve.

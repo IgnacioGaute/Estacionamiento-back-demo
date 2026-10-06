@@ -15,6 +15,13 @@ import { CuentaMercadoPago } from './entities/cuenta-mercadopago.entity';
 import { Playa } from 'src/tenancy/entities/playa.entity';
 import { MercadoPagoService } from './mercadopago.service';
 import { tenantContext } from 'src/tenancy/tenant-context';
+import {
+  DireccionMapa,
+  calleYNumero,
+  elegirCiudad,
+  localidadesDelMapa,
+  provinciasPosibles,
+} from './ubicacion';
 
 const API = 'https://api.mercadopago.com';
 const TIEMPO_LIMITE_MS = 12_000;
@@ -26,6 +33,29 @@ const idSucursal = (playaId: string) =>
   'PLAYA' + playaId.replace(/-/g, '').toUpperCase();
 const idCaja = (playaId: string) =>
   'CAJA' + playaId.replace(/-/g, '').toUpperCase();
+
+// MercadoPago valida la provincia y la ciudad de la sucursal contra el listado de ubicaciones de
+// MercadoLibre (público, sin token): «Lujan de Cuyo» sin tilde lo rechaza, «Luján de Cuyo» no. Por
+// eso se eligen de ese listado. Se guarda un día en memoria: cambia muy de vez en cuando.
+const UBICACIONES = 'https://api.mercadolibre.com/classified_locations';
+const UN_DIA_MS = 24 * 60 * 60 * 1000;
+// El listado de Argentina incluye zonas de otros países para avisos clasificados: no son provincias.
+const NO_SON_PROVINCIAS = new Set([
+  'Brasil',
+  'Chile',
+  'República Dominicana',
+  'USA',
+  'Uruguay',
+]);
+const ubicaciones = new Map<
+  string,
+  { hasta: number; lista: { id: string; nombre: string }[] }
+>();
+const alfabetico = (a: { nombre: string }, b: { nombre: string }) =>
+  a.nombre.localeCompare(b.nombre, 'es');
+
+/** Para las pruebas: descarta el listado de ubicaciones guardado. */
+export const olvidarUbicaciones = () => ubicaciones.clear();
 
 /**
  * QR que se paga desde cualquier banco o billetera. MercadoPago lo da con su API de QR: cada
@@ -106,6 +136,7 @@ export class CajasQrService {
       mpUserId: cuenta.mpUserId,
     });
     if (existente) return this.listar();
+    await this.validarUbicacion(direccion);
 
     const token = await this.mercadoPago.tokenDeEmpresa(empresaId);
     const externalStoreId = idSucursal(playaId);
@@ -188,6 +219,168 @@ export class CajasQrService {
       `Empresa ${empresaId}: caja de MercadoPago ${externalPosId} creada para la playa ${playaId}.`,
     );
     return this.listar();
+  }
+
+  /**
+   * Crear la caja de una playa con la ubicación del dispositivo, sin formulario: el mapa da
+   * provincia y localidad, que se ajustan al listado de MercadoPago; calle y número salen de la
+   * dirección que la playa tiene en el sistema (o del mapa). Si la localidad no se reconoce, no se
+   * crea nada y vuelve lo detectado para completar a mano.
+   */
+  async crearConUbicacion(
+    playaId: string,
+    latitud: number,
+    longitud: number,
+    usuarioId: string,
+  ) {
+    const empresaId = this.empresaActual();
+    const playa = await this.dataSource
+      .getRepository(Playa)
+      .findOneBy({ id: playaId, empresaId });
+    if (!playa) throw new NotFoundException('Playa no encontrada.');
+
+    const mapa = await this.direccionDelMapa(latitud, longitud);
+    if (mapa.country_code && mapa.country_code !== 'ar')
+      throw new BadRequestException(
+        'La ubicación no es de Argentina. Activalo desde la playa.',
+      );
+    const { calle, numero } = calleYNumero(mapa, playa.direccion);
+    const posibles = provinciasPosibles(mapa.state, await this.provincias());
+    for (const provincia of posibles) {
+      const ciudad = elegirCiudad(
+        localidadesDelMapa(mapa),
+        await this.ciudades(provincia.id),
+      );
+      if (ciudad) {
+        const direccion: DireccionCaja = {
+          calle,
+          numero,
+          ciudad: ciudad.nombre,
+          provincia: provincia.nombre,
+          latitud,
+          longitud,
+          referencia: mapa.suburb || mapa.neighbourhood || null,
+        };
+        return {
+          creada: true as const,
+          ...(await this.crear(playaId, direccion, usuarioId)),
+        };
+      }
+    }
+    // Sin localidad reconocida no se adivina: se completa a mano con lo que se detectó.
+    return {
+      creada: false as const,
+      motivo:
+        'No pudimos reconocer la localidad con la ubicación. Elegila de la lista y creá la caja.',
+      sugerencia: {
+        calle,
+        numero,
+        provincia: posibles[0]?.nombre ?? null,
+        latitud,
+        longitud,
+      },
+    };
+  }
+
+  // OpenStreetMap (Nominatim), con un nombre que identifica al sistema como pide su política de
+  // uso. Se llama una vez por caja creada.
+  private async direccionDelMapa(
+    latitud: number,
+    longitud: number,
+  ): Promise<DireccionMapa> {
+    const url = new URL('https://nominatim.openstreetmap.org/reverse');
+    url.search = new URLSearchParams({
+      format: 'jsonv2',
+      lat: String(latitud),
+      lon: String(longitud),
+      zoom: '18',
+      addressdetails: '1',
+      'accept-language': 'es',
+    }).toString();
+    try {
+      const respuesta = await fetch(url, {
+        headers: {
+          'user-agent': 'estacionamiento-sistema/1.0 (cajas de MercadoPago)',
+        },
+        signal: AbortSignal.timeout(TIEMPO_LIMITE_MS),
+      });
+      if (!respuesta.ok) throw new Error(String(respuesta.status));
+      const datos = (await respuesta.json()) as { address?: DireccionMapa };
+      return datos.address ?? {};
+    } catch {
+      throw new ServiceUnavailableException(
+        'No se pudo reconocer la dirección de la ubicación. Probá de nuevo o completala a mano.',
+      );
+    }
+  }
+
+  /** Las provincias que acepta MercadoPago para una sucursal. */
+  provincias() {
+    return this.ubicacion('AR', `${UBICACIONES}/countries/AR`, (datos) =>
+      ((datos?.states ?? []) as any[])
+        .filter((s) => !NO_SON_PROVINCIAS.has(s?.name))
+        .map((s) => ({ id: String(s.id), nombre: String(s.name) })),
+    );
+  }
+
+  /** Las ciudades de una provincia, tal como las escribe MercadoPago (con tildes). */
+  ciudades(provinciaId: string) {
+    if (!/^[A-Za-z0-9=_-]{2,80}$/.test(provinciaId))
+      throw new BadRequestException('Provincia inválida.');
+    return this.ubicacion(
+      provinciaId,
+      `${UBICACIONES}/states/${provinciaId}`,
+      (datos) =>
+        ((datos?.cities ?? []) as any[]).map((c) => ({
+          id: String(c.id),
+          nombre: String(c.name),
+        })),
+    );
+  }
+
+  private async ubicacion(
+    clave: string,
+    url: string,
+    leer: (datos: any) => { id: string; nombre: string }[],
+  ) {
+    const guardada = ubicaciones.get(clave);
+    if (guardada && guardada.hasta > Date.now()) return guardada.lista;
+    let datos: any;
+    try {
+      const respuesta = await fetch(url, {
+        signal: AbortSignal.timeout(TIEMPO_LIMITE_MS),
+      });
+      if (!respuesta.ok) throw new Error(String(respuesta.status));
+      datos = await respuesta.json();
+    } catch {
+      throw new ServiceUnavailableException(
+        'No se pudo cargar el listado de localidades de MercadoPago. Probá de nuevo en un momento.',
+      );
+    }
+    const lista = leer(datos).sort(alfabetico);
+    ubicaciones.set(clave, { hasta: Date.now() + UN_DIA_MS, lista });
+    return lista;
+  }
+
+  /**
+   * Antes de pedirle nada a MercadoPago: la provincia y la ciudad tienen que estar escritas como
+   * en su listado, si no rechaza la sucursal («city_name was invalid»).
+   */
+  private async validarUbicacion(direccion: DireccionCaja) {
+    const provincia = (await this.provincias()).find(
+      (p) => p.nombre === direccion.provincia,
+    );
+    if (!provincia)
+      throw new BadRequestException(
+        'Elegí la provincia de la lista: MercadoPago solo acepta las de su listado.',
+      );
+    const ciudad = (await this.ciudades(provincia.id)).find(
+      (c) => c.nombre === direccion.ciudad,
+    );
+    if (!ciudad)
+      throw new BadRequestException(
+        'Elegí la ciudad de la lista: MercadoPago solo acepta las de su listado, escritas como ahí (con tildes).',
+      );
   }
 
   /** La caja de una playa en la cuenta conectada hoy, o null (el cobro usa el link de siempre). */

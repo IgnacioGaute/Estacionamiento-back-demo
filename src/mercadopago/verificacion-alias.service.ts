@@ -382,7 +382,17 @@ export class VerificacionAliasService {
         if (!(error instanceof ConflictException)) throw error;
         await this.siYaCobrada(intento, error);
       }
-      return this.vista(await this.intentoPropio(id, playaId), { consulta });
+      // Quién transfirió, para la confirmación en pantalla: en el momento, sin guardarlo.
+      const pago = lectura.pagos.find(
+        (p) => String(p.id) === decision.operacionId,
+      );
+      let { nombre } = datosDelPagador(pago);
+      if (!nombre)
+        ({ nombre } = await this.pagador(cuenta, decision.operacionId, null));
+      return this.vista(await this.intentoPropio(id, playaId), {
+        consulta,
+        pagador: { nombre },
+      });
     }
 
     if (decision.tipo === 'REVISION') {
@@ -451,7 +461,7 @@ export class VerificacionAliasService {
         code: 'COBRO_CERRADO',
         message: 'Este cobro ya no está esperando una transferencia.',
       });
-    await this.exigirHabilitacion(empresaId);
+    const cuenta = await this.exigirHabilitacion(empresaId);
     try {
       await this.confirmar(intento.id, operacionId, userId, 'MANUAL');
     } catch (error) {
@@ -459,7 +469,10 @@ export class VerificacionAliasService {
         await this.siYaCobrada(intento, error);
       throw error;
     }
-    return this.vista(await this.intentoPropio(id, playaId));
+    const { nombre } = await this.pagador(cuenta, operacionId, null);
+    return this.vista(await this.intentoPropio(id, playaId), {
+      pagador: { nombre },
+    });
   }
 
   /** Busca desde cinco minutos antes de abrir el cobro, una sola vez. */
@@ -804,6 +817,8 @@ export class VerificacionAliasService {
         | { ok: false; code: string; error: string };
       motivoRevision?: string;
       opciones?: unknown[];
+      // Quién pagó la transferencia recién asociada; solo en la respuesta que la confirma.
+      pagador?: { nombre: string | null };
     } = {},
   ) {
     const cuenta = await this.cuentas.findOneBy({
@@ -838,6 +853,7 @@ export class VerificacionAliasService {
             importe: usada.importe,
             fechaOperacion: usada.fechaOperacion,
             detectadaEl: usada.detectadaEl,
+            nombre: extra.pagador?.nombre ?? null,
           }
         : null,
       consulta: extra.consulta ?? null,

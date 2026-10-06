@@ -144,13 +144,14 @@ test('una transferencia y un solo cobro esperándola: se confirma una vez y regi
   assert.equal(inicio.alias, 'playa.prueba');
   assert.equal((await movimientosDe(r.id)).length, 0, 'esperar no registra nada');
 
-  const t = transferencia(ctx, 1000);
+  const t = transferencia(ctx, 1000, { payer: { first_name: 'Ignacio', last_name: 'Gaute' } });
   pagosMp = [t];
   const v = await consultar(ctx, ctx.playaA, inicio.id);
   assert.equal(v.estado, 'CONFIRMADO');
   assert.equal(v.modo, 'AUTOMATICO_COINCIDENCIA_UNICA');
   assert.equal(v.salidaRegistrada, true);
   assert.equal(v.transferencia.operacionId, String(t.id));
+  assert.equal(v.transferencia.nombre, 'Ignacio Gaute', 'quién transfirió, para la confirmación en pantalla');
 
   // Consultar de nuevo (otra pantalla, un reintento) no cobra dos veces.
   await consultar(ctx, ctx.playaA, inicio.id);
