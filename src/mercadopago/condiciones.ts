@@ -28,6 +28,21 @@ const VERSIONES: Condiciones[] = [
       'Podés desconectar la cuenta cuando quieras desde esta pantalla: el sistema deja de consultarla en el acto.',
     ],
   },
+  {
+    // Suma la verificación de transferencias al alias: el sistema guarda la evidencia mínima de
+    // cada transferencia que asocia a un cobro, y la ve el operador que está cobrando.
+    version: '2026-10-06',
+    titulo: 'Qué puede hacer el sistema con tu cuenta de MercadoPago',
+    puntos: [
+      'Crear cobros con QR por el importe de cada estadía, abono o pago de inquilino, y consultar si se pagaron.',
+      'Consultar los pagos que entran a tu cuenta cuando alguien de tu empresa lo pide desde el sistema: para encontrar la transferencia de un cobro que la está esperando (si activás la verificación de transferencias al alias) o en la prueba de transferencias.',
+      'Con la verificación activa, asociar una transferencia a un cobro y registrar la salida cuando la coincidencia es única: el mismo importe, en los minutos de espera, y un solo cobro esperándolo en todas tus playas. Si hay dudas, la elige el operador. Es una coincidencia por importe y hora, no una identificación de quien pagó.',
+      'Para conciliar, de cada transferencia que coincide con un cobro se guardan el número de operación, el importe, la moneda, el estado y las fechas. El nombre y el documento de quien pagó, cuando MercadoPago los informa, se muestran en el momento para reconocerla y no se guardan.',
+      'Lo que pagás con tu cuenta (compras, suscripciones, retiros) no se muestra ni se guarda, y el sistema no consulta tu saldo.',
+      'Solo los usuarios de tu empresa ven esta información, y el operador solo la del cobro que está haciendo. La administración de la plataforma no ve los pagos de tu cuenta.',
+      'Podés desconectar la cuenta cuando quieras desde esta pantalla: el sistema deja de consultarla en el acto.',
+    ],
+  },
 ];
 
 export const CONDICIONES_VIGENTES = VERSIONES[VERSIONES.length - 1];

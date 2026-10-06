@@ -106,6 +106,33 @@ describe('Prueba de transferencias', () => {
               transaction_amount: 3490,
               operation_type: 'recurring_payment',
             },
+            // Una suscripción que paga la cuenta: sin cobrador, pero el pagador es ella.
+            {
+              id: 4,
+              transaction_amount: 3490,
+              operation_type: 'recurring_payment',
+              payer: { id: 111 },
+            },
+            // Una transferencia al CVU con el nombre en los datos bancarios.
+            {
+              id: 5,
+              collector_id: 111,
+              transaction_amount: 15,
+              operation_type: 'account_fund',
+              description: 'Alquiler cochera',
+              transaction_details: { bank_transfer_id: 987 },
+              point_of_interaction: {
+                type: 'PSP_TRANSFER',
+                transaction_data: {
+                  bank_info: {
+                    payer: {
+                      account_holder_name: 'Juan Pérez',
+                      long_name: 'Banco X',
+                    },
+                  },
+                },
+              },
+            },
             { id: 3, transaction_amount: 11 },
           ],
         }),
@@ -115,15 +142,22 @@ describe('Prueba de transferencias', () => {
     const r = await como(ADMIN, () => s.ingresos(5));
     expect(String(fetch.mock.calls[0][0])).toContain('/v1/payments/search?');
     if (r.pagos.ok === false) throw new Error('debería haber respondido');
-    expect(r.pagos.egresosOmitidos).toBe(1);
+    expect(r.pagos.egresosOmitidos).toBe(2);
     expect(r.pagos.items.map((p) => [p.id, p.recibido])).toEqual([
       [1, true],
-      // Sin collector_id no se sabe: se muestra marcado como dudoso, no se descarta.
+      [5, true],
+      // Sin cobrador ni pagador no se sabe: se muestra marcado como dudoso, no se descarta.
       [3, null],
     ]);
     expect(r.pagos.items[0].pagador).toEqual({
       nombre: 'Ana',
       documento: 'DNI 1',
+      entidad: null,
+    });
+    expect(r.pagos.items[1]).toMatchObject({
+      descripcion: 'Alquiler cochera',
+      idTransferencia: 987,
+      pagador: { nombre: 'Juan Pérez', entidad: 'Banco X' },
     });
   });
 

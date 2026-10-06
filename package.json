@@ -19,7 +19,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --incremental false",
     "test": "jest",
     "test:ci": "jest --ci --coverage",
-    "test:integration": "node --test --test-concurrency=1 test/tickets.integration.cjs test/cajas.integration.cjs test/tenancy.integration.cjs test/tenant-isolation.integration.cjs test/suscripciones.integration.cjs test/cuentas.integration.cjs test/tariff-plan.integration.cjs test/assistant.test.cjs test/gemini-request.test.cjs test/image-signature.test.cjs",
+    "test:integration": "node --test --test-concurrency=1 test/tickets.integration.cjs test/cajas.integration.cjs test/tenancy.integration.cjs test/tenant-isolation.integration.cjs test/suscripciones.integration.cjs test/cuentas.integration.cjs test/tariff-plan.integration.cjs test/verificacion-alias.integration.cjs test/assistant.test.cjs test/gemini-request.test.cjs test/image-signature.test.cjs",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",

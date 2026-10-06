@@ -82,6 +82,17 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     'consultarCobro',
     'cancelarCobro',
   ],
+  // El cobro por transferencia al alias. Activarlo y cargar el alias (MercadoPagoController) es
+  // del administrador; que la empresa lo tenga habilitado lo verifica el servicio en cada pedido.
+  VerificacionAliasController: [
+    'disponibilidad',
+    'iniciarCobro',
+    'cobroDeEstadia',
+    'consultarCobro',
+    'asignarTransferencia',
+    'ampliarBusqueda',
+    'cancelarCobro',
+  ],
 };
 
 // Lo único que puede hacer una empresa suspendida, cualquiera sea el rol: ver por qué está
@@ -115,6 +126,15 @@ export const SUSPENDED_ENDPOINTS: Record<string, readonly string[]> = {
     'consultarCobro',
     'cancelarCobro',
   ],
-  TurnosController: ['open', 'close', 'getCashContext', 'getMyOpenTurno'],
+  VerificacionAliasController: [
+    'disponibilidad',
+    'iniciarCobro',
+    'cobroDeEstadia',
+    'consultarCobro',
+    'asignarTransferencia',
+    'ampliarBusqueda',
+    'cancelarCobro',
+  ],
+  TurnosController:['open', 'close', 'getCashContext', 'getMyOpenTurno'],
   BoxListsController: ['findOne', 'findBoxByDate'],
 };

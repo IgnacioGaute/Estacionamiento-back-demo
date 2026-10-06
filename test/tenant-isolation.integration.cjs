@@ -144,6 +144,8 @@ before(async () => {
     await new (load('database/migrations/1790000025000-periodos-de-pago', 'PeriodosDePago1790000025000'))().up(migrationRunner);
     await new (load('database/migrations/1790000026000-plate-recognizer-cuentas', 'PlateRecognizerCuentas1790000026000'))().up(migrationRunner);
     await new (load('database/migrations/1790000028000-cajas-compartidas', 'CajasCompartidas1790000028000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000029000-condiciones-mercadopago', 'CondicionesMercadoPago1790000029000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000030000-verificacion-alias', 'VerificacionAlias1790000030000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -1016,4 +1018,48 @@ test('cajas: aislamiento de sesiones, referencias y configuración administrativ
   }
   const visible = await request(app.getHttpServer()).get('/turnos/configuracion').set('Authorization', 'Bearer ' + token(adminB)).expect(200);
   assert.ok(visible.body.cajas.every(c => c.playaId === b.playaId));
+});
+
+test('verificación por alias: intentos y transferencias se leen en toda la empresa y solo los cambia su playa', async () => {
+  const Intento = load('mercadopago/entities/cobro-transferencia.entity', 'CobroTransferencia');
+  const Transferencia = load('mercadopago/entities/transferencia-recibida.entity', 'TransferenciaRecibida');
+  const Adicional = load('saas/entities/empresa-adicional.entity', 'EmpresaAdicional');
+  const estadia = (playaId, patente) => ds.getRepository(Registration).save({ playaId, description: 'Alias', price: 0,
+    licensePlateOriginal: patente, vehicleType: 'AUTO', entryDay: '2026-10-06', entryTime: '10:00:00' });
+  const regA1 = await estadia(a.playaId, 'ALI001');
+  const regA2 = await estadia(a2.playaId, 'ALI002');
+  const base = { mpUserId: '555', importe: 1000, moneda: 'ARS', estado: 'ESPERANDO', buscarDesde: new Date(), ventanaMinutos: 1, venceEl: new Date(Date.now() + 9e5) };
+  const intentos = () => ds.getRepository(Intento);
+
+  // Cada playa abre su intento con el rol limitado; la playa la pone la base.
+  const iA1 = await scoped(a, () => intentos().save({ ...base, empresaId: a.empresaId, registrationId: regA1.id }));
+  assert.equal(iA1.playaId, a.playaId);
+  const iA2 = await scoped(a2, () => intentos().save({ ...base, empresaId: a.empresaId, registrationId: regA2.id }));
+  // No para la estadía de otra playa, ni a nombre de otra empresa.
+  await assert.rejects(scoped(a, () => intentos().save({ ...base, empresaId: a.empresaId, registrationId: regA2.id })));
+  await assert.rejects(scoped(b, () => intentos().save({ ...base, empresaId: a.empresaId, registrationId: regA1.id })));
+
+  // Leer: la empresa ve los de todas sus playas (para decidir si una coincidencia es única); otra empresa, nada.
+  assert.equal(await scoped(a, () => intentos().countBy({ mpUserId: '555' })), 2);
+  assert.equal(await scoped(b, () => intentos().countBy({ mpUserId: '555' })), 0);
+  // Cambiar: solo su playa.
+  assert.equal((await scoped(a, () => intentos().update({ id: iA2.id }, { estado: 'CANCELADO' }))).affected, 0);
+  assert.equal((await intentos().findOneBy({ id: iA2.id })).estado, 'ESPERANDO');
+  assert.equal((await scoped(a2, () => intentos().update({ id: iA2.id }, { estado: 'CANCELADO' }))).affected, 1);
+
+  // Transferencias: de la cuenta (empresa). Cualquier playa de la empresa las ve; otra empresa no.
+  const transferencias = () => ds.getRepository(Transferencia);
+  const fila = (operacionId, empresaId = a.empresaId) => ({ empresaId, mpUserId: '555', operacionId, importe: 1000, moneda: 'ARS', estadoMp: 'approved', fechaOperacion: new Date() });
+  await scoped(a, () => transferencias().insert(fila('op-1')));
+  assert.equal(await scoped(a2, () => transferencias().countBy({ operacionId: 'op-1' })), 1);
+  assert.equal(await scoped(b, () => transferencias().countBy({ operacionId: 'op-1' })), 0);
+  await assert.rejects(scoped(b, () => transferencias().insert(fila('op-2'))), 'otra empresa no escribe en la cuenta de A');
+  // La misma operación una sola vez, aunque la detecte otra playa.
+  await assert.rejects(scoped(a2, () => transferencias().insert(fila('op-1'))));
+
+  // Adicionales: la empresa los lee, no los escribe; otra empresa no los ve.
+  await ds.getRepository(Adicional).save({ empresaId: a.empresaId, codigo: 'VERIFICACION_ALIAS', habilitado: true, precioMensual: 0 });
+  assert.equal(await scoped(a, () => ds.getRepository(Adicional).countBy({ empresaId: a.empresaId })), 1);
+  assert.equal(await scoped(b, () => ds.getRepository(Adicional).countBy({ empresaId: a.empresaId })), 0);
+  await assert.rejects(scoped(a, () => ds.getRepository(Adicional).update({ empresaId: a.empresaId }, { habilitado: false })));
 });

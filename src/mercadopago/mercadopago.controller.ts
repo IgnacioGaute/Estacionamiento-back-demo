@@ -3,14 +3,17 @@ import {
   Controller,
   Delete,
   Get,
+  Patch,
   Post,
   Req,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { MercadoPagoService } from './mercadopago.service';
+import { VerificacionAliasService } from './verificacion-alias.service';
 import { ConectarMercadoPagoDto } from './dto/conectar-mercadopago.dto';
 import { AceptarCondicionesDto } from './dto/condiciones.dto';
+import { ConfigurarVerificacionAliasDto } from './dto/verificacion-alias.dto';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
 
 // Conectar y desconectar la cuenta de MercadoPago de la empresa.
@@ -23,7 +26,25 @@ import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
 @UseGuards(AuthOrTokenAuthGuard)
 @Controller('mercadopago')
 export class MercadoPagoController {
-  constructor(private readonly mercadoPago: MercadoPagoService) {}
+  constructor(
+    private readonly mercadoPago: MercadoPagoService,
+    private readonly alias: VerificacionAliasService,
+  ) {}
+
+  // La verificación de transferencias al alias: activarla y cargar el alias es del administrador
+  // (por eso vive acá y no en VerificacionAliasController, que es del mostrador).
+  @Get('verificacion-alias')
+  verificacionAlias() {
+    return this.alias.configuracion();
+  }
+
+  @Patch('verificacion-alias')
+  configurarVerificacionAlias(
+    @Body() dto: ConfigurarVerificacionAliasDto,
+    @Req() req: any,
+  ) {
+    return this.alias.configurar(this.usuario(req), dto);
+  }
 
   private usuario(req: any): string {
     if (!req.user?.userId)

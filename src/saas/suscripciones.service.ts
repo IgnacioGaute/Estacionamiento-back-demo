@@ -13,8 +13,14 @@ import { DebitoEstado, Suscripcion } from './entities/suscripcion.entity';
 import { FacturaSaas, LineaFactura } from './entities/factura-saas.entity';
 import { PeriodoPago } from './entities/periodo-pago.entity';
 import {
+  ADICIONALES,
+  CodigoAdicional,
+  EmpresaAdicional,
+} from './entities/empresa-adicional.entity';
+import {
   ActivarCuentaDto,
   AsignarPlanDto,
+  EditarAdicionalDto,
   EditarPeriodoDto,
   EditarPlanDto,
   EditarSuscripcionDto,
@@ -583,6 +589,78 @@ export class SuscripcionesService {
       );
     await repo.save(repo.merge(periodo, dto));
     return this.periodos();
+  }
+
+  /**
+   * Los adicionales de una empresa: todos los que existen, habilitados o no, con su precio
+   * pactado. El precio todavía no entra en facturas ni débitos (ver
+   * docs/verificacion-transferencias.md): se guarda para decidir después cómo se cobra.
+   */
+  async adicionales(empresaId: string) {
+    const filas = await this.dataSource
+      .getRepository(EmpresaAdicional)
+      .findBy({ empresaId });
+    return ADICIONALES.map((codigo) => {
+      const fila = filas.find((f) => f.codigo === codigo);
+      return {
+        codigo,
+        habilitado: !!fila?.habilitado,
+        precioMensual: fila?.precioMensual ?? 0,
+        habilitadoEl: fila?.habilitadoEl ?? null,
+        deshabilitadoEl: fila?.deshabilitadoEl ?? null,
+      };
+    });
+  }
+
+  /**
+   * Habilita o deshabilita un adicional y fija su precio. Deshabilitarlo corta la función en el
+   * acto (el backend lo verifica en cada uso); la activación que hizo la empresa se conserva para
+   * cuando se vuelva a habilitar.
+   */
+  async editarAdicional(
+    empresaId: string,
+    codigo: string,
+    dto: EditarAdicionalDto,
+    actor: string | null,
+  ) {
+    if (!(ADICIONALES as readonly string[]).includes(codigo))
+      throw new NotFoundException('Adicional desconocido.');
+    await this.dataSource.transaction(async (m) => {
+      const [empresa] = await m.query('SELECT 1 FROM empresas WHERE id = $1', [
+        empresaId,
+      ]);
+      if (!empresa) throw new NotFoundException('Empresa no encontrada.');
+      const repo = m.getRepository(EmpresaAdicional);
+      const fila =
+        (await repo.findOneBy({ empresaId, codigo: codigo as CodigoAdicional })) ??
+        repo.create({
+          empresaId,
+          codigo: codigo as CodigoAdicional,
+          habilitado: false,
+          precioMensual: 0,
+        });
+      const antes = {
+        habilitado: fila.habilitado,
+        precioMensual: fila.precioMensual,
+      };
+      if (dto.habilitado !== undefined && dto.habilitado !== fila.habilitado) {
+        fila.habilitado = dto.habilitado;
+        if (dto.habilitado) fila.habilitadoEl = new Date();
+        else fila.deshabilitadoEl = new Date();
+      }
+      if (dto.precioMensual !== undefined) fila.precioMensual = dto.precioMensual;
+      fila.cambiadoPor = actor;
+      await repo.save(fila);
+      await this.auditar(m, empresaId, actor, 'ADICIONAL_EDITADO', {
+        codigo,
+        antes,
+        despues: {
+          habilitado: fila.habilitado,
+          precioMensual: fila.precioMensual,
+        },
+      });
+    });
+    return this.adicionales(empresaId);
   }
 
   /** Pagos registrados en un rango de fechas, de todas las empresas. */

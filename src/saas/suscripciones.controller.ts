@@ -18,6 +18,7 @@ import { CobrosPlataformaService } from './cobros-plataforma.service';
 import {
   AnularPagoSaasDto,
   AsignarPlanDto,
+  EditarAdicionalDto,
   EditarPeriodoDto,
   EditarPlanDto,
   EditarSuscripcionDto,
@@ -68,6 +69,23 @@ export class SuscripcionesController {
     @Body() dto: EditarPeriodoDto,
   ) {
     return this.suscripciones.editarPeriodo(codigo, dto);
+  }
+
+  // Los adicionales de una empresa (verificación de transferencias al alias): habilitarlos y su
+  // precio. Administrar la disponibilidad no da acceso a los movimientos de la empresa.
+  @Get('empresas/:id/adicionales')
+  adicionales(@Param('id', ParseUUIDPipe) id: string) {
+    return this.suscripciones.adicionales(id);
+  }
+
+  @Put('empresas/:id/adicionales/:codigo')
+  editarAdicional(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('codigo') codigo: string,
+    @Body() dto: EditarAdicionalDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.suscripciones.editarAdicional(id, codigo, dto, this.actor(req));
   }
 
   // Pagos de todas las empresas en un rango: lo cobrado en el mes.

@@ -70,6 +70,20 @@ export class EditarSuscripcionDto {
   notas?: string | null;
 }
 
+// Un adicional de la empresa (por ahora, la verificación de transferencias al alias). El precio es
+// por mes y en pesos enteros; todavía no se suma a las facturas.
+export class EditarAdicionalDto {
+  @IsOptional()
+  @IsBoolean()
+  habilitado?: boolean;
+
+  @IsOptional()
+  @IsInt({ message: 'El precio va en pesos enteros.' })
+  @Min(0)
+  @Max(100_000_000)
+  precioMensual?: number;
+}
+
 export class EditarPeriodoDto {
   @IsOptional()
   @Transform(recortar)

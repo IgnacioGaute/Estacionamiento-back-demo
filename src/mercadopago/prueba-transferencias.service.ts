@@ -247,9 +247,21 @@ export class PruebaTransferenciasService {
     };
   }
 
-  // Lo que sirve para reconocer de dónde vino la plata y medir la demora.
+  // Lo que sirve para reconocer de dónde vino la plata y medir la demora. El nombre de quien pagó
+  // no viene siempre en el mismo lugar: en un pago está en `payer`, en una transferencia puede
+  // estar en los datos bancarios del punto de interacción. Se toma el primero que aparezca.
   private pago(p: any, mpUserId: string) {
     const bancos = p.point_of_interaction?.transaction_data?.bank_info;
+    const nombreDe = (persona: any) =>
+      [persona?.first_name, persona?.last_name].filter(Boolean).join(' ');
+    // Dirección: quién cobró, y si MercadoPago no lo dice, quién pagó. Una suscripción que paga
+    // la cuenta trae al pagador pero no al cobrador.
+    const recibido =
+      p.collector_id != null
+        ? String(p.collector_id) === String(mpUserId)
+        : p.payer?.id != null && String(p.payer.id) === String(mpUserId)
+          ? false
+          : null;
     return {
       id: p.id,
       creado: p.date_created ?? null,
@@ -263,21 +275,29 @@ export class PruebaTransferenciasService {
       operacion: p.operation_type ?? null,
       tipo: p.payment_type_id ?? null,
       medio: p.payment_method_id ?? null,
-      descripcion: p.description ?? null,
+      descripcion: p.description ?? p.statement_descriptor ?? null,
       referencia: p.external_reference ?? null,
-      // Sin `collector_id` no se sabe si entró o salió, y se dice así en vez de suponer.
+      // El número que identifica la transferencia en el circuito bancario, si MercadoPago lo
+      // informa: es lo que podría coincidir con el comprobante que muestra el cliente.
+      idTransferencia:
+        p.transaction_details?.bank_transfer_id ??
+        p.point_of_interaction?.transaction_data?.e2e_id ??
+        p.transaction_details?.transaction_id ??
+        null,
       cobradorId: p.collector_id ?? null,
-      recibido:
-        p.collector_id != null
-          ? String(p.collector_id) === String(mpUserId)
-          : null,
+      // null: MercadoPago no dijo ni quién cobró ni que pagó esta cuenta.
+      recibido,
       pagador: {
         nombre:
-          [p.payer?.first_name, p.payer?.last_name].filter(Boolean).join(' ') ||
+          nombreDe(p.payer) ||
+          nombreDe(p.additional_info?.payer) ||
+          bancos?.payer?.account_holder_name ||
           null,
         documento: p.payer?.identification?.number
           ? `${p.payer.identification.type ?? ''} ${p.payer.identification.number}`.trim()
           : null,
+        // El banco o la billetera desde donde salió la plata.
+        entidad: bancos?.payer?.long_name ?? null,
       },
       origen: p.point_of_interaction
         ? {

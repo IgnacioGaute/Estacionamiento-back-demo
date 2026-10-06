@@ -3,10 +3,12 @@
 Objetivo: cuando una persona transfiere al alias del comercio, que el operador pueda comprobar desde el sistema
 si llegó el dinero y asociarlo al cobro correcto.
 
-**Estado: en prueba. No es una función comercial.** Lo que existe hoy en el código es:
+**Estado: implementada y en prueba; todavía no se vende ni se factura.** Lo que existe hoy en el código es:
 
 - las **condiciones de uso** que la empresa acepta al conectar su cuenta (`src/mercadopago/condiciones.ts`, con
   versión, quién y cuándo en `mercadopago_cuentas`);
+- la **verificación por alias** en el cobro de estadías (sección 6), detrás de tres llaves: adicional habilitado por
+  el super admin, activada por la empresa y cuenta conectada;
 - la **prueba** (`PruebaTransferenciasService`), que usa el administrador de la empresa sobre su propia cuenta desde
   Configuración → MercadoPago. No toca cobros, caja ni movimientos.
 
@@ -112,71 +114,107 @@ Resultados:
 - Si ninguna de las dos vías las muestra de forma confiable, la verificación no se ofrece y el cobro electrónico
   confirmado sigue siendo el QR.
 
-## 6. Diseño propuesto si la vía técnica funciona
+## 6. La verificación por alias (implementada, en prueba)
 
-Se implementa solo sobre la evidencia de la prueba. El QR queda como está.
+Construida sobre lo observado: una transferencia al CVU apareció en `/v1/payments/search` 22 segundos después de
+hecha. El QR sigue igual y no depende de esto.
 
-### Contratación, activación y facturación (separadas)
+### Tres llaves, verificadas en cada consulta y confirmación
 
-- **Contratación (super admin).** Un adicional por empresa («Verificación de transferencias»), porque la cuenta de
-  MercadoPago es una por empresa. El super admin lo habilita o deshabilita y le pone precio. El precio queda pactado
-  (congelado) como el de los planes.
-- **Consentimiento (cliente), ya implementado.** Al conectar la cuenta acepta las condiciones de uso: qué consulta
-  el sistema, para qué, que los datos del remitente solo se usan para conciliar y que la plataforma no ve sus pagos.
-  Queda la versión, quién y cuándo. Si el texto cambia, se publica una versión nueva y se pide aceptarla.
-  Desconectar retira el consentimiento.
-- **Condición en el backend para cada consulta:** adicional habilitado **y** condiciones vigentes aceptadas **y**
-  conexión OAuth válida **y** un usuario de la empresa (nunca el super admin). Si falta algo, la consulta no se hace.
-- **Facturación (para decidir antes de tocar cargos):**
-  - Propuesta: el adicional se cobra desde el primer período que empiece después de habilitarlo. No se prorratea ni
-    se suma a un período ya empezado o pendiente.
-  - Suma al importe mensual de la empresa, así que le aplica el descuento del período (trimestral, anual). El
-    descuento de playa adicional no corresponde, porque es por empresa.
-  - Con débito automático, el importe nuevo se sincroniza con el mecanismo actual.
-  - **Si el cliente desconecta la cuenta** (o no acepta unas condiciones nuevas): la consulta se apaga, pero el
-    adicional sigue contratado y se sigue cobrando. Si se prefiere otra regla, se decide antes de implementar.
-  - **Baja (super admin):** la consulta se corta en el acto. Deja de cobrarse desde el primer período que empiece
-    después de la baja, y el período ya pagado no se reintegra.
+1. **Adicional habilitado por el super admin**: `empresa_adicionales` (`VERIFICACION_ALIAS`), con su precio pactado.
+   El precio se guarda aparte y **no entra en facturas ni débitos** hasta decidir cómo se cobra.
+2. **Activada por la empresa** en Configuración → MercadoPago: interruptor propio (separado del QR) y el alias que
+   ven los clientes. MercadoPago no informa el alias por la API, así que lo carga el administrador. Queda quién y
+   cuándo. Exige las condiciones de uso vigentes aceptadas (versión `2026-10-06`, que suma esta función y qué se
+   guarda).
+3. **Conexión OAuth válida** (cuenta `ACTIVA`) y la cuenta receptora igual a la del intento.
 
-### Confirmar la recepción y asociarla al cobro son dos pasos
+### El cobro (`VerificacionAliasService`, `/mercadopago/alias/...`)
 
-Un mismo importe en los últimos minutos no alcanza para dar un cobro por pagado: pueden transferir varias personas
-el mismo monto, en distintas playas de la misma cuenta.
+- **Intento** (`cobros_transferencia`): empresa, playa, estadía, operador, cuenta receptora, importe (lo que faltaba
+  cobrar, congelado) y moneda. Uno abierto por estadía (índice único parcial). No registra cobro ni salida.
+- **Búsqueda**: desde un minuto antes de abrir el intento, ampliable una vez a cinco. Mientras está abierto, lo que
+  entró desde ese inicio sigue contando. Dura 15 minutos; después vence (antes de vencer se consulta una última vez).
+- **Consulta centralizada por cuenta**: las pantallas preguntan cada 4 segundos; a MercadoPago se le pregunta como
+  mucho una vez cada 4 segundos por cuenta (en memoria del proceso: con varias instancias, una por instancia). Pagina
+  de a 100 hasta 500; una lista incompleta es un error, no «no hay nada».
+- **Qué cuenta como transferencia recibida** (`coincidencias.ts`): cobrada por la cuenta, `approved`, en ARS, sin
+  `external_reference` (los cobros generados por el sistema la llevan) y transferencia: `PSP_TRANSFER` +
+  `bank_transfer` (observado) o `money_transfer` (documentado, **todavía no observado**). Tarjetas, suscripciones,
+  pagos con QR, egresos, pendientes y rechazados quedan afuera.
+- **Se guarda** en `transferencias_recibidas` solo lo que coincide en importe con algún intento: operación (id
+  estable de MercadoPago), cuenta, importe, moneda, estado y fechas (de la operación y de cuándo la detectó el
+  sistema). Sin nombre ni documento de quien pagó.
 
-1. **Buscar candidatos** a pedido del operador, en el cobro: plata que entró a la cuenta de la empresa (`collector`
-   = la cuenta), aprobada, en ARS, por el importe exacto, dentro de una ventana inicial de 5 minutos ampliable a 30
-   minutos o 2 horas, y que no esté usada.
-2. **Mostrar el resultado con estados explícitos:**
-   - No se encontró una transferencia en el período consultado (con opción de reintentar o ampliar).
-   - Transferencia recibida, pendiente de asociar (hora, importe y, si MercadoPago lo informa, el nombre del
-     remitente).
-   - Varias coincidencias: requiere revisión (el operador elige cuál).
-   - Cobro confirmado y asociado.
-   - No se pudo consultar MercadoPago. Un error, un token vencido o una consulta incompleta **nunca** se muestran
-     como «no pagó».
-3. **Asociar.** Una transferencia al alias no trae una referencia que la ate al cobro, así que la asociación es
-   **manual explícita** del operador, registrada como tal. Una verificación automática se reserva para cuando haya
-   un vínculo inequívoco.
+### Regla de confirmación automática
 
-### Evidencia mínima y duplicados
+Se asocia sola si hay **exactamente una** transferencia válida sin usar por ese importe y moneda dentro del período,
+**y exactamente un** intento elegible para ella en **toda la cuenta** (todas las playas y puertas). Entonces, en una
+transacción: la transferencia queda `USADA`, se registra el pago (`TRANSFER`, referencia con el id de operación) y,
+si no queda saldo, la salida. La pantalla muestra «Pago recibido · $X · Salida registrada». Se registra como
+`AUTOMATICO_COINCIDENCIA_UNICA`: importe y hora son una heurística, no identifican al pagador.
 
-- Tabla de conciliación por playa (con `playaId`, RLS, política y triggers como las demás):
-  - empresa y cuenta receptora (`mpUserId`);
-  - id de la operación de MercadoPago;
-  - cobro asociado (estadía o pago de inquilino);
-  - importe, moneda, estado y fecha de la operación;
-  - modo (manual o automático), quién lo confirmó y cuándo.
-- No se guardan datos del remitente.
-- **Índice único (cuenta receptora, id de operación).** Una restricción única se verifica contra todas las filas,
-  aunque RLS no las muestre, así que cubre todas las playas que comparten la cuenta y dos operadores al mismo tiempo.
-  El segundo recibe «esta transferencia ya se usó para otro cobro».
-- El movimiento del cobro sigue siendo `TRANSFER` (método manual) con `referencia` = id de la operación, en la misma
-  transacción que la fila de conciliación. `MERCADOPAGO` sigue reservado para lo que acredita el QR.
-- Consultas repetidas no duplican nada: la confirmación es la única escritura y está protegida por el índice.
-- Ni tokens ni respuestas completas de MercadoPago en logs o en el frontend; al operador le llegan solo los
-  candidatos con los campos que necesita.
+Compiten por una transferencia, además de los intentos abiertos, los cancelados, vencidos o pagados por otro medio
+hasta 30 minutos después de cerrarse: así un pago tardío no se le da al cobro siguiente del mismo importe. Un intento
+confirmado no compite.
 
-## 7. Cómo sacar la prueba
+Nunca se confirma solo: un intento en revisión, una transferencia que ya estuvo en revisión, ni un intento
+cancelado, vencido o ya pagado por otro medio.
+
+### Varias coincidencias
+
+Con dos o más transferencias candidatas, o dos o más intentos que podrían usar la misma, el intento pasa a
+`REVISION` y esas transferencias también (desde ahí, solo a mano). La pantalla muestra las opciones con nombre y
+banco si MercadoPago los informa (en el momento, sin guardarlos), importe, hora y los últimos dígitos de la
+operación. El operador pregunta quién transfirió, elige y toca «Asignar transferencia y registrar salida» (modo
+`MANUAL`). Si otra caja la usó antes: «Esta transferencia ya fue utilizada» y las opciones se actualizan.
+
+### Lo que no se puede repetir
+
+- `transferencias_recibidas (mpUserId, operacionId)` único, y `cobros_transferencia (mpUserId, operacionId)` único:
+  una operación confirma un solo cobro, en todas las playas.
+- La confirmación bloquea la fila del intento y la de la transferencia (`FOR UPDATE`): dos cajas a la vez se ordenan
+  y la segunda la encuentra usada (probado con dos asignaciones simultáneas).
+- Reintentos y consultas repetidas no duplican: la confirmación es la única escritura y exige el intento abierto.
+- Anular la salida después no libera la transferencia: queda usada, con su rastro.
+
+### Permisos y aislamiento
+
+- RLS: intentos y transferencias se **leen** en toda la empresa (para decidir si una coincidencia es única entre
+  playas) y el intento solo lo **crea y cambia** su playa; la transferencia es de la cuenta (empresa). El servicio
+  además devuelve 404 si una playa pide el intento de otra. Probado en `tenant-isolation.integration.cjs`.
+- El mostrador (`USER`) usa `VerificacionAliasController` (en `OPERATOR_ENDPOINTS` y `SUSPENDED_ENDPOINTS`, porque
+  cobrar la salida de un auto que quedó adentro sigue permitido). Activarla y el alias son del administrador.
+- El super admin habilita el adicional y su precio; no tiene ninguna ruta para ver movimientos de la cuenta.
+
+### Pruebas
+
+`coincidencias.spec.ts` (reglas, sin base) y `test/verificacion-alias.integration.cjs` (PostgreSQL real, MercadoPago
+simulado): una transferencia y un cobro → una sola confirmación con cobro y salida; dos transferencias → revisión y
+la otra nunca se asocia sola; una transferencia y dos autos en distintas playas → revisión y dos cajas simultáneas,
+solo una la usa; tarjeta, suscripción, egreso y QR del sistema excluidos; error de MercadoPago → sigue esperando;
+cancelación y pago tardío → revisión; pagada por otro medio; tarifa que subió → pago con saldo pendiente, sin
+salida; reabrir recupera el mismo intento; sin adicional no se ofrece ni confirma; otra playa no toca el intento.
+
+## 7. Limitaciones conocidas
+
+- **Heurística.** Una coincidencia única puede ser una transferencia ajena del mismo importe hecha justo en esos
+  minutos. Queda registrada como automática por coincidencia, no como identificación.
+- **Sin nombre del remitente (por ahora).** En la prueba real MercadoPago no lo mandó en los campos de pago; la
+  revisión puede quedar con opciones que solo se distinguen por la hora. En ese caso el operador necesita el
+  comprobante del cliente.
+- **`money_transfer` sin observar.** Falta probar una transferencia desde otra cuenta de MercadoPago al alias.
+- **Pago tardío sin ninguna pantalla esperando.** Si nadie espera una transferencia de ese importe, el sistema no la
+  ve: queda en la cuenta de MercadoPago, no en el sistema. Las que sí detecta y no se usan quedan `DISPONIBLE` o en
+  `REVISION`, sin pantalla de conciliación todavía.
+- **Tarifa que sube durante la espera.** El importe queda congelado; si la estadía ya cuesta más, se registra el pago
+  y queda el saldo para cobrar.
+- **Una instancia.** La consulta compartida por cuenta vive en memoria del proceso.
+- **Facturación del adicional sin definir.** Propuesta pendiente de decisión: cobrarlo desde el primer período que
+  empiece después de habilitarlo, con el descuento del período, sin prorrateo; deshabilitarlo lo corta en el acto
+  y deja de cobrarse desde el período siguiente.
+
+## 8. Cómo sacar la prueba
 
 Cuando termine la prueba, se borran:
 

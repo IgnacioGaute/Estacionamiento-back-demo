@@ -217,6 +217,8 @@ export class MercadoPagoService {
     cuenta.condicionesVersion = null;
     cuenta.condicionesAceptadasEl = null;
     cuenta.condicionesAceptadasPor = null;
+    // Sin cuenta no hay verificación por alias: al reconectar se vuelve a activar a propósito.
+    cuenta.verificacionAlias = false;
     await this.cuentas.save(cuenta);
     this.logger.log(`Empresa ${empresaId} desconectó su cuenta de MercadoPago.`);
     return {

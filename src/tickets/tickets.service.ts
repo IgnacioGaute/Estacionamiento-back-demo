@@ -1070,7 +1070,44 @@ async removePriceBracket(id: string) {
 
   // Ambas identificaciones usan una operación atómica; reintentar un cierre no vuelve a cobrar.
   async closeRegistrationByPlate(id: string, dto: CloseRegistrationDto, usuarioId: string) {
-    const saved = await this.dataSource.transaction(async manager => {
+    const saved = await this.dataSource.transaction(manager => this.cerrarEnTransaccion(manager, id, dto, usuarioId));
+    this.ticketGateway.emitNewRegistration(saved);
+    return saved;
+  }
+
+  /**
+   * Una transferencia al alias que el sistema asoció a esta estadía (VerificacionAliasService):
+   * se registra como un pago más y, si con eso no queda saldo, se registra la salida, todo dentro
+   * de la transacción del que llama, la misma en la que la transferencia queda marcada como usada.
+   * Si la estadía ya se había cerrado por otro lado no registra nada (`yaCerrada`). Si la tarifa
+   * subió mientras se esperaba, queda el pago y el saldo a cobrar, sin salida.
+   */
+  async acreditarTransferenciaEn(manager: EntityManager, id: string, monto: number, referencia: string, usuarioId: string) {
+    const repository = manager.getRepository(TicketRegistration);
+    const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+    if (!registration) throw new NotFoundException('Registro no encontrado.');
+    if (registration.departureTime) return { yaCerrada: true as const };
+    await this.movimientosService.create({ ticketRegistrationId: id, monto, metodo: 'TRANSFER', tipo: 'ANTICIPO', referencia, usuarioId }, manager);
+    await this.linkToTodaysBoxList(registration, 0, manager, usuarioId);
+    registration.advancePaidAmount = await this.collectedAmount(registration, manager);
+    await repository.save(registration);
+    const withTicket = await repository.findOne({ where: { id }, relations: ['ticket'] });
+    registration.ticket = withTicket!.ticket;
+    const preview = await this.priceRegistration(registration, manager);
+    const collected = await this.collectedAmount(registration, manager);
+    // Falta plata (la tarifa subió) o sobra (hay que decidir cómo devolver): lo resuelve el cajero.
+    if (collected !== preview.price)
+      return { yaCerrada: false as const, cerrada: false, saldoPendiente: Math.max(0, preview.price - collected), registration: withTicket! };
+    const saved = await this.cerrarEnTransaccion(manager, id, { closeType: 'NO_CHARGE', expectedPrice: preview.price, expectedCollected: collected }, usuarioId);
+    return { yaCerrada: false as const, cerrada: true, saldoPendiente: 0, registration: saved };
+  }
+
+  /** Avisa a las pantallas que una estadía cambió (lo que hacen los cierres al terminar). */
+  emitirRegistro(registration: TicketRegistration) {
+    this.ticketGateway.emitNewRegistration(registration);
+  }
+
+  private async cerrarEnTransaccion(manager: EntityManager, id: string, dto: CloseRegistrationDto, usuarioId: string) {
       const repository = manager.getRepository(TicketRegistration);
       const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!registration) throw new NotFoundException('Registro no encontrado.');
@@ -1118,9 +1155,6 @@ async removePriceBracket(id: string) {
       await this.linkToTodaysBoxList(registration, cashDelta, manager, usuarioId);
       registration.ticket = null;
       return repository.save(registration);
-    });
-    this.ticketGateway.emitNewRegistration(saved);
-    return saved;
   }
 
   async getFrequentCustomers(filters: { from?: string; to?: string; vehicleType?: string; minVisits?: number; search?: string }, pagination?: ListPagination) {

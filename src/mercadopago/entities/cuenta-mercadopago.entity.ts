@@ -79,6 +79,22 @@ export class CuentaMercadoPago {
   @Column('uuid', { nullable: true })
   condicionesAceptadasPor: string | null;
 
+  // El alias que la empresa les da a sus clientes para transferir. MercadoPago no lo informa por
+  // la API, así que lo carga el administrador.
+  @Column('varchar', { length: 60, nullable: true })
+  alias: string | null;
+
+  // La empresa activó la verificación de transferencias al alias (además de que la plataforma
+  // tenga habilitado el adicional). Quién y cuándo.
+  @Column('boolean', { default: false })
+  verificacionAlias: boolean;
+
+  @Column('uuid', { nullable: true })
+  verificacionAliasPor: string | null;
+
+  @Column('timestamptz', { nullable: true })
+  verificacionAliasEl: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 

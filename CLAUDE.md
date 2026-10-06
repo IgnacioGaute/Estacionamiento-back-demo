@@ -68,8 +68,20 @@ MercadoPago donde la plataforma cobra el plan; otra aplicación que la de los QR
 Connecting an empresa's MercadoPago (`POST /mercadopago/conectar`) requires the current version of the usage
 conditions (`src/mercadopago/condiciones.ts`, versioned text; never edit a published version, add a new one); the
 account stores which version was accepted, by whom and when, and disconnecting clears it. Querying payments that
-came into the account (today only the transfer test, `PruebaTransferenciasService`) needs those conditions accepted
-and runs in the empresa's own scope for its ADMIN — never for SUPER_ADMIN, as the conditions promise.
+came into the account needs those conditions accepted and runs in the empresa's own scope — never for SUPER_ADMIN,
+as the conditions promise.
+
+**Transfer-to-alias verification** (`VerificacionAliasService`, `/mercadopago/alias/...`, rules in pure
+`coincidencias.ts`; see `docs/verificacion-transferencias.md`): a cashier opens a `cobros_transferencia` attempt
+(amount frozen, no charge or exit yet); the backend polls `/v1/payments/search` once per account every 4 s and, only
+when there is exactly one unused transfer of that amount AND exactly one eligible attempt across all the account's
+playas, records the TRANSFER movement and the exit in one transaction (`AUTOMATICO_COINCIDENCIA_UNICA`); otherwise
+`REVISION` and the cashier picks (`MANUAL`). `transferencias_recibidas` is unique per (mpUserId, operacionId) and
+stores no payer data. Both tables are READ empresa-wide (custom RLS policies) and attempts are WRITTEN only by their
+playa. Gated three ways on every call: super admin add-on (`empresa_adicionales`, price stored but NOT billed yet),
+the empresa's switch + alias on `mercadopago_cuentas`, and an ACTIVE connection with current conditions. The QR
+charge is unrelated and unchanged. `TicketsService.acreditarTransferenciaEn` and the private `cerrarEnTransaccion`
+let it close inside the caller's transaction — keep `closeRegistrationByPlate` going through the same path.
 
 `scripts/start-compiled.cjs` registers `tsconfig-paths` before `dist/main` — sources import each other as
 `src/...`, so plain `node dist/main` only works where those paths resolve.
