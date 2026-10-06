@@ -68,6 +68,17 @@ export class CuentaMercadoPago {
   @Column('timestamptz', { nullable: true })
   conectadaEl: Date | null;
 
+  // Qué versión de las condiciones (condiciones.ts) aceptó la empresa, quién y cuándo. Sin la
+  // versión vigente aceptada no se consultan los pagos que entran a la cuenta.
+  @Column('varchar', { length: 20, nullable: true })
+  condicionesVersion: string | null;
+
+  @Column('timestamptz', { nullable: true })
+  condicionesAceptadasEl: Date | null;
+
+  @Column('uuid', { nullable: true })
+  condicionesAceptadasPor: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 

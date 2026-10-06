@@ -258,7 +258,6 @@ export class TenantInterceptor implements NestInterceptor {
         'PublicParkingReceiptsController',
         'AvisoMercadoPagoController',
         'PlanesPublicosController',
-        'DiagnosticoMercadoPagoController',
       ].includes(controller) ||
       req.platformAccountService
     )

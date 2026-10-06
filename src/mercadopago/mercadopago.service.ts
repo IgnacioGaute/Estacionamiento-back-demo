@@ -11,6 +11,7 @@ import { Repository } from 'typeorm';
 import { CuentaMercadoPago } from './entities/cuenta-mercadopago.entity';
 import { cifrarToken, descifrarToken, hayClaveDeTokens } from './token-crypto';
 import { consumirState, crearState } from './oauth-state';
+import { CONDICIONES_VIGENTES } from './condiciones';
 import { tenantContext } from '../tenancy/tenant-context';
 
 const AUTORIZACION = 'https://auth.mercadopago.com.ar/authorization';
@@ -66,11 +67,26 @@ export class MercadoPagoService {
     return { clientId, clientSecret, redirectUri };
   }
 
-  /** La URL a la que hay que mandar el navegador del admin para que autorice. */
-  iniciarConexion(usuarioId: string) {
+  // Sin la versión vigente no se conecta ni se acepta nada: si el texto cambió mientras el admin
+  // tenía la pantalla abierta, aceptó algo que ya no es lo que el sistema hace.
+  private exigirCondicionesVigentes(version: string) {
+    if (version !== CONDICIONES_VIGENTES.version)
+      throw new BadRequestException({
+        code: 'CONDICIONES_DESACTUALIZADAS',
+        message:
+          'Las condiciones cambiaron. Recargá la pantalla, leelas de nuevo y volvé a aceptar.',
+      });
+  }
+
+  /**
+   * La URL a la que hay que mandar el navegador del admin para que autorice. Exige que antes haya
+   * aceptado las condiciones vigentes: conectar la cuenta es aceptar lo que el sistema hace con ella.
+   */
+  iniciarConexion(usuarioId: string, condiciones: string) {
+    this.exigirCondicionesVigentes(condiciones);
     const { clientId, redirectUri } = this.ajustes();
     const empresaId = this.empresaActual();
-    const state = crearState(empresaId, usuarioId);
+    const state = crearState(empresaId, usuarioId, condiciones);
     const url = new URL(AUTORIZACION);
     url.searchParams.set('client_id', clientId);
     url.searchParams.set('response_type', 'code');
@@ -122,6 +138,10 @@ export class MercadoPagoService {
       ultimoError: null,
       conectadaPor: usuarioId,
       conectadaEl: new Date(),
+      // Lo aceptado al iniciar la conexión, aunque la cuenta sea otra que la anterior.
+      condicionesVersion: pendiente.condiciones,
+      condicionesAceptadasEl: new Date(),
+      condicionesAceptadasPor: usuarioId,
     });
     await this.cuentas.save(fila);
     this.logger.log(
@@ -130,12 +150,18 @@ export class MercadoPagoService {
     return this.estado();
   }
 
-  /** Lo que ve el panel del admin. Nunca incluye tokens. */
+  /**
+   * Lo que ve el panel del admin. Nunca incluye tokens. Trae siempre el texto de las condiciones
+   * vigentes, para mostrarlas antes de conectar o para pedir que se acepten las nuevas.
+   */
   async estado() {
     const empresaId = this.empresaActual();
     const cuenta = await this.cuentas.findOneBy({ empresaId });
     if (!cuenta || cuenta.estado === 'DESCONECTADA')
-      return { conectada: false as const };
+      return {
+        conectada: false as const,
+        condicionesVigentes: CONDICIONES_VIGENTES,
+      };
     return {
       conectada: true as const,
       mpUserId: cuenta.mpUserId,
@@ -145,7 +171,34 @@ export class MercadoPagoService {
       expiraEl: cuenta.expiraEl,
       conectadaEl: cuenta.conectadaEl,
       ultimoError: cuenta.ultimoError,
+      condicionesVigentes: CONDICIONES_VIGENTES,
+      condicionesAceptadas: cuenta.condicionesVersion
+        ? {
+            version: cuenta.condicionesVersion,
+            el: cuenta.condicionesAceptadasEl,
+            alDia: cuenta.condicionesVersion === CONDICIONES_VIGENTES.version,
+          }
+        : null,
     };
+  }
+
+  /**
+   * Para una cuenta ya conectada: aceptar las condiciones vigentes (las conectadas antes de que
+   * existieran, o cuando cambia el texto). Queda quién y cuándo.
+   */
+  async aceptarCondiciones(usuarioId: string, version: string) {
+    this.exigirCondicionesVigentes(version);
+    const empresaId = this.empresaActual();
+    const cuenta = await this.cuentas.findOneBy({ empresaId });
+    if (!cuenta || cuenta.estado === 'DESCONECTADA')
+      throw new BadRequestException(
+        'Primero conectá la cuenta de MercadoPago: las condiciones se aceptan al conectarla.',
+      );
+    cuenta.condicionesVersion = version;
+    cuenta.condicionesAceptadasEl = new Date();
+    cuenta.condicionesAceptadasPor = usuarioId;
+    await this.cuentas.save(cuenta);
+    return this.estado();
   }
 
   /**
@@ -160,9 +213,16 @@ export class MercadoPagoService {
     cuenta.refreshToken = '';
     cuenta.estado = 'DESCONECTADA';
     cuenta.ultimoError = null;
+    // Desconectar retira el consentimiento: volver a conectar pide aceptar otra vez.
+    cuenta.condicionesVersion = null;
+    cuenta.condicionesAceptadasEl = null;
+    cuenta.condicionesAceptadasPor = null;
     await this.cuentas.save(cuenta);
     this.logger.log(`Empresa ${empresaId} desconectó su cuenta de MercadoPago.`);
-    return { conectada: false as const };
+    return {
+      conectada: false as const,
+      condicionesVigentes: CONDICIONES_VIGENTES,
+    };
   }
 
   /**

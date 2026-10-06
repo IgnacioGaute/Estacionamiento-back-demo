@@ -4,6 +4,8 @@ import {
   ingresosDelReporte,
   leerCsv,
 } from './prueba-transferencias.service';
+import { CONDICIONES_VIGENTES } from './condiciones';
+import { TenantScope, tenantContext } from '../tenancy/tenant-context';
 
 const CUENTA = {
   empresaId: 'e1',
@@ -11,38 +13,78 @@ const CUENTA = {
   nickname: 'PRUEBA',
   estado: 'ACTIVA',
   accessToken: 'cifrado',
+  condicionesVersion: CONDICIONES_VIGENTES.version,
 };
 
-function servicio(autorizadas: string | undefined, cuenta = CUENTA) {
+const ADMIN: TenantScope = {
+  empresaId: 'e1',
+  playaId: 'p1',
+  userId: 'u1',
+  role: 'ADMIN',
+};
+
+function servicio(cuenta: Record<string, unknown> = CUENTA) {
   const tokenDeEmpresa = jest.fn().mockResolvedValue('token');
+  const findOneBy = jest.fn().mockResolvedValue(cuenta);
   const s = new PruebaTransferenciasService(
-    { findOneBy: jest.fn().mockResolvedValue(cuenta) } as any,
+    { findOneBy } as any,
     { tokenDeEmpresa } as any,
-    { get: () => autorizadas } as any,
   );
-  return { s, tokenDeEmpresa };
+  return { s, tokenDeEmpresa, findOneBy };
 }
+
+const como = <T>(scope: TenantScope, hacer: () => Promise<T>) =>
+  tenantContext.run(scope, hacer);
 
 describe('Prueba de transferencias', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  test('con una cuenta no autorizada contesta 403 sin pedir el token', async () => {
-    for (const autorizadas of [undefined, '', '222, 333']) {
-      const { s, tokenDeEmpresa } = servicio(autorizadas);
+  test('el super admin y el operador no la pueden usar, ni con una empresa elegida', async () => {
+    const fuera: TenantScope[] = [
+      { ...ADMIN, role: 'SUPER_ADMIN', platform: true },
+      { ...ADMIN, role: 'SUPER_ADMIN' },
+      { ...ADMIN, role: 'USER' },
+    ];
+    for (const scope of fuera) {
+      const { s, tokenDeEmpresa, findOneBy } = servicio();
       const fetch = jest.spyOn(global, 'fetch');
-      await expect(s.ingresos('e1', 5)).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
-      await expect(s.reporte('e1')).rejects.toMatchObject({
-        response: { code: 'PRUEBA_NO_AUTORIZADA' },
+      await expect(como(scope, () => s.ingresos(5))).rejects.toMatchObject({
+        response: { code: 'SOLO_LA_EMPRESA' },
+      });
+      expect(findOneBy).not.toHaveBeenCalled();
+      expect(tokenDeEmpresa).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+    }
+    // Fuera de un pedido (sin alcance) tampoco.
+    await expect(servicio().s.reporte()).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  test('sin las condiciones vigentes aceptadas contesta 403 sin pedir el token', async () => {
+    for (const condicionesVersion of [null, '2020-01-01']) {
+      const { s, tokenDeEmpresa } = servicio({ ...CUENTA, condicionesVersion });
+      const fetch = jest.spyOn(global, 'fetch');
+      await expect(como(ADMIN, () => s.reporte())).rejects.toMatchObject({
+        response: { code: 'CONDICIONES_SIN_ACEPTAR' },
       });
       expect(tokenDeEmpresa).not.toHaveBeenCalled();
       expect(fetch).not.toHaveBeenCalled();
     }
   });
 
+  test('consulta siempre la cuenta de la empresa de la sesión', async () => {
+    const { s, findOneBy, tokenDeEmpresa } = servicio();
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ results: [] })));
+    await como(ADMIN, () => s.ingresos(5));
+    expect(findOneBy).toHaveBeenCalledWith({ empresaId: 'e1' });
+    expect(tokenDeEmpresa).toHaveBeenCalledWith('e1');
+  });
+
   test('muestra solo lo que entró a la cuenta y cuenta lo que salió', async () => {
-    const { s } = servicio('999, 111');
+    const { s } = servicio();
     const fetch = jest.spyOn(global, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -70,7 +112,7 @@ describe('Prueba de transferencias', () => {
         { status: 200 },
       ),
     );
-    const r = await s.ingresos('e1', 5);
+    const r = await como(ADMIN, () => s.ingresos(5));
     expect(String(fetch.mock.calls[0][0])).toContain('/v1/payments/search?');
     if (r.pagos.ok === false) throw new Error('debería haber respondido');
     expect(r.pagos.egresosOmitidos).toBe(1);
@@ -86,13 +128,13 @@ describe('Prueba de transferencias', () => {
   });
 
   test('un error de MercadoPago se informa como error, no como «sin pagos»', async () => {
-    const { s } = servicio('111');
+    const { s } = servicio();
     jest.spyOn(global, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ error: 'forbidden', message: 'nope' }), {
         status: 403,
       }),
     );
-    const r = await s.ingresos('e1', 30);
+    const r = await como(ADMIN, () => s.ingresos(30));
     expect(r.pagos).toEqual({
       ok: false,
       estado: 403,

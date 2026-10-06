@@ -3,9 +3,14 @@
 Objetivo: cuando una persona transfiere al alias del comercio, que el operador pueda comprobar desde el sistema
 si llegó el dinero y asociarlo al cobro correcto.
 
-**Estado: en prueba. No es una función comercial.** Lo que existe hoy en el código es solo la prueba del super
-admin (`PruebaTransferenciasService`); no toca cobros, caja ni movimientos. El cobro con QR (`CobrosMercadoPagoService`)
-no cambia y no depende de esto.
+**Estado: en prueba. No es una función comercial.** Lo que existe hoy en el código es:
+
+- las **condiciones de uso** que la empresa acepta al conectar su cuenta (`src/mercadopago/condiciones.ts`, con
+  versión, quién y cuándo en `mercadopago_cuentas`);
+- la **prueba** (`PruebaTransferenciasService`), que usa el administrador de la empresa sobre su propia cuenta desde
+  Configuración → MercadoPago. No toca cobros, caja ni movimientos.
+
+El cobro con QR (`CobrosMercadoPagoService`) no cambia y no depende de esto.
 
 ## 1. Qué está documentado por MercadoPago
 
@@ -68,12 +73,13 @@ no la usen dos veces.
 
 Requisitos:
 
-1. La cuenta que se prueba es propia o está autorizada expresamente. Su id de vendedor va en
-   `MERCADOPAGO_PRUEBA_CUENTAS` (local y Railway). Con cualquier otra cuenta, la prueba contesta 403
-   `PRUEBA_NO_AUTORIZADA` sin descifrar el token.
-2. La cuenta está conectada a una empresa por el flujo normal (Configuración → MercadoPago → Conectar).
-3. Pantalla: ficha de la empresa (super admin) → Resumen → «Transferencias recibidas en MercadoPago». Muestra solo lo
-   que entró; lo que pagó la cuenta solo se cuenta.
+1. La cuenta está conectada a una empresa por el flujo normal (Configuración → MercadoPago → Conectar), con las
+   condiciones vigentes aceptadas. Una cuenta conectada antes ve un aviso para aceptarlas; sin eso la prueba
+   contesta 403 `CONDICIONES_SIN_ACEPTAR` sin descifrar el token.
+2. La usa un **administrador de esa empresa**, en su sesión: la cuenta es siempre la de su empresa. El operador no
+   entra, y el super admin tampoco (403 `SOLO_LA_EMPRESA`), aunque elija una playa de la empresa.
+3. Pantalla: Configuración → MercadoPago, debajo de la cuenta conectada → «Transferencias recibidas en
+   MercadoPago». Muestra solo lo que entró; lo que pagó la cuenta solo se cuenta.
 
 | Caso | Qué hacer | Qué anotar |
 | --- | --- | --- |
@@ -115,19 +121,20 @@ Se implementa solo sobre la evidencia de la prueba. El QR queda como está.
 - **Contratación (super admin).** Un adicional por empresa («Verificación de transferencias»), porque la cuenta de
   MercadoPago es una por empresa. El super admin lo habilita o deshabilita y le pone precio. El precio queda pactado
   (congelado) como el de los planes.
-- **Activación (cliente).** En Configuración → MercadoPago, un interruptor propio, separado del QR. Solo aparece con
-  el adicional habilitado y MercadoPago conectado. Al activarlo se registra quién, cuándo y la versión del texto que
-  aceptó (qué se consulta, para qué y que los datos del remitente solo se usan para conciliar). Se puede pausar.
-- **Condición en el backend para cada consulta:** adicional habilitado **y** cliente activado **y** conexión OAuth
-  válida. Si falta algo, la consulta no se hace.
+- **Consentimiento (cliente), ya implementado.** Al conectar la cuenta acepta las condiciones de uso: qué consulta
+  el sistema, para qué, que los datos del remitente solo se usan para conciliar y que la plataforma no ve sus pagos.
+  Queda la versión, quién y cuándo. Si el texto cambia, se publica una versión nueva y se pide aceptarla.
+  Desconectar retira el consentimiento.
+- **Condición en el backend para cada consulta:** adicional habilitado **y** condiciones vigentes aceptadas **y**
+  conexión OAuth válida **y** un usuario de la empresa (nunca el super admin). Si falta algo, la consulta no se hace.
 - **Facturación (para decidir antes de tocar cargos):**
   - Propuesta: el adicional se cobra desde el primer período que empiece después de habilitarlo. No se prorratea ni
     se suma a un período ya empezado o pendiente.
   - Suma al importe mensual de la empresa, así que le aplica el descuento del período (trimestral, anual). El
     descuento de playa adicional no corresponde, porque es por empresa.
   - Con débito automático, el importe nuevo se sincroniza con el mecanismo actual.
-  - **Pausa del cliente:** la consulta se apaga, pero el adicional sigue contratado y se sigue cobrando. Si se
-    prefiere otra regla, se decide antes de implementar.
+  - **Si el cliente desconecta la cuenta** (o no acepta unas condiciones nuevas): la consulta se apaga, pero el
+    adicional sigue contratado y se sigue cobrando. Si se prefiere otra regla, se decide antes de implementar.
   - **Baja (super admin):** la consulta se corta en el acto. Deja de cobrarse desde el primer período que empiece
     después de la baja, y el período ya pagado no se reintegra.
 
@@ -173,9 +180,10 @@ el mismo monto, en distintas playas de la misma cuenta.
 
 Cuando termine la prueba, se borran:
 
-- **Back:** `prueba-transferencias.service.ts`, `prueba-transferencias.spec.ts`, `diagnostico.controller.ts`,
-  `dto/prueba-transferencias.dto.ts`, su registro en `mercadopago.module.ts` y la entrada en la lista de
-  `TenantInterceptor`.
-- **Front:** `prueba-transferencias.tsx`, su uso en la ficha de la empresa, y el servicio, la acción y el tipo
-  `prueba-transferencias`.
-- **Configuración:** `MERCADOPAGO_PRUEBA_CUENTAS`.
+- **Back:** `prueba-transferencias.service.ts`, `prueba-transferencias.controller.ts`, `prueba-transferencias.spec.ts`,
+  `dto/prueba-transferencias.dto.ts` y su registro en `mercadopago.module.ts`.
+- **Front:** `admin/configuracion/mercadopago/prueba-transferencias.tsx`, su uso en `conexion-mercadopago.tsx`, y el
+  servicio, la acción y el tipo `prueba-transferencias`.
+
+Las condiciones de uso se quedan: son el consentimiento sobre el que se apoya la función real. Si la función no se
+hace, se publica una versión que ya no mencione la consulta de pagos recibidos.

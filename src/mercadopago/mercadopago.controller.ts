@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { MercadoPagoService } from './mercadopago.service';
 import { ConectarMercadoPagoDto } from './dto/conectar-mercadopago.dto';
+import { AceptarCondicionesDto } from './dto/condiciones.dto';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
 
 // Conectar y desconectar la cuenta de MercadoPago de la empresa.
@@ -37,9 +38,18 @@ export class MercadoPagoController {
     return this.mercadoPago.estado();
   }
 
+  // Conectar es aceptar las condiciones: sin la versión vigente no sale el link a MercadoPago.
   @Post('conectar')
-  conectar(@Req() req: any) {
-    return this.mercadoPago.iniciarConexion(this.usuario(req));
+  conectar(@Body() dto: AceptarCondicionesDto, @Req() req: any) {
+    return this.mercadoPago.iniciarConexion(this.usuario(req), dto.condiciones);
+  }
+
+  @Post('condiciones')
+  aceptarCondiciones(@Body() dto: AceptarCondicionesDto, @Req() req: any) {
+    return this.mercadoPago.aceptarCondiciones(
+      this.usuario(req),
+      dto.condiciones,
+    );
   }
 
   @Post('callback')

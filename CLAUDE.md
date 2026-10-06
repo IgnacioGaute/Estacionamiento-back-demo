@@ -63,9 +63,13 @@ los de Plate Recognizer de cada playa),
 `PLATAFORMA_DATOS_PAGO` / `PLATAFORMA_WHATSAPP` (opcionales: datos de transferencia y WhatsApp que ve una empresa
 en «Mi plan» para pagarle a la plataforma),
 `MERCADOPAGO_PLATAFORMA_{ACCESS_TOKEN,PUBLIC_KEY,WEBHOOK_SECRET,WEBHOOK_URL}` y `PLATAFORMA_URL_FRONT` (la cuenta de
-MercadoPago donde la plataforma cobra el plan; otra aplicación que la de los QR de las empresas),
-`MERCADOPAGO_PRUEBA_CUENTAS` (ids de vendedor de MercadoPago separados por coma: las únicas cuentas sobre las que
-corre la prueba de transferencias del super admin; vacío = ninguna).
+MercadoPago donde la plataforma cobra el plan; otra aplicación que la de los QR de las empresas).
+
+Connecting an empresa's MercadoPago (`POST /mercadopago/conectar`) requires the current version of the usage
+conditions (`src/mercadopago/condiciones.ts`, versioned text; never edit a published version, add a new one); the
+account stores which version was accepted, by whom and when, and disconnecting clears it. Querying payments that
+came into the account (today only the transfer test, `PruebaTransferenciasService`) needs those conditions accepted
+and runs in the empresa's own scope for its ADMIN — never for SUPER_ADMIN, as the conditions promise.
 
 `scripts/start-compiled.cjs` registers `tsconfig-paths` before `dist/main` — sources import each other as
 `src/...`, so plain `node dist/main` only works where those paths resolve.

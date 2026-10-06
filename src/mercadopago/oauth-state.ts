@@ -16,6 +16,9 @@ const MAXIMO = 5000;
 interface Pendiente {
   empresaId: string;
   usuarioId: string;
+  // La versión de las condiciones que el admin aceptó antes de salir a MercadoPago. Se guarda en
+  // la cuenta recién cuando la conexión se completa.
+  condiciones: string;
   venceEn: number;
 }
 
@@ -33,12 +36,17 @@ function limpiar() {
   }
 }
 
-export function crearState(empresaId: string, usuarioId: string): string {
+export function crearState(
+  empresaId: string,
+  usuarioId: string,
+  condiciones: string,
+): string {
   limpiar();
   const state = randomBytes(32).toString('hex');
   pendientes.set(state, {
     empresaId,
     usuarioId,
+    condiciones,
     venceEn: Date.now() + VIGENCIA_MS,
   });
   return state;

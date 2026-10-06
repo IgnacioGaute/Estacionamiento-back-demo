@@ -3,21 +3,23 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CuentaMercadoPago } from './entities/cuenta-mercadopago.entity';
 import { MercadoPagoService } from './mercadopago.service';
+import { CONDICIONES_VIGENTES } from './condiciones';
+import { tenantContext } from '../tenancy/tenant-context';
 
 // PRUEBA, no función comercial. Sirve para averiguar con evidencia si las transferencias que
 // recibe una cuenta conectada por OAuth (desde un banco o desde otra cuenta de MercadoPago) se
 // pueden ver desde el sistema, con qué datos y con qué demora, antes de construir la verificación
 // de transferencias. Ver docs/verificacion-transferencias.md.
 //
-// Reglas de la prueba:
-// - Solo corre sobre cuentas autorizadas expresamente para probar (MERCADOPAGO_PRUEBA_CUENTAS,
-//   ids de vendedor separados por coma). Con cualquier otra cuenta conectada contesta 403 sin
-//   llegar a pedir el token: la plataforma no lee cuentas de clientes.
+// Reglas de la prueba (las mismas que prometen las condiciones de condiciones.ts):
+// - La usa la empresa dueña de la cuenta, sobre su propia cuenta: un administrador de la empresa,
+//   en el alcance de su sesión. El SUPER_ADMIN no: la plataforma no ve los pagos de los clientes.
+// - Solo con las condiciones vigentes aceptadas (al conectar la cuenta o después). Sin eso
+//   contesta 403 sin llegar a pedir el token.
 // - Solo muestra plata que ENTRÓ a la cuenta. Lo que la cuenta pagó (compras, suscripciones) se
 //   cuenta pero no se muestra.
 // - No guarda nada, no toca cobros, caja ni movimientos, y no loguea datos de pagos.
@@ -164,29 +166,34 @@ export class PruebaTransferenciasService {
     @InjectRepository(CuentaMercadoPago)
     private readonly cuentas: Repository<CuentaMercadoPago>,
     private readonly mercadoPago: MercadoPagoService,
-    private readonly config: ConfigService,
   ) {}
 
-  /** La cuenta conectada de la empresa, solo si está autorizada para la prueba. */
-  private async cuentaDePrueba(empresaId: string) {
-    const cuenta = await this.cuentas.findOneBy({ empresaId });
+  /**
+   * La cuenta conectada de la empresa de la sesión, solo para su administrador y solo con las
+   * condiciones vigentes aceptadas. Todo se chequea antes de descifrar el token.
+   */
+  private async cuentaDePrueba() {
+    const scope = tenantContext.getStore();
+    // El TenantGuard ya deja afuera al operador (este controlador no está en OPERATOR_ENDPOINTS);
+    // acá se excluye además al SUPER_ADMIN, que el guard sí deja pasar a cualquier empresa.
+    if (!scope?.empresaId || scope.platform || scope.role !== 'ADMIN')
+      throw new ForbiddenException({
+        code: 'SOLO_LA_EMPRESA',
+        message:
+          'Los pagos de una cuenta de MercadoPago los consulta solo un administrador de la empresa dueña.',
+      });
+    const cuenta = await this.cuentas.findOneBy({ empresaId: scope.empresaId });
     if (!cuenta || cuenta.estado === 'DESCONECTADA' || !cuenta.accessToken)
       throw new BadRequestException(
-        'Esta empresa no tiene MercadoPago conectado.',
+        'La empresa no tiene MercadoPago conectado.',
       );
-    const autorizadas = (
-      this.config.get<string>('MERCADOPAGO_PRUEBA_CUENTAS') ?? ''
-    )
-      .split(',')
-      .map((id) => id.trim())
-      .filter(Boolean);
-    if (!autorizadas.includes(cuenta.mpUserId))
+    if (cuenta.condicionesVersion !== CONDICIONES_VIGENTES.version)
       throw new ForbiddenException({
-        code: 'PRUEBA_NO_AUTORIZADA',
+        code: 'CONDICIONES_SIN_ACEPTAR',
         message:
-          'La prueba de transferencias solo corre sobre cuentas de MercadoPago autorizadas expresamente para probar. Esta cuenta no lo está.',
+          'Para consultar los pagos que entran a la cuenta, un administrador tiene que aceptar las condiciones de uso de MercadoPago.',
       });
-    const token = await this.mercadoPago.tokenDeEmpresa(empresaId);
+    const token = await this.mercadoPago.tokenDeEmpresa(scope.empresaId);
     return { cuenta, token };
   }
 
@@ -201,8 +208,8 @@ export class PruebaTransferenciasService {
    * que entraron a la cuenta. La búsqueda trae también lo que la cuenta pagó; eso se cuenta en
    * `egresosOmitidos` y no se muestra.
    */
-  async ingresos(empresaId: string, minutos: VentanaPrueba) {
-    const { cuenta, token } = await this.cuentaDePrueba(empresaId);
+  async ingresos(minutos: VentanaPrueba) {
+    const { cuenta, token } = await this.cuentaDePrueba();
     const { desde, hasta } = this.ventana(minutos);
     const busqueda = new URLSearchParams({
       sort: 'date_created',
@@ -292,8 +299,8 @@ export class PruebaTransferenciasService {
    * Estado del reporte «Todas las transacciones» de la cuenta: su configuración (si tiene) y los
    * últimos reportes generados. Solo lectura.
    */
-  async reporte(empresaId: string) {
-    const { token } = await this.cuentaDePrueba(empresaId);
+  async reporte() {
+    const { token } = await this.cuentaDePrueba();
     const [config, lista] = await Promise.all([
       this.consultar(`${API}/v1/account/settlement_report/config`, token),
       this.consultar(`${API}/v1/account/settlement_report/list`, token),
@@ -331,8 +338,8 @@ export class PruebaTransferenciasService {
    * Crea la configuración del reporte con las columnas de COLUMNAS_REPORTE, solo si la cuenta no
    * tiene ninguna. Una configuración existente es del dueño de la cuenta y no se toca.
    */
-  async configurarReporte(empresaId: string) {
-    const { token } = await this.cuentaDePrueba(empresaId);
+  async configurarReporte() {
+    const { token } = await this.cuentaDePrueba();
     const actual = await this.consultar(
       `${API}/v1/account/settlement_report/config`,
       token,
@@ -366,8 +373,8 @@ export class PruebaTransferenciasService {
    * Pide a MercadoPago un reporte de la ventana. Es asíncrono (202): para medir la demora se
    * devuelve cuándo se pidió, y el reporte aparece después en la lista.
    */
-  async pedirReporte(empresaId: string, minutos: VentanaPrueba) {
-    const { token } = await this.cuentaDePrueba(empresaId);
+  async pedirReporte(minutos: VentanaPrueba) {
+    const { token } = await this.cuentaDePrueba();
     const { desde, hasta } = this.ventana(minutos);
     const r = await this.consultar(
       `${API}/v1/account/settlement_report`,
@@ -392,10 +399,10 @@ export class PruebaTransferenciasService {
   }
 
   /** Descarga un reporte y devuelve solo las filas de plata que entró, con columnas acotadas. */
-  async leerReporte(empresaId: string, archivo: string) {
+  async leerReporte(archivo: string) {
     if (!/^[\w.-]{1,200}$/.test(archivo))
       throw new BadRequestException('Nombre de reporte inválido.');
-    const { token } = await this.cuentaDePrueba(empresaId);
+    const { token } = await this.cuentaDePrueba();
     const r = await this.consultar(
       `${API}/v1/account/settlement_report/${encodeURIComponent(archivo)}`,
       token,
