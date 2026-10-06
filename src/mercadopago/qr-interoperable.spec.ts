@@ -341,11 +341,17 @@ describe('Sucursal y caja de una playa', () => {
       longitude: -60.65,
     });
     const caja = JSON.parse(String(llamadas[3][1]?.body));
+    expect(llamadas[2][0]).toBe(
+      'https://api.mercadopago.com/v2/pos?external_id=CAJAP1',
+    );
+    expect(llamadas[3][0]).toBe('https://api.mercadopago.com/v2/pos');
     expect(caja).toMatchObject({
-      store_id: 555,
-      external_store_id: sucursal.external_id,
-      fixed_amount: true,
+      store_id: '555',
+      config: { qr: { operating_mode: 'pdv' } },
     });
+    expect(caja).not.toHaveProperty('external_store_id');
+    expect(caja).not.toHaveProperty('fixed_amount');
+    expect((llamadas[3][1]?.headers as any)['X-Idempotency-Key']).toBeTruthy();
     expect(guardadas[0]).toMatchObject({
       playaId: 'p1',
       storeId: '555',
@@ -357,12 +363,94 @@ describe('Sucursal y caja de una playa', () => {
   test('si la sucursal y la caja ya existían (intento cortado), las reusa', async () => {
     const { servicio, guardadas } = cajas();
     const llamadas = falso([
-      json({ results: [{ id: 555 }] }),
-      json({ results: [{ id: 777 }] }),
+      json({ results: [{ id: 555, external_id: 'PLAYAP1' }] }),
+      json({ data: [{ id: 777, external_id: 'CAJAP1', store_id: '555' }] }),
     ]);
     await en(() => servicio.crear('p1', direccion, 'u1'));
     expect(llamadas).toHaveLength(2);
     expect(guardadas[0]).toMatchObject({ storeId: '555', posId: '777' });
+  });
+
+  test('una sucursal del cliente con otro identificador no se usa: se crea la de la playa', async () => {
+    const { servicio, guardadas } = cajas();
+    const llamadas = falso([
+      json({ results: [{ id: 999, external_id: 'LOCAL-DEL-CLIENTE' }] }),
+      json({ id: 555, external_id: 'PLAYAP1' }),
+      json({ data: [{ id: 888, external_id: 'OTRA-CAJA' }] }),
+      json({ id: 777 }),
+    ]);
+    await en(() => servicio.crear('p1', direccion, 'u1'));
+    expect(JSON.parse(String(llamadas[3][1]?.body))).toMatchObject({
+      store_id: '555',
+    });
+    expect(guardadas[0]).toMatchObject({ storeId: '555', posId: '777' });
+  });
+
+  test('si la sucursal recién creada todavía no aparece, la caja se reintenta', async () => {
+    const { servicio, guardadas } = cajas();
+    (servicio as any).esperar = async () => undefined;
+    const noEsta = json(
+      {
+        message: 'Store not found',
+        error: 'store_not_found',
+      },
+      404,
+    );
+    const llamadas = falso([
+      json({ results: [] }),
+      json({ id: 555, external_id: 'PLAYAP1' }),
+      json({ results: [] }),
+      noEsta,
+      json({ id: 777 }),
+    ]);
+    await en(() => servicio.crear('p1', direccion, 'u1'));
+    expect(llamadas).toHaveLength(5);
+    expect(llamadas[3][1]?.headers).toEqual(llamadas[4][1]?.headers);
+    expect(llamadas[3][1]?.body).toEqual(llamadas[4][1]?.body);
+    expect(guardadas[0]).toMatchObject({ storeId: '555', posId: '777' });
+  });
+
+  test('no vincula una caja existente que pertenece a otra sucursal', async () => {
+    const { servicio, guardadas } = cajas();
+    const llamadas = falso([
+      json({ results: [{ id: 555, external_id: 'PLAYAP1' }] }),
+      json({ data: [{ id: 777, external_id: 'CAJAP1', store_id: '999' }] }),
+    ]);
+    await expect(
+      en(() => servicio.crear('p1', direccion, 'u1')),
+    ).rejects.toThrow(/pertenece a otra sucursal/);
+    expect(llamadas).toHaveLength(2);
+    expect(guardadas).toHaveLength(0);
+  });
+
+  test('una búsqueda rechazada no se interpreta como sucursal inexistente', async () => {
+    const { servicio, guardadas } = cajas();
+    const llamadas = falso([json({ error: 'unauthorized' }, 401)]);
+    await expect(
+      en(() => servicio.crear('p1', direccion, 'u1')),
+    ).rejects.toThrow(/unauthorized/);
+    expect(llamadas).toHaveLength(1);
+    expect(guardadas).toHaveLength(0);
+  });
+
+  test('deja de reintentar si MercadoPago no encuentra la sucursal', async () => {
+    const { servicio, guardadas } = cajas();
+    const esperar = jest
+      .spyOn(servicio as any, 'esperar')
+      .mockResolvedValue(undefined);
+    const llamadas = falso([
+      json({ results: [{ id: 555, external_id: 'PLAYAP1' }] }),
+      json({ data: [] }),
+      ...Array.from({ length: 5 }, () =>
+        json({ error: 'store_not_found' }, 404),
+      ),
+    ]);
+    await expect(
+      en(() => servicio.crear('p1', direccion, 'u1')),
+    ).rejects.toThrow(/store_not_found/);
+    expect(llamadas).toHaveLength(7);
+    expect(esperar).toHaveBeenCalledTimes(4);
+    expect(guardadas).toHaveLength(0);
   });
 
   test('si MercadoPago rechaza la dirección, devuelve su motivo', async () => {

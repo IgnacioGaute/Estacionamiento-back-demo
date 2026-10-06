@@ -142,13 +142,20 @@ export class CajasQrService {
     const externalStoreId = idSucursal(playaId);
     const externalPosId = idCaja(playaId);
 
+    // Solo cuenta la sucursal con NUESTRO identificador: si la búsqueda trajera otras (una que el
+    // cliente ya tenía), la caja quedaría colgada de la equivocada.
     const sucursales = await this.buscar(
       token,
       `${API}/users/${cuenta.mpUserId}/stores/search?external_id=${externalStoreId}`,
     );
-    let storeId: string | undefined = sucursales?.results?.[0]?.id
-      ? String(sucursales.results[0].id)
+    const yaCreada = ((sucursales?.results ?? []) as any[]).find(
+      (s) => s?.external_id === externalStoreId,
+    );
+    let storeId: string | undefined = yaCreada?.id
+      ? String(yaCreada.id)
       : undefined;
+    // El identificador con que MercadoPago guardó la sucursal: es el que la caja tiene que nombrar.
+    let externalStoreIdMp: string = yaCreada?.external_id ?? externalStoreId;
     if (!storeId) {
       const sucursal = await this.llamar(
         token,
@@ -171,6 +178,7 @@ export class CajasQrService {
         },
       );
       storeId = sucursal?.id ? String(sucursal.id) : undefined;
+      externalStoreIdMp = sucursal?.external_id ?? externalStoreId;
     }
     if (!storeId)
       throw new ServiceUnavailableException(
@@ -179,23 +187,52 @@ export class CajasQrService {
 
     const cajasMp = await this.buscar(
       token,
-      `${API}/pos?external_id=${externalPosId}`,
+      `${API}/v2/pos?external_id=${externalPosId}`,
     );
-    let posId: string | undefined = cajasMp?.results?.[0]?.id
-      ? String(cajasMp.results[0].id)
+    const cajaYaCreada = ((cajasMp?.data ?? []) as any[]).find(
+      (c) => c?.external_id === externalPosId,
+    );
+    if (cajaYaCreada && String(cajaYaCreada.store_id) !== storeId)
+      throw new BadRequestException(
+        'La caja de MercadoPago pertenece a otra sucursal. Revisá su vinculación antes de activar el QR.',
+      );
+    let posId: string | undefined = cajaYaCreada?.id
+      ? String(cajaYaCreada.id)
       : undefined;
-    if (!posId) {
-      const caja = await this.llamar(token, `${API}/pos`, {
-        method: 'POST',
-        body: JSON.stringify({
-          name: `Caja ${playa.nombre}`.slice(0, 60),
-          fixed_amount: true,
-          store_id: Number(storeId),
-          external_store_id: externalStoreId,
-          external_id: externalPosId,
-        }),
-      });
-      posId = caja?.id ? String(caja.id) : undefined;
+    // Vincular por el ID devuelto por MP evita depender de la resolución del external_store_id.
+    // Si aún no encuentra la sucursal, se reintenta con la misma clave para no duplicar la caja.
+    for (let intento = 0; !posId; intento++) {
+      try {
+        const caja = await this.llamar(
+          token,
+          `${API}/v2/pos`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              name: `Caja ${playa.nombre}`
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^A-Za-z0-9 _-]/g, '')
+                .slice(0, 45)
+                .trim(),
+              store_id: storeId,
+              external_id: externalPosId,
+              config: { qr: { operating_mode: 'pdv' } },
+            }),
+          },
+          `crear-caja-${cuenta.mpUserId}-${storeId}-${externalPosId}`,
+        );
+        posId = caja?.id ? String(caja.id) : undefined;
+        if (!posId) break;
+      } catch (error) {
+        const sucursalTodaviaNoEsta =
+          error instanceof BadRequestException &&
+          /store_not_found|non_existent_external_store_id|does not refer any store/i.test(
+            error.message,
+          );
+        if (!sucursalTodaviaNoEsta || intento >= 4) throw error;
+        await this.esperar(1500 * (intento + 1));
+      }
     }
     if (!posId)
       throw new ServiceUnavailableException(
@@ -208,7 +245,7 @@ export class CajasQrService {
         playaId,
         mpUserId: cuenta.mpUserId,
         storeId,
-        externalStoreId,
+        externalStoreId: externalStoreIdMp,
         posId,
         externalPosId,
         direccion,
@@ -469,14 +506,14 @@ export class CajasQrService {
     }
   }
 
-  // Buscar una sucursal o caja ya creada: si MercadoPago contesta error (o 404 porque no hay
-  // ninguna), se sigue como si no existiera y se crea.
+  // Separado para que las pruebas no esperen de verdad.
+  protected esperar(ms: number) {
+    return new Promise((resolver) => setTimeout(resolver, ms));
+  }
+
+  // Una búsqueda fallida no prueba que la sucursal o caja no exista.
   private async buscar(token: string, url: string) {
-    try {
-      return await this.llamar(token, url);
-    } catch {
-      return null;
-    }
+    return this.llamar(token, url);
   }
 
   // De un error de MercadoPago se devuelve solo su mensaje, recortado: sirve para corregir la
