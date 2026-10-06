@@ -552,3 +552,31 @@ test('migración de turnos: un abierto por usuario y playa, con cierres históri
     await assert.rejects(insert(playa, operator, 'ABIERTO'), error => error.code === '23505');
   } finally { await runner.rollbackTransaction(); await runner.release(); }
 });
+
+
+test('escaneo: busca solo patentes exactas activas y conserva duplicados para elegir', async () => {
+  const repo = ds.getRepository(Registration);
+  const base = { description: 'Entrada de prueba de cámara', entryMode: 'PLATE', vehicleType: 'AUTO', entryDay: '2026-10-06', entryTime: '08:00:00', price: 0, noPlate: false };
+  const first = await repo.save({ ...base, licensePlateOriginal: 'SO123AA', licensePlateNormalized: 'SO123AA', licensePlateSearch: '50123AA' });
+  const second = await repo.save({ ...base, entryTime: '09:00:00', licensePlateOriginal: 'SO123AA', licensePlateNormalized: 'SO123AA', licensePlateSearch: '50123AA' });
+  await repo.save({ ...base, licensePlateOriginal: 'S0123AA', licensePlateNormalized: 'S0123AA', licensePlateSearch: '50123AA' });
+  await repo.save({ ...base, licensePlateOriginal: 'SO123AA', licensePlateNormalized: 'SO123AA', departureDay: '2026-10-06', departureTime: '10:00:00' });
+  const found = await tickets.getPlateStatus('so 123 aa');
+  assert.equal(found.plate, 'SO123AA');
+  assert.deepEqual(found.hourly.map(r => r.id), [first.id, second.id]);
+  assert.deepEqual(found.daily, []);
+  const legacy = await repo.save({ ...base, entryMode: 'BARCODE', vehiclePlateCustomer: 'leg-123', licensePlateNormalized: null });
+  assert.deepEqual((await tickets.getPlateStatus('LEG123')).hourly.map(r => r.id), [legacy.id]);
+  assert.deepEqual(await tickets.getPlateStatus('NEW123'), { plate: 'NEW123', hourly: [], daily: [] });
+  await assert.rejects(tickets.getPlateStatus('---'), /patente no es válida/);
+});
+
+test('escaneo: encuentra abonos activos con formatos históricos sin incluir retirados', async () => {
+  const repo = ds.getRepository(RegistrationDay);
+  const base = { description: 'Abono de prueba', vehicleType: 'AUTO', price: 0, dateNow: '2026-10-06', ticketTimeType: 'DIA', days: 1, paid: false };
+  const daily = await repo.save({ ...base, vehiclePlateCustomer: 'xx 123-yy', retired: false });
+  await repo.save({ ...base, vehiclePlateCustomer: 'XX123YY', retired: true });
+  const found = await tickets.getPlateStatus('XX123YY');
+  assert.deepEqual(found.daily.map(r => r.id), [daily.id]);
+  assert.deepEqual(found.hourly, []);
+});

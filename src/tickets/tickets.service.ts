@@ -1013,6 +1013,23 @@ async removePriceBracket(id: string) {
     return saved;
   }
 
+  // Coincidencia exacta para dirigir el escaneo: la búsqueda aproximada puede devolver otra
+  // patente (O/0, I/1) y nunca debe decidir qué estadía cobrar.
+  async getPlateStatus(rawPlate: string) {
+    const plate = normalizePlate(rawPlate ?? '');
+    if (!plate || plate.length > 50) throw new BadRequestException('La patente no es válida.');
+    const hourly = await this.ticketRegistrationRepository.createQueryBuilder('r')
+      .leftJoinAndSelect('r.ticket', 'ticket')
+      .where("(r.licensePlateNormalized = :plate OR (r.licensePlateNormalized IS NULL AND regexp_replace(UPPER(COALESCE(NULLIF(r.licensePlateOriginal, ''), r.vehiclePlateCustomer, '')), '[^A-Z0-9]', '', 'g') = :plate))", { plate })
+      .andWhere('r.departureTime IS NULL')
+      .orderBy('r.entryDay', 'ASC').addOrderBy('r.entryTime', 'ASC').getMany();
+    const daily = await this.ticketRegistrationForDayRepository.createQueryBuilder('r')
+      .where('COALESCE(r.retired, false) = false')
+      .andWhere("regexp_replace(UPPER(COALESCE(r.vehiclePlateCustomer, '')), '[^A-Z0-9]', '', 'g') = :plate", { plate })
+      .orderBy('r.createdAt', 'ASC').getMany();
+    return { plate, hourly, daily };
+  }
+
   async searchActiveRegistrations(q: string) {
     const query = (q ?? '').trim();
 

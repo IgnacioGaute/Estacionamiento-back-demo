@@ -1113,3 +1113,18 @@ test('reconocimiento gratuito: sin token, la playa escanea con fast-alpr y nunca
     delete process.env.ALPR_TOKEN;
   }
 });
+
+
+test('cámara: el operador resuelve una patente exacta solo en su playa', async () => {
+  const operator = await ds.getRepository(User).save({ username: 'scan-status', email: 'scan-status@test.local', firstName: 'Scan', lastName: 'Operator', role: 'USER', empresaId: b.empresaId });
+  await ds.getRepository(load('tenancy/entities/usuario-playa.entity', 'UsuarioPlaya')).save({ usuarioId: operator.id, playaId: b.playaId, rolPlaya: 'OPERADOR' });
+  const base = { description: 'Entrada de prueba de cámara', entryMode: 'PLATE', vehicleType: 'AUTO', entryDay: '2026-10-06', entryTime: '08:00:00', price: 0, noPlate: false, licensePlateOriginal: 'SCAN123', licensePlateNormalized: 'SCAN123' };
+  await scoped(a, () => ds.getRepository(Registration).save({ ...base }));
+  const own = await scoped(b, () => ds.getRepository(Registration).save({ ...base }));
+  const route = '/tickets/registrations/plate-status/scan-123';
+  const response = await request(app.getHttpServer()).get(route).set('Authorization', 'Bearer ' + token(operator)).set('X-Playa-Id', b.playaId).expect(200);
+  assert.equal(response.body.plate, 'SCAN123');
+  assert.deepEqual(response.body.hourly.map(r => r.id), [own.id]);
+  assert.deepEqual(response.body.daily, []);
+  await request(app.getHttpServer()).get(route).set('Authorization', 'Bearer ' + token(operator)).set('X-Playa-Id', a.playaId).expect(403);
+});

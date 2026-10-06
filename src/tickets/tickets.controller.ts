@@ -220,6 +220,11 @@ export class TicketsController {
     return this.ticketsService.createRegistrationByPlate(dto, req.user.userId);
   }
 
+  @Get('registrations/plate-status/:plate')
+  getPlateStatus(@Param('plate') plate: string) {
+    return this.ticketsService.getPlateStatus(plate);
+  }
+
   @Get('registrations/active/search')
   searchActiveRegistrations(@Query('q') q: string) {
     return this.ticketsService.searchActiveRegistrations(q);

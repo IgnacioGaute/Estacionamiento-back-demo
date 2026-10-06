@@ -75,3 +75,17 @@ La migración SimpleOperationDefaults1790000016000 cambia solamente los DEFAULT 
 `FlexibleVehicleTypes1790000000000` se ejecuta antes de `synchronize`. Convierte `vehicleType` de enum a varchar(32) mediante cast conservando sus valores y nulos en las cinco tablas de tickets; crea el catálogo con Auto y Camioneta. Los tipos anteriores no se eliminan. La reversión automática se rechaza porque podría perder categorías personalizadas. Nuevas columnas JSONB: `ticket_schedule_settings.pricingOptions` y `ticket_registrations.pricingBreakdown`.
 
 Pruebas adicionales: `pnpm exec jest --runInBand pricing` cubre el motor anterior y las opciones nuevas. La integración verifica además migración con datos existentes, simulación sin efectos y cierre de patentes/tickets de una categoría desactivada con sus reglas originales. Las pruebas de base usan exclusivamente PostgreSQL temporal.
+
+
+### Cámara para entrada o salida
+
+En la pantalla de tickets, Escanear patente abre la cámara y consulta GET /tickets/registrations/plate-status/:plate.
+La consulta se limita a la playa actual, normaliza mayúsculas/separadores y compara la patente exacta:
+sin activos abre Registrar entrada; con un activo abre el cobro por hora o el detalle del abono por día/semana/mes.
+Con varios activos muestra una elección. No usa las equivalencias de la búsqueda aproximada (O/0, I/1) para decidir
+qué vehículo cobrar, ni interpreta una consulta fallida como una entrada nueva. La lectura no cobra ni registra sola.
+
+Registrar entrada reúne patente y búsqueda de clientes frecuentes en un campo. Las sugerencias aparecen debajo,
+con consultas demoradas 250 ms y descarte de respuestas obsoletas. La coincidencia exacta carga los datos guardados;
+apellido, teléfono y vehículo siguen editables antes de confirmar. Los botones de vehículo usan la configuración
+de la playa y solo ofrecen tipos habilitados.
