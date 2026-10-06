@@ -218,4 +218,36 @@ describe('Prueba de transferencias', () => {
       ingresos: [],
     });
   });
+
+  test.each([',', ';'])(
+    'lee PAYER_NAME con separador %s y conserva el nombre junto a su operación',
+    (sep) => {
+      const csv =
+        '\uFEFF' +
+        [
+          [
+            'SOURCE_ID',
+            'TRANSACTION_TYPE',
+            'TRANSACTION_AMOUNT',
+            'PAYER_NAME',
+          ].join(sep),
+          ['123', 'SETTLEMENT', '10.00', '"Pérez, Ana"'].join(sep),
+          ['124', 'SETTLEMENT', '10.00', '""'].join(sep),
+        ].join('\r\n');
+      const r = ingresosDelReporte(csv);
+      expect(r.columnas).toContain('PAYER_NAME');
+      expect(r.ingresos.map((f) => [f.SOURCE_ID, f.PAYER_NAME])).toEqual([
+        ['123', 'Pérez, Ana'],
+        ['124', ''],
+      ]);
+    },
+  );
+
+  test('distingue la columna PAYER_NAME ausente de un nombre vacío', () => {
+    const r = ingresosDelReporte(
+      'SOURCE_ID,TRANSACTION_TYPE,TRANSACTION_AMOUNT\n123,SETTLEMENT,10',
+    );
+    expect(r.columnas).not.toContain('PAYER_NAME');
+    expect(r.ingresos[0]).not.toHaveProperty('PAYER_NAME');
+  });
 });
