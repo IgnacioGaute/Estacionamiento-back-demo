@@ -112,9 +112,8 @@ export class CobrosMercadoPagoService {
         ? `Cochera - ${patente}`
         : `Estacionamiento - ${patente}`;
 
-    // Con caja de la playa, un QR estándar que se paga desde cualquier banco o billetera. Si la
-    // orden falla, se sigue con el link de siempre: mejor un QR que solo paga MercadoPago que no
-    // poder cobrar.
+    // Con caja activada, devolver la orden QR o su error: reemplazarla por un link
+    // oculta la falla y entrega un código que las otras billeteras no pueden pagar.
     const caja = playaId
       ? await this.cajasQr?.cajaDePlaya(empresaId, playaId)
       : null;
@@ -136,8 +135,11 @@ export class CobrosMercadoPagoService {
         return this.aVista(cobro);
       } catch (error) {
         this.logger.warn(
-          `No se pudo crear la orden QR del cobro ${cobro.id}; se usa el link de pago: ${error instanceof Error ? error.message : error}`,
+          `No se pudo crear la orden QR del cobro ${cobro.id}: ${error instanceof Error ? error.message : error}`,
         );
+        cobro.estado = 'CANCELADO';
+        await this.cobros.save(cobro);
+        throw error;
       }
     }
 

@@ -100,19 +100,22 @@ describe('Cobro con QR por caja de la playa', () => {
     });
   });
 
-  test('si la orden falla, cobra igual con el link de siempre', async () => {
+  test('si la orden falla, devuelve el motivo y cancela el cobro sin generar un link', async () => {
     const falla = jest
       .fn()
       .mockRejectedValue(new BadRequestException('caja rota'));
-    const { servicio, mercadoPago } = cobrosConCaja(
+    const { servicio, mercadoPago, cobros } = cobrosConCaja(
       { externalPosId: 'CAJA1' },
       falla,
     );
-    const cobro = await en(() => servicio.crear('reg-1', 'HORA', 'u1'));
-    expect(mercadoPago.crearPreferencia).toHaveBeenCalledTimes(1);
-    expect(cobro).toMatchObject({
-      qr: 'https://mp/link',
-      interoperable: false,
+    await expect(
+      en(() => servicio.crear('reg-1', 'HORA', 'u1')),
+    ).rejects.toThrow('caja rota');
+    expect(mercadoPago.crearPreferencia).not.toHaveBeenCalled();
+    expect([...cobros.filas.values()]).toHaveLength(1);
+    expect([...cobros.filas.values()][0]).toMatchObject({
+      estado: 'CANCELADO',
+      initPoint: '',
     });
   });
 
