@@ -59,7 +59,11 @@ const lecturas = new Map<
 const pagadores = new Map<
   string,
   {
-    datos: { nombre: string | null; entidad: string | null };
+    datos: {
+      nombre: string | null;
+      entidad: string | null;
+      documento: string | null;
+    };
     hasta: number;
   }
 >();
@@ -419,13 +423,17 @@ export class VerificacionAliasService {
             );
             // Lo que haya de quien pagó, en el momento y sin guardarlo. Si la búsqueda no lo trae,
             // se pide el detalle de ese pago, que puede traer más.
-            let { nombre, entidad } = datosDelPagador(pago);
-            if (!nombre)
-              ({ nombre, entidad } = await this.pagador(
+            let { nombre, entidad, documento } = datosDelPagador(pago);
+            if (!nombre || !documento) {
+              const detalle = await this.pagador(
                 cuenta,
                 t.operacionId,
                 entidad,
-              ));
+              );
+              nombre = detalle.nombre ?? nombre;
+              entidad = detalle.entidad ?? entidad;
+              documento = detalle.documento ?? documento;
+            }
             return {
               operacionId: t.operacionId,
               importe: t.importe,
@@ -434,6 +442,7 @@ export class VerificacionAliasService {
               detectadaEl: t.detectadaEl,
               nombre,
               entidad,
+              documento,
             };
           }),
       );
@@ -693,10 +702,19 @@ export class VerificacionAliasService {
     cuenta: CuentaMercadoPago,
     operacionId: string,
     entidad: string | null,
-  ): Promise<{ nombre: string | null; entidad: string | null }> {
-    const guardado = pagadores.get(operacionId);
+  ): Promise<{
+    nombre: string | null;
+    entidad: string | null;
+    documento: string | null;
+  }> {
+    const clave = `${cuenta.mpUserId}:${operacionId}`;
+    const guardado = pagadores.get(clave);
     if (guardado && guardado.hasta > Date.now()) return guardado.datos;
-    let datos = { nombre: null as string | null, entidad };
+    let datos = {
+      nombre: null as string | null,
+      entidad,
+      documento: null as string | null,
+    };
     try {
       const token = await this.mercadoPago.tokenDeEmpresa(cuenta.empresaId);
       const respuesta = await fetch(`${API}/v1/payments/${operacionId}`, {
@@ -707,13 +725,17 @@ export class VerificacionAliasService {
         const pago = await respuesta.json();
         if (String(pago?.collector_id) === String(cuenta.mpUserId)) {
           const d = datosDelPagador(pago);
-          datos = { nombre: d.nombre, entidad: d.entidad ?? entidad };
+          datos = {
+            nombre: d.nombre,
+            entidad: d.entidad ?? entidad,
+            documento: d.documento,
+          };
         }
       } else await respuesta.body?.cancel();
     } catch {
       // Sin detalle se muestra sin nombre; la elección sigue siendo del operador.
     }
-    pagadores.set(operacionId, { datos, hasta: Date.now() + 5 * 60_000 });
+    pagadores.set(clave, { datos, hasta: Date.now() + 5 * 60_000 });
     return datos;
   }
 
