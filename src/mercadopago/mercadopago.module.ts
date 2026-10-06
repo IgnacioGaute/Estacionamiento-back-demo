@@ -10,8 +10,6 @@ import { MercadoPagoService } from './mercadopago.service';
 import { CobrosMercadoPagoService } from './cobros.service';
 import { MercadoPagoController } from './mercadopago.controller';
 import { CobrosMercadoPagoController } from './cobros.controller';
-import { PruebaTransferenciasController } from './prueba-transferencias.controller';
-import { PruebaTransferenciasService } from './prueba-transferencias.service';
 import { VerificacionAliasController } from './verificacion-alias.controller';
 import { VerificacionAliasService } from './verificacion-alias.service';
 import { CajasQrService } from './cajas-qr.service';
@@ -38,13 +36,11 @@ import { CuentasModule } from 'src/cuentas/cuentas.module';
   controllers: [
     MercadoPagoController,
     CobrosMercadoPagoController,
-    PruebaTransferenciasController,
     VerificacionAliasController,
   ],
   providers: [
     MercadoPagoService,
     CobrosMercadoPagoService,
-    PruebaTransferenciasService,
     VerificacionAliasService,
     CajasQrService,
   ],
