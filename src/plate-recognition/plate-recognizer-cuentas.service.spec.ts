@@ -43,7 +43,7 @@ describe('PlateRecognizerCuentasService', () => {
       compartidaCon: ['Norte'],
     });
     expect(consumo[1].compartidaCon).toEqual(['Centro']);
-    expect(consumo[2]).toEqual({ playaId: 'p3', nombre: 'Sur', configurado: false });
+    expect(consumo[2]).toEqual({ playaId: 'p3', nombre: 'Sur', configurado: false, gratuito: false });
   });
 
   it('si Plate Recognizer rechaza una cuenta, esa playa muestra el error y las demás siguen', async () => {

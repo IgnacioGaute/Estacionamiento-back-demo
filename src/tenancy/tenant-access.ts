@@ -20,15 +20,20 @@ import { tenantContext, TenantScope } from './tenant-context';
 import { OPERATOR_ENDPOINTS, SUSPENDED_ENDPOINTS } from './endpoint-policy';
 import { SuscripcionesService } from '../saas/suscripciones.service';
 import { limitLogin } from '../auth/login-limiter';
+import { alprConfigurado } from '../plate-recognition/alpr';
 
 class AssignOperatorPlayaDto {
   @IsUUID('4') playaId: string;
 }
 
-// Si la playa tiene cuenta de Plate Recognizer: el front muestra la cámara solo en ese caso. Del
-// token no sale nada. El contexto no pasa por el TenantInterceptor, así que lee con el rol dueño.
-const RECONOCIMIENTO_PATENTES =
-  'EXISTS(SELECT 1 FROM plate_recognizer_cuentas c WHERE c."playaId" = p.id) AS "reconocimientoPatentes"';
+// Si la playa puede escanear patentes: con su cuenta de Plate Recognizer o, cuando la plataforma
+// tiene levantado el reconocimiento gratuito (fast-alpr), cualquier playa. El front muestra la
+// cámara solo en ese caso. Del token no sale nada. El contexto no pasa por el TenantInterceptor,
+// así que lee con el rol dueño.
+const reconocimientoPatentes = () =>
+  alprConfigurado()
+    ? 'true AS "reconocimientoPatentes"'
+    : 'EXISTS(SELECT 1 FROM plate_recognizer_cuentas c WHERE c."playaId" = p.id) AS "reconocimientoPatentes"';
 
 @Injectable()
 export class TenantAccessService {
@@ -44,7 +49,7 @@ export class TenantAccessService {
         user,
         empresa: null,
         playas: await this.ds.query(
-          `SELECT id, nombre, "empresaId", modulos, ${RECONOCIMIENTO_PATENTES} FROM playas p ORDER BY nombre`,
+          `SELECT id, nombre, "empresaId", modulos, ${reconocimientoPatentes()} FROM playas p ORDER BY nombre`,
         ),
       };
     // Suspendida sigue resolviendo su playa: TenantGuard ya acotó qué puede hacer.
@@ -55,7 +60,7 @@ export class TenantAccessService {
     if (!empresa)
       throw new ForbiddenException('Tu cuenta no tiene una empresa activa.');
     const playas = await this.ds.query(
-      `SELECT p.id,p.nombre,p."empresaId",p.modulos,${RECONOCIMIENTO_PATENTES} FROM playas p WHERE p."empresaId"=$1 AND ($2='ADMIN' OR EXISTS(SELECT 1 FROM usuario_playas up WHERE up."playaId"=p.id AND up."usuarioId"=$3)) ORDER BY p.nombre,p.id`,
+      `SELECT p.id,p.nombre,p."empresaId",p.modulos,${reconocimientoPatentes()} FROM playas p WHERE p."empresaId"=$1 AND ($2='ADMIN' OR EXISTS(SELECT 1 FROM usuario_playas up WHERE up."playaId"=p.id AND up."usuarioId"=$3)) ORDER BY p.nombre,p.id`,
       [empresa.id, user.role, user.id],
     );
     return { user, empresa, playas };

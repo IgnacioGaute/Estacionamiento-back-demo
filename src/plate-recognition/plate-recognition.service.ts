@@ -8,12 +8,19 @@ import {
 } from '@nestjs/common';
 import { tenantContext } from 'src/tenancy/tenant-context';
 import { PlateRecognizerCuentasService } from './plate-recognizer-cuentas.service';
+import { alprConfigurado } from './alpr';
 
 const PLATE_RECOGNIZER_URL = 'https://api.platerecognizer.com/v1/plate-reader/';
 // Límite de Snapshot Cloud. Una foto de celular sin achicar lo supera casi siempre (el front la
 // reduce antes de subirla); se corta acá para no gastar un viaje que Plate Recognizer va a rechazar.
 export const PLATE_IMAGE_MAX_BYTES = 3 * 1024 * 1024;
 const REINTENTO_429_MS = 1000;
+// fast-alpr en CPU tarda menos de un segundo por foto; más que esto es que el servicio no responde.
+const ALPR_TIMEOUT_MS = 15_000;
+const ALPR_NO_DISPONIBLE = {
+  code: 'ALPR_NO_DISPONIBLE',
+  message: 'El reconocimiento de patentes no responde en este momento. Escribí la patente a mano.',
+};
 const FOTO_PESADA = {
   code: 'PLATE_IMAGE_TOO_LARGE',
   message: 'La foto es demasiado pesada para reconocer la patente. Probá de nuevo o escribila manualmente.',
@@ -47,6 +54,25 @@ function masCentrada(lecturas: LecturaVendor[], ancho?: number, alto?: number) {
   return elegida;
 }
 
+// Plate Recognizer y el servicio gratuito responden con la misma forma. Nunca se reenvía el
+// payload completo (coordenadas, región adivinada, etc.) al cliente: solo lo que la UI necesita.
+function aResultado(data: {
+  results?: unknown;
+  image_width?: number;
+  image_height?: number;
+}): PlateRecognitionResult {
+  const best = masCentrada(
+    Array.isArray(data?.results) ? data.results : [],
+    data?.image_width,
+    data?.image_height,
+  );
+  if (!best?.plate) return { plate: null };
+  return {
+    plate: String(best.plate).toUpperCase(),
+    score: typeof best.score === 'number' ? best.score : undefined,
+  };
+}
+
 @Injectable()
 export class PlateRecognitionService {
   private readonly logger = new Logger(PlateRecognitionService.name);
@@ -54,21 +80,31 @@ export class PlateRecognitionService {
   constructor(private readonly cuentas: PlateRecognizerCuentasService) {}
 
   async recognize(file: Express.Multer.File): Promise<PlateRecognitionResult> {
-    // Cada playa usa su propia cuenta de Plate Recognizer: cada consulta descuenta de SU plan,
-    // encuentre o no una patente, y el tope de consultas por segundo es el de su plan.
-    const playaId = tenantContext.getStore()?.playaId;
-    const apiKey = playaId ? await this.cuentas.tokenDeLaPlaya(playaId) : null;
-    if (!apiKey) {
-      throw new ForbiddenException({
-        code: 'PATENTES_SIN_PLAN',
-        message: 'Esta playa no tiene contratado el reconocimiento de patentes. Escribí la patente a mano.',
-      });
-    }
-
     if (file.size > PLATE_IMAGE_MAX_BYTES) {
       throw new BadRequestException(FOTO_PESADA);
     }
 
+    // Con plan propio, Plate Recognizer: cada consulta descuenta de SU plan, encuentre o no una
+    // patente. Sin plan, el reconocimiento gratuito si la plataforma lo tiene levantado.
+    const playaId = tenantContext.getStore()?.playaId;
+    if (!playaId) throw new ForbiddenException('Elegí una playa antes de reconocer una patente.');
+    const apiKey = await this.cuentas.tokenDeLaPlaya(playaId);
+    if (apiKey) return this.leerConPlateRecognizer(apiKey, file, playaId);
+
+    const alpr = alprConfigurado();
+    if (alpr) return this.leerConAlpr(alpr, file);
+
+    throw new ForbiddenException({
+      code: 'PATENTES_SIN_PLAN',
+      message: 'Esta playa no tiene contratado el reconocimiento de patentes. Escribí la patente a mano.',
+    });
+  }
+
+  private async leerConPlateRecognizer(
+    apiKey: string,
+    file: Express.Multer.File,
+    playaId: string | undefined,
+  ): Promise<PlateRecognitionResult> {
     let response = await this.consultar(apiKey, file);
     if (response.status === 429) {
       // 429 es el tope por segundo, no el cupo del mes: si otro operador escaneó en el mismo
@@ -104,22 +140,49 @@ export class PlateRecognitionService {
       throw new InternalServerErrorException('El servicio de reconocimiento de patente no pudo procesar la imagen.');
     }
 
-    const data = await response.json();
-    const best = masCentrada(
-      Array.isArray(data?.results) ? data.results : [],
-      data?.image_width,
-      data?.image_height,
+    return aResultado(await response.json());
+  }
+
+  private async leerConAlpr(
+    { url, token }: { url: string; token: string },
+    file: Express.Multer.File,
+  ): Promise<PlateRecognitionResult> {
+    const formData = new FormData();
+    formData.append(
+      'imagen',
+      new Blob([file.buffer], { type: file.mimetype }),
+      file.originalname || 'patente.jpg',
     );
 
-    // Nunca se reenvía el payload completo del vendor (coordenadas, región adivinada, etc.) al
-    // cliente — solo lo que la UI necesita.
-    if (!best?.plate) {
-      return { plate: null };
+    let response: Response;
+    try {
+      response = await fetch(`${url}/leer`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+        signal: AbortSignal.timeout(ALPR_TIMEOUT_MS),
+      });
+    } catch (error) {
+      this.logger.error(`No responde el reconocimiento gratuito en ${url}`, error as Error);
+      throw new ServiceUnavailableException(ALPR_NO_DISPONIBLE);
     }
-    return {
-      plate: String(best.plate).toUpperCase(),
-      score: typeof best.score === 'number' ? best.score : undefined,
-    };
+    if (response.status === 429) throw new ServiceUnavailableException({
+      code: 'ALPR_BUSY', message: 'El reconocimiento de patentes está ocupado. Probá de nuevo en unos segundos.',
+    });
+    // Un 401 es ALPR_TOKEN distinto en los dos servicios; para el operador es lo mismo que caído.
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      this.logger.error(`El reconocimiento gratuito respondió ${response.status}: ${body}`);
+      throw new ServiceUnavailableException(ALPR_NO_DISPONIBLE);
+    }
+    try {
+      const data = await response.json();
+      if (!data || !Array.isArray(data.results)) throw new Error('Respuesta inválida');
+      return aResultado(data);
+    } catch {
+      this.logger.error('El reconocimiento gratuito devolvió una respuesta inválida.');
+      throw new ServiceUnavailableException(ALPR_NO_DISPONIBLE);
+    }
   }
 
   private async consultar(apiKey: string, file: Express.Multer.File): Promise<Response> {

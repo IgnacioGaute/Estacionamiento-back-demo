@@ -74,3 +74,13 @@ jobs:
           sudo mkdir -p /var/run/postgresql
           sudo chmod a+w /var/run/postgresql
       - run: pnpm test:integration
+
+  alpr:
+    name: Reconocimiento propio (Docker y contrato Python)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -t parking-alpr-test alpr
+      - name: Probar servicio
+        run: docker run --rm --mount type=bind,source="${{ github.workspace }}/alpr",target=/tests,readonly parking-alpr-test python /tests/test_app.py

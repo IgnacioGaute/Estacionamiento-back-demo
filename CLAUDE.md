@@ -56,7 +56,7 @@ deploys `main` itself; with «Wait for CI» enabled on the service it only deplo
 Requires a Postgres database. `docker-compose.yaml` provides one (postgres:16.2, published on host port **5430**,
 db/user/password `estacionamiento_demo`/`admin`/`admin`). Env vars read at boot: `PORT` (default 3030),
 `ALLOWED_ORIGINS` (comma-separated), `POSTGRES_{HOST,PORT,NAME,USER,PASSWORD}`, `DB_BOOTSTRAP`, `NEXTAUTH_SECRET`,
-`API_SECRET_TOKEN`, `CLOUDINARY_{NAME,API_KEY,API_SECRET}`,
+`API_SECRET_TOKEN`, `ALPR_URL` / `ALPR_TOKEN` (reconocimiento propio para playas sin token; ver `alpr/README.md`), `CLOUDINARY_{NAME,API_KEY,API_SECRET}`,
 `GEMINI_{API_KEY,MODEL,FALLBACK_MODELS}`,
 `MERCADOPAGO_TOKEN_KEY` (32 bytes en hex, `openssl rand -hex 32`; cifra los tokens de MercadoPago de cada empresa y
 los de Plate Recognizer de cada playa),

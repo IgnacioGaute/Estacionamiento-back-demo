@@ -11,6 +11,7 @@ import {
   descifrarToken,
   hayClaveDeTokens,
 } from 'src/mercadopago/token-crypto';
+import { alprConfigurado } from './alpr';
 
 const ESTADISTICAS_URL = 'https://api.platerecognizer.com/v1/statistics/';
 
@@ -30,6 +31,8 @@ export type ConsumoPlaya = {
   // Otras playas de la empresa con el mismo token: comparten plan y cupo.
   compartidaCon?: string[];
   error?: string;
+  // Sin token, la playa escanea con el reconocimiento gratuito (fast-alpr) si está levantado.
+  gratuito?: boolean;
 };
 
 const mensajeDe = (error: unknown, porDefecto: string): string => {
@@ -120,7 +123,13 @@ export class PlateRecognizerCuentasService {
 
     return Promise.all(
       filas.map(async (fila): Promise<ConsumoPlaya> => {
-        if (!fila.huella) return { playaId: fila.id, nombre: fila.nombre, configurado: false };
+        if (!fila.huella)
+          return {
+            playaId: fila.id,
+            nombre: fila.nombre,
+            configurado: false,
+            gratuito: alprConfigurado() !== null,
+          };
         const resultado = await usos.get(fila.huella);
         const compartidaCon = filas
           .filter((otra) => otra.id !== fila.id && otra.huella === fila.huella)

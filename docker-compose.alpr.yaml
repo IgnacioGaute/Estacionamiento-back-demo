@@ -1,0 +1,16 @@
+# Servicio opcional para el backend local. No inicia ni modifica PostgreSQL.
+services:
+  alpr:
+    build: ./alpr
+    restart: unless-stopped
+    environment:
+      ALPR_TOKEN: ${ALPR_TOKEN:?Configurá ALPR_TOKEN en .env}
+      PORT: "8000"
+    ports:
+      - "127.0.0.1:8791:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/salud', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3

@@ -22,11 +22,70 @@ describe('PlateRecognitionService', () => {
     tokenDeLaPlaya.mockResolvedValue('token-de-la-playa');
   });
 
+  it('sin contexto no llama a ningún motor', async () => {
+    await expect(service.recognize(foto(1000))).rejects.toThrow('Elegí una playa');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('una playa sin plan no consulta a Plate Recognizer', async () => {
     tokenDeLaPlaya.mockResolvedValue(null);
     await expect(reconocer(foto(1000))).rejects.toMatchObject({ response: { code: 'PATENTES_SIN_PLAN' } });
     expect(tokenDeLaPlaya).toHaveBeenCalledWith(PLAYA);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  describe('sin plan, con el reconocimiento gratuito levantado', () => {
+    beforeEach(() => {
+      tokenDeLaPlaya.mockResolvedValue(null);
+      process.env.ALPR_URL = 'http://alpr.railway.internal:8000/';
+      process.env.ALPR_TOKEN = 'secreto-compartido';
+    });
+    afterEach(() => {
+      delete process.env.ALPR_URL;
+      delete process.env.ALPR_TOKEN;
+    });
+
+    it('lee con fast-alpr y elige la patente más centrada', async () => {
+      fetchMock.mockResolvedValue(
+        Response.json({
+          image_width: 1000,
+          image_height: 600,
+          results: [
+            { plate: 'ZZZ999', score: 0.99, box: { xmin: 0, ymin: 0, xmax: 100, ymax: 30 } },
+            { plate: 'AB123CD', score: 0.91, box: { xmin: 420, ymin: 280, xmax: 580, ymax: 330 } },
+          ],
+        }),
+      );
+      await expect(reconocer(foto(1000))).resolves.toEqual({ plate: 'AB123CD', score: 0.91 });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('http://alpr.railway.internal:8000/leer');
+      expect(init.headers).toEqual({ Authorization: 'Bearer secreto-compartido' });
+      expect((init.body as FormData).get('imagen')).toBeInstanceOf(Blob);
+    });
+
+    it('el token propio tiene prioridad aunque fast-alpr esté configurado', async () => {
+      tokenDeLaPlaya.mockResolvedValue('token-propio');
+      fetchMock.mockResolvedValue(Response.json({ results: [] }));
+      await reconocer(foto(1000));
+      expect(fetchMock.mock.calls[0][0]).toBe('https://api.platerecognizer.com/v1/plate-reader/');
+      expect(fetchMock.mock.calls[0][1].headers).toEqual({ Authorization: 'Token token-propio' });
+    });
+    it('devuelve ocupado para que el escáner espere y reintente', async () => {
+      fetchMock.mockResolvedValue(new Response('', { status: 429 }));
+      await expect(reconocer(foto(1000))).rejects.toMatchObject({ response: { code: 'ALPR_BUSY' } });
+    });
+    it.each(['sin-json', '{}'])('una respuesta inválida (%s) se informa como indisponible', async body => {
+      fetchMock.mockResolvedValue(new Response(body));
+      await expect(reconocer(foto(1000))).rejects.toMatchObject({ response: { code: 'ALPR_NO_DISPONIBLE' } });
+    });
+
+    it.each([
+      ['caído', () => Promise.reject(new TypeError('fetch failed'))],
+      ['con otro token', () => Promise.resolve(new Response('', { status: 401 }))],
+    ])('si el servicio está %s, avisa ALPR_NO_DISPONIBLE', async (_caso, respuesta) => {
+      fetchMock.mockImplementation(respuesta);
+      await expect(reconocer(foto(1000))).rejects.toMatchObject({ response: { code: 'ALPR_NO_DISPONIBLE' } });
+    });
   });
 
   it('consulta con el token de la playa, no con uno de la plataforma', async () => {

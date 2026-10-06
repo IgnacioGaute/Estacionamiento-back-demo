@@ -1078,3 +1078,38 @@ test('cajas de MercadoPago por playa: las ve y las crea su empresa, otra empresa
   await assert.rejects(scoped(b, () => ds.getRepository(Caja).insert(caja(a.empresaId, a.playaId))));
   await assert.rejects(scoped(a, () => ds.getRepository(Caja).insert(caja(a.empresaId, b.playaId))), /Referencia fuera/);
 });
+
+test('reconocimiento gratuito: sin token, la playa escanea con fast-alpr y nunca con Plate Recognizer', async () => {
+  const fetchReal = globalThis.fetch;
+  const llamadas = [];
+  process.env.ALPR_URL = 'http://alpr.test:8000';
+  process.env.ALPR_TOKEN = 'secreto-alpr';
+  globalThis.fetch = async (url, init) => {
+    const destino = String(url);
+    if (destino.startsWith('https://api.platerecognizer.com/')) throw new Error('No debería consultar Plate Recognizer');
+    if (!destino.startsWith('http://alpr.test:8000/')) return fetchReal(url, init);
+    llamadas.push([destino, init.headers.Authorization]);
+    return Response.json({ image_width: 1080, image_height: 1920, results: [{ plate: 'AD054JI', score: 0.99, box: { xmin: 300, ymin: 900, xmax: 780, ymax: 1040 } }] });
+  };
+  const admin = await ds.getRepository(User).save({ username: 'adminGratuito', email: 'gratuito@example.test', firstName: 'G', lastName: 'Admin', role: 'ADMIN', empresaId: a.empresaId });
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(32)]);
+  try {
+    const contexto = await request(app.getHttpServer()).get('/tenant/context').set('Authorization', 'Bearer ' + token(admin)).expect(200);
+    assert.ok(contexto.body.playas.every((p) => p.reconocimientoPatentes === true));
+    const consumo = await call('get', `empresas/${a.empresaId}/patentes`).expect(200);
+    assert.ok(consumo.body.every((p) => p.configurado || p.gratuito === true));
+
+    const leida = await request(app.getHttpServer())
+      .post('/plate-recognition/scan')
+      .set('Authorization', 'Bearer ' + token(admin))
+      .set('X-Playa-Id', a2.playaId)
+      .attach('image', jpeg, { filename: 'patente.jpg', contentType: 'image/jpeg' })
+      .expect(201);
+    assert.deepEqual(leida.body, { plate: 'AD054JI', score: 0.99 });
+    assert.deepEqual(llamadas, [['http://alpr.test:8000/leer', 'Bearer secreto-alpr']]);
+  } finally {
+    globalThis.fetch = fetchReal;
+    delete process.env.ALPR_URL;
+    delete process.env.ALPR_TOKEN;
+  }
+});
