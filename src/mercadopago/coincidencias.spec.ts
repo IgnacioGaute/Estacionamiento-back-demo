@@ -2,6 +2,8 @@ import {
   GRACIA_PAGO_TARDIO_MS,
   IntentoParaDecidir,
   TransferenciaParaDecidir,
+  camposDelPagador,
+  datosDelPagador,
   decidir,
   esTransferenciaRecibida,
 } from './coincidencias';
@@ -216,5 +218,62 @@ describe('Cuándo se confirma sola y cuándo pasa a revisión', () => {
       motivo: 'YA_EN_REVISION',
       operaciones: ['op1'],
     });
+  });
+});
+
+describe('Quién pagó', () => {
+  test('toma el nombre del pagador, o lo busca en los datos bancarios y en cualquier rama', () => {
+    expect(
+      datosDelPagador({
+        payer: {
+          first_name: 'Ana',
+          last_name: 'Paz',
+          identification: { type: 'DNI', number: '1' },
+        },
+      }),
+    ).toEqual({ nombre: 'Ana Paz', documento: 'DNI 1', entidad: null });
+    expect(
+      datosDelPagador({
+        point_of_interaction: {
+          transaction_data: {
+            bank_info: {
+              payer: {
+                account_holder_name: 'Ignacio Gaute',
+                long_name: 'Banco X',
+              },
+            },
+          },
+        },
+      }),
+    ).toEqual({ nombre: 'Ignacio Gaute', documento: null, entidad: 'Banco X' });
+    expect(
+      datosDelPagador({ metadata: { origen: { sender_name: 'Juan' } } }).nombre,
+    ).toBe('Juan');
+    expect(datosDelPagador(undefined)).toEqual({
+      nombre: null,
+      documento: null,
+      entidad: null,
+    });
+  });
+
+  test('los campos del pagador no incluyen cuentas, CBU, CVU ni email', () => {
+    const campos = camposDelPagador({
+      payer: {
+        first_name: 'Ana',
+        email: 'a@x.com',
+        identification: { number: '1' },
+      },
+      point_of_interaction: {
+        transaction_data: {
+          bank_info: { payer: { account_id: '000123', long_name: 'Banco X' } },
+        },
+      },
+      transaction_amount: 15,
+    });
+    expect(campos.map((c) => c.ruta)).toEqual([
+      'payer.first_name',
+      'payer.identification.number',
+      'point_of_interaction.transaction_data.bank_info.payer.long_name',
+    ]);
   });
 });

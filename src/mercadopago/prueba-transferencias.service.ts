@@ -8,6 +8,7 @@ import { Repository } from 'typeorm';
 import { CuentaMercadoPago } from './entities/cuenta-mercadopago.entity';
 import { MercadoPagoService } from './mercadopago.service';
 import { CONDICIONES_VIGENTES } from './condiciones';
+import { camposDelPagador, datosDelPagador } from './coincidencias';
 import { tenantContext } from '../tenancy/tenant-context';
 
 // PRUEBA, no función comercial. Sirve para averiguar con evidencia si las transferencias que
@@ -248,12 +249,9 @@ export class PruebaTransferenciasService {
   }
 
   // Lo que sirve para reconocer de dónde vino la plata y medir la demora. El nombre de quien pagó
-  // no viene siempre en el mismo lugar: en un pago está en `payer`, en una transferencia puede
-  // estar en los datos bancarios del punto de interacción. Se toma el primero que aparezca.
+  // no viene siempre en el mismo lugar: lo busca datosDelPagador.
   private pago(p: any, mpUserId: string) {
     const bancos = p.point_of_interaction?.transaction_data?.bank_info;
-    const nombreDe = (persona: any) =>
-      [persona?.first_name, persona?.last_name].filter(Boolean).join(' ');
     // Dirección: quién cobró, y si MercadoPago no lo dice, quién pagó. Una suscripción que paga
     // la cuenta trae al pagador pero no al cobrador.
     const recibido =
@@ -287,18 +285,7 @@ export class PruebaTransferenciasService {
       cobradorId: p.collector_id ?? null,
       // null: MercadoPago no dijo ni quién cobró ni que pagó esta cuenta.
       recibido,
-      pagador: {
-        nombre:
-          nombreDe(p.payer) ||
-          nombreDe(p.additional_info?.payer) ||
-          bancos?.payer?.account_holder_name ||
-          null,
-        documento: p.payer?.identification?.number
-          ? `${p.payer.identification.type ?? ''} ${p.payer.identification.number}`.trim()
-          : null,
-        // El banco o la billetera desde donde salió la plata.
-        entidad: bancos?.payer?.long_name ?? null,
-      },
+      pagador: datosDelPagador(p),
       origen: p.point_of_interaction
         ? {
             tipo: p.point_of_interaction.type ?? null,
@@ -312,6 +299,30 @@ export class PruebaTransferenciasService {
           }
         : null,
       claves: Object.keys(p ?? {}),
+    };
+  }
+
+  /**
+   * El pago completo (`GET /v1/payments/:id`) de una transferencia que entró: dónde viene el
+   * nombre o el documento de quien pagó, para leerlo de ahí en la verificación. Solo de pagos que
+   * cobró esta cuenta; de la respuesta salen únicamente los campos que hablan de quien pagó.
+   */
+  async detallePago(operacionId: string) {
+    if (!/^\d{1,20}$/.test(operacionId))
+      throw new BadRequestException('Número de operación inválido.');
+    const { cuenta, token } = await this.cuentaDePrueba();
+    const r = await this.consultar(`${API}/v1/payments/${operacionId}`, token);
+    if (r.ok === false) return { operacionId, respuesta: r };
+    if (String(r.datos?.collector_id) !== String(cuenta.mpUserId))
+      throw new BadRequestException('Ese pago no lo cobró esta cuenta.');
+    return {
+      operacionId,
+      respuesta: {
+        ok: true as const,
+        pagador: datosDelPagador(r.datos),
+        campos: camposDelPagador(r.datos),
+        claves: Object.keys(r.datos ?? {}),
+      },
     };
   }
 

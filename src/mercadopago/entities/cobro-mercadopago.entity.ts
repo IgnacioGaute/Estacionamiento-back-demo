@@ -52,6 +52,14 @@ export class CobroMercadoPago {
   @Column('text')
   initPoint: string;
 
+  // Cuando la playa tiene caja de MercadoPago: la orden y el código QR estándar, que se paga desde
+  // cualquier banco o billetera. Sin caja quedan vacíos y el QR es `initPoint`.
+  @Column('varchar', { length: 64, nullable: true })
+  ordenId: string | null;
+
+  @Column('text', { nullable: true })
+  qrData: string | null;
+
   // El id del pago en MercadoPago, con índice único parcial: es el seguro contra cobrar dos veces
   // el mismo pago si llegan dos avisos.
   @Column('varchar', { length: 64, nullable: true })

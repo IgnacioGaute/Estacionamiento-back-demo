@@ -3,9 +3,12 @@ import {
   CreateDateColumn,
   Entity,
   Index,
+  JoinColumn,
+  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { Empresa } from 'src/tenancy/entities/empresa.entity';
 
 // Los adicionales que existen: funciones que la plataforma habilita por empresa, aparte del plan.
 export const ADICIONALES = ['VERIFICACION_ALIAS'] as const;
@@ -24,6 +27,10 @@ export class EmpresaAdicional {
 
   @Column('uuid')
   empresaId: string;
+
+  @ManyToOne(() => Empresa, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'empresaId' })
+  empresa?: Empresa;
 
   @Column('varchar', { length: 40 })
   codigo: CodigoAdicional;

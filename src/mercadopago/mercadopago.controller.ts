@@ -14,6 +14,8 @@ import { VerificacionAliasService } from './verificacion-alias.service';
 import { ConectarMercadoPagoDto } from './dto/conectar-mercadopago.dto';
 import { AceptarCondicionesDto } from './dto/condiciones.dto';
 import { ConfigurarVerificacionAliasDto } from './dto/verificacion-alias.dto';
+import { CajasQrService } from './cajas-qr.service';
+import { CrearCajaQrDto } from './dto/caja-qr.dto';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
 
 // Conectar y desconectar la cuenta de MercadoPago de la empresa.
@@ -29,7 +31,20 @@ export class MercadoPagoController {
   constructor(
     private readonly mercadoPago: MercadoPagoService,
     private readonly alias: VerificacionAliasService,
+    private readonly cajas: CajasQrService,
   ) {}
+
+  // Las cajas de MercadoPago por playa, para el QR que se paga desde cualquier banco o billetera.
+  @Get('cajas')
+  cajasQr() {
+    return this.cajas.listar();
+  }
+
+  @Post('cajas')
+  crearCajaQr(@Body() dto: CrearCajaQrDto, @Req() req: any) {
+    const { playaId, ...direccion } = dto;
+    return this.cajas.crear(playaId, direccion, this.usuario(req));
+  }
 
   // La verificación de transferencias al alias: activarla y cargar el alias es del administrador
   // (por eso vive acá y no en VerificacionAliasController, que es del mostrador).

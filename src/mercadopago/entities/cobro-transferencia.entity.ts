@@ -3,9 +3,14 @@ import {
   CreateDateColumn,
   Entity,
   Index,
+  JoinColumn,
+  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { Empresa } from 'src/tenancy/entities/empresa.entity';
+import { Playa } from 'src/tenancy/entities/playa.entity';
+import { TicketRegistration } from 'src/tickets/entities/ticket-registration.entity';
 
 // ESPERANDO: se busca la transferencia. REVISION: hubo más de una posibilidad y la elige el
 // operador. CONFIRMADO: se asoció una transferencia (y se registró el cobro). CANCELADO: lo cortó
@@ -50,11 +55,23 @@ export class CobroTransferencia {
   @Column('uuid')
   empresaId: string;
 
+  @ManyToOne(() => Empresa)
+  @JoinColumn({ name: 'empresaId' })
+  empresa?: Empresa;
+
   @Column('uuid')
   playaId: string;
 
+  @ManyToOne(() => Playa)
+  @JoinColumn({ name: 'playaId' })
+  playa?: Playa;
+
   @Column('uuid')
   registrationId: string;
+
+  @ManyToOne(() => TicketRegistration, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'registrationId' })
+  registration?: TicketRegistration;
 
   // La cuenta receptora: la de la empresa al momento de abrir el intento.
   @Column('varchar', { length: 64 })

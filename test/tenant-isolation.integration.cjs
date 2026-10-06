@@ -146,6 +146,7 @@ before(async () => {
     await new (load('database/migrations/1790000028000-cajas-compartidas', 'CajasCompartidas1790000028000'))().up(migrationRunner);
     await new (load('database/migrations/1790000029000-condiciones-mercadopago', 'CondicionesMercadoPago1790000029000'))().up(migrationRunner);
     await new (load('database/migrations/1790000030000-verificacion-alias', 'VerificacionAlias1790000030000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000031000-qr-interoperable', 'QrInteroperable1790000031000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -1035,8 +1036,10 @@ test('verificación por alias: intentos y transferencias se leen en toda la empr
   const iA1 = await scoped(a, () => intentos().save({ ...base, empresaId: a.empresaId, registrationId: regA1.id }));
   assert.equal(iA1.playaId, a.playaId);
   const iA2 = await scoped(a2, () => intentos().save({ ...base, empresaId: a.empresaId, registrationId: regA2.id }));
-  // No para la estadía de otra playa, ni a nombre de otra empresa.
-  await assert.rejects(scoped(a, () => intentos().save({ ...base, empresaId: a.empresaId, registrationId: regA2.id })));
+  // No para la estadía de otra playa (una sin intento abierto, para que el rechazo sea el de la
+  // referencia y no el del índice único), ni a nombre de otra empresa.
+  const regA2libre = await estadia(a2.playaId, 'ALI003');
+  await assert.rejects(scoped(a, () => intentos().save({ ...base, empresaId: a.empresaId, registrationId: regA2libre.id })), /Referencia fuera/);
   await assert.rejects(scoped(b, () => intentos().save({ ...base, empresaId: a.empresaId, registrationId: regA1.id })));
 
   // Leer: la empresa ve los de todas sus playas (para decidir si una coincidencia es única); otra empresa, nada.
@@ -1062,4 +1065,16 @@ test('verificación por alias: intentos y transferencias se leen en toda la empr
   assert.equal(await scoped(a, () => ds.getRepository(Adicional).countBy({ empresaId: a.empresaId })), 1);
   assert.equal(await scoped(b, () => ds.getRepository(Adicional).countBy({ empresaId: a.empresaId })), 0);
   await assert.rejects(scoped(a, () => ds.getRepository(Adicional).update({ empresaId: a.empresaId }, { habilitado: false })));
+});
+
+test('cajas de MercadoPago por playa: las ve y las crea su empresa, otra empresa no', async () => {
+  const Caja = load('mercadopago/entities/caja-mercadopago.entity', 'CajaMercadoPago');
+  const caja = (empresaId, playaId) => ({ empresaId, playaId, mpUserId: '555', storeId: '1', externalStoreId: 'PLAYA1', posId: '2', externalPosId: 'CAJA' + playaId.slice(0, 8) });
+  // El administrador crea la caja de cualquier playa de su empresa, aunque tenga otra activa.
+  await scoped(a, () => ds.getRepository(Caja).insert(caja(a.empresaId, a2.playaId)));
+  assert.equal(await scoped(a, () => ds.getRepository(Caja).countBy({ mpUserId: '555' })), 1);
+  assert.equal(await scoped(b, () => ds.getRepository(Caja).countBy({ mpUserId: '555' })), 0);
+  // Ni a nombre de otra empresa, ni para una playa que no es suya.
+  await assert.rejects(scoped(b, () => ds.getRepository(Caja).insert(caja(a.empresaId, a.playaId))));
+  await assert.rejects(scoped(a, () => ds.getRepository(Caja).insert(caja(a.empresaId, b.playaId))), /Referencia fuera/);
 });

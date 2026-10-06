@@ -3,12 +3,14 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CobroMercadoPago } from './entities/cobro-mercadopago.entity';
 import { MercadoPagoService } from './mercadopago.service';
+import { CajasQrService } from './cajas-qr.service';
 import { TicketsService } from '../tickets/tickets.service';
 import { CuentasService } from '../cuentas/cuentas.service';
 import { tenantContext } from '../tenancy/tenant-context';
@@ -35,6 +37,8 @@ export class CobrosMercadoPagoService {
     private readonly tickets: TicketsService,
     private readonly config: ConfigService,
     private readonly cuentas: CuentasService,
+    // Opcional: sin cajas (o en las pruebas que no las usan) el QR es el link de siempre.
+    @Optional() private readonly cajasQr?: CajasQrService,
   ) {}
 
   private scope() {
@@ -65,7 +69,16 @@ export class CobrosMercadoPagoService {
           : await this.datosDeEstadia(registrationId);
 
     // Un solo QR vivo por estadía: si había otro pendiente se cancela, para que no queden dos
-    // códigos dando vueltas por el mismo auto.
+    // códigos dando vueltas por el mismo auto. Una orden QR se cancela también en MercadoPago.
+    if (this.cajasQr) {
+      const previos = await this.cobros.findBy({
+        registrationId,
+        estado: 'PENDIENTE',
+      });
+      for (const previo of previos)
+        if (previo.ordenId)
+          await this.cajasQr.cancelarOrden(empresaId, previo.ordenId);
+    }
     await this.cobros.update(
       { registrationId, estado: 'PENDIENTE' },
       { estado: 'CANCELADO' },
@@ -81,7 +94,10 @@ export class CobrosMercadoPagoService {
         monto,
         detalle:
           tipo === 'INQUILINO'
-            ? { receiptIds: inquilino?.receiptIds ?? [], nota: inquilino?.nota?.trim() || null }
+            ? {
+                receiptIds: inquilino?.receiptIds ?? [],
+                nota: inquilino?.nota?.trim() || null,
+              }
             : null,
         estado: 'PENDIENTE',
         preferenceId: '',
@@ -91,12 +107,46 @@ export class CobrosMercadoPagoService {
       }),
     );
 
+    const descripcion =
+      tipo === 'INQUILINO'
+        ? `Cochera - ${patente}`
+        : `Estacionamiento - ${patente}`;
+
+    // Con caja de la playa, un QR estándar que se paga desde cualquier banco o billetera. Si la
+    // orden falla, se sigue con el link de siempre: mejor un QR que solo paga MercadoPago que no
+    // poder cobrar.
+    const caja = playaId
+      ? await this.cajasQr?.cajaDePlaya(empresaId, playaId)
+      : null;
+    if (caja && this.cajasQr) {
+      try {
+        const { ordenId, qrData } = await this.cajasQr.crearOrden(
+          empresaId,
+          caja,
+          {
+            monto,
+            referencia: cobro.id,
+            descripcion,
+            minutos: MINUTOS_DE_VIGENCIA,
+          },
+        );
+        cobro.ordenId = ordenId;
+        cobro.qrData = qrData;
+        await this.cobros.save(cobro);
+        return this.aVista(cobro);
+      } catch (error) {
+        this.logger.warn(
+          `No se pudo crear la orden QR del cobro ${cobro.id}; se usa el link de pago: ${error instanceof Error ? error.message : error}`,
+        );
+      }
+    }
+
     try {
       const { preferenceId, initPoint } =
         await this.mercadoPago.crearPreferencia(empresaId, {
           monto,
           referencia: cobro.id,
-          descripcion: tipo === 'INQUILINO' ? `Cochera - ${patente}` : `Estacionamiento - ${patente}`,
+          descripcion,
           expiraEl,
           volverA: this.config.get<string>('MERCADOPAGO_REDIRECT_URI') ?? '',
         });
@@ -130,7 +180,9 @@ export class CobrosMercadoPagoService {
   /** Un pago a la cuenta de un inquilino: el importe elegido en el mostrador. */
   private async datosDeInquilino(customerId: string, monto?: number) {
     if (!monto || !Number.isInteger(monto) || monto < 1)
-      throw new BadRequestException('Ingresá el importe a cobrar, en pesos enteros.');
+      throw new BadRequestException(
+        'Ingresá el importe a cobrar, en pesos enteros.',
+      );
     const { nombre } = await this.cuentas.validarCobroQr(customerId);
     // `patente` se usa como nombre visible en la descripción del pago.
     return { monto, patente: nombre };
@@ -161,8 +213,18 @@ export class CobrosMercadoPagoService {
     if (cobro.estado === 'ACREDITADO' || cobro.estado === 'CANCELADO')
       return this.aVista(cobro);
 
-    const pago = await this.mercadoPago.buscarPagoAprobado(empresaId, cobro.id);
-    if (pago) return this.acreditar(cobro, pago);
+    // Un cobro con caja se consulta por su orden; uno con link, por la referencia.
+    if (cobro.ordenId && this.cajasQr) {
+      const orden = await this.cajasQr.consultarOrden(empresaId, cobro.ordenId);
+      if (orden.pagada && orden.pagoId)
+        return this.acreditar(cobro, { id: orden.pagoId, monto: orden.monto });
+    } else {
+      const pago = await this.mercadoPago.buscarPagoAprobado(
+        empresaId,
+        cobro.id,
+      );
+      if (pago) return this.acreditar(cobro, pago);
+    }
 
     // Vencido y sin pago: se marca, pero recién después de haberle preguntado a MercadoPago. Al
     // revés se correría el riesgo de dar por perdido un pago que sí entró sobre la hora.
@@ -179,6 +241,9 @@ export class CobrosMercadoPagoService {
     if (cobro.estado === 'PENDIENTE') {
       cobro.estado = 'CANCELADO';
       await this.cobros.save(cobro);
+      // Que el QR estándar tampoco se pueda pagar después.
+      if (cobro.ordenId && this.cajasQr)
+        await this.cajasQr.cancelarOrden(this.scope().empresaId, cobro.ordenId);
     }
     return this.aVista(cobro);
   }
@@ -200,7 +265,8 @@ export class CobrosMercadoPagoService {
         acreditadoEl: new Date(),
       },
     );
-    if (!tomado.affected) return this.aVista(await this.cobros.findOneBy({ id: cobro.id }));
+    if (!tomado.affected)
+      return this.aVista(await this.cobros.findOneBy({ id: cobro.id }));
 
     try {
       if (cobro.tipo === 'INQUILINO') {
@@ -264,6 +330,10 @@ export class CobrosMercadoPagoService {
       estado: cobro.estado,
       monto: cobro.monto,
       initPoint: cobro.initPoint,
+      // Lo que se dibuja: el código estándar si la playa tiene caja (lo paga cualquier banco o
+      // billetera), si no el link de MercadoPago.
+      qr: cobro.qrData || cobro.initPoint,
+      interoperable: !!cobro.qrData,
       expiraEl: cobro.expiraEl,
       acreditadoEl: cobro.acreditadoEl,
       ...(cobro.tipo === 'INQUILINO' && cobro.estado === 'ACREDITADO'

@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CuentaMercadoPago } from './entities/cuenta-mercadopago.entity';
 import { CobroMercadoPago } from './entities/cobro-mercadopago.entity';
 import { CobroTransferencia } from './entities/cobro-transferencia.entity';
+import { CajaMercadoPago } from './entities/caja-mercadopago.entity';
 import { TransferenciaRecibida } from './entities/transferencia-recibida.entity';
 import { EmpresaAdicional } from 'src/saas/entities/empresa-adicional.entity';
 import { MercadoPagoService } from './mercadopago.service';
@@ -13,6 +14,7 @@ import { PruebaTransferenciasController } from './prueba-transferencias.controll
 import { PruebaTransferenciasService } from './prueba-transferencias.service';
 import { VerificacionAliasController } from './verificacion-alias.controller';
 import { VerificacionAliasService } from './verificacion-alias.service';
+import { CajasQrService } from './cajas-qr.service';
 import { TicketsModule } from 'src/tickets/tickets.module';
 import { CuentasModule } from 'src/cuentas/cuentas.module';
 
@@ -27,6 +29,7 @@ import { CuentasModule } from 'src/cuentas/cuentas.module';
       CobroMercadoPago,
       CobroTransferencia,
       TransferenciaRecibida,
+      CajaMercadoPago,
       EmpresaAdicional,
     ]),
     TicketsModule,
@@ -43,6 +46,7 @@ import { CuentasModule } from 'src/cuentas/cuentas.module';
     CobrosMercadoPagoService,
     PruebaTransferenciasService,
     VerificacionAliasService,
+    CajasQrService,
   ],
   exports: [MercadoPagoService],
 })

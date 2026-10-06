@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Param,
   Post,
   Query,
   Req,
@@ -31,6 +32,12 @@ export class PruebaTransferenciasController {
   pagos(@Req() req: any, @Query('minutos') minutos?: string) {
     usuario(req);
     return this.prueba.ingresos(ventana(minutos));
+  }
+
+  @Get('pagos/:operacionId')
+  detallePago(@Req() req: any, @Param('operacionId') operacionId: string) {
+    usuario(req);
+    return this.prueba.detallePago(operacionId);
   }
 
   @Get('reporte')

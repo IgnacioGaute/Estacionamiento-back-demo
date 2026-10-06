@@ -3,9 +3,12 @@ import {
   CreateDateColumn,
   Entity,
   Index,
+  JoinColumn,
+  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { Empresa } from 'src/tenancy/entities/empresa.entity';
 import { ModoAsociacion } from './cobro-transferencia.entity';
 
 // DISPONIBLE: entró y no se usó. REVISION: coincidió con más de un cobro (o hubo más de una
@@ -33,6 +36,10 @@ export class TransferenciaRecibida {
 
   @Column('uuid')
   empresaId: string;
+
+  @ManyToOne(() => Empresa)
+  @JoinColumn({ name: 'empresaId' })
+  empresa?: Empresa;
 
   @Column('varchar', { length: 64 })
   mpUserId: string;

@@ -23,6 +23,7 @@ import {
   GRACIA_PAGO_TARDIO_MS,
   compite,
   decidir,
+  datosDelPagador,
   esTransferenciaRecibida,
 } from './coincidencias';
 import { tenantContext } from 'src/tenancy/tenant-context';
@@ -54,11 +55,20 @@ const lecturas = new Map<
   { desde: number; hasta: number; promesa: Promise<Lectura> }
 >();
 
-/** Para las pruebas: descarta las consultas compartidas guardadas. */
-export const olvidarLecturas = () => lecturas.clear();
+// Nombre y banco de quien pagó, por operación, pedidos al detalle del pago (en memoria, un rato).
+const pagadores = new Map<
+  string,
+  {
+    datos: { nombre: string | null; entidad: string | null };
+    hasta: number;
+  }
+>();
 
-const nombreDe = (persona: any) =>
-  [persona?.first_name, persona?.last_name].filter(Boolean).join(' ');
+/** Para las pruebas: descarta las consultas compartidas guardadas. */
+export const olvidarLecturas = () => {
+  lecturas.clear();
+  pagadores.clear();
+};
 
 /**
  * La verificación de transferencias al alias: el operador elige «Transferencia al alias», el
@@ -390,28 +400,33 @@ export class VerificacionAliasService {
         },
         { estado: 'REVISION' },
       );
-      const opciones = transferencias
-        .filter((t) => decision.operaciones.includes(t.operacionId))
-        .map((t) => {
-          const pago = lectura.pagos.find(
-            (p) => String(p.id) === t.operacionId,
-          );
-          const banco = pago?.point_of_interaction?.transaction_data?.bank_info;
-          return {
-            operacionId: t.operacionId,
-            importe: t.importe,
-            moneda: t.moneda,
-            fechaOperacion: t.fechaOperacion,
-            detectadaEl: t.detectadaEl,
-            // Lo que haya de quien pagó, en el momento y sin guardarlo.
-            nombre:
-              nombreDe(pago?.payer) ||
-              nombreDe(pago?.additional_info?.payer) ||
-              banco?.payer?.account_holder_name ||
-              null,
-            entidad: banco?.payer?.long_name ?? null,
-          };
-        });
+      const opciones = await Promise.all(
+        transferencias
+          .filter((t) => decision.operaciones.includes(t.operacionId))
+          .map(async (t) => {
+            const pago = lectura.pagos.find(
+              (p) => String(p.id) === t.operacionId,
+            );
+            // Lo que haya de quien pagó, en el momento y sin guardarlo. Si la búsqueda no lo trae,
+            // se pide el detalle de ese pago, que puede traer más.
+            let { nombre, entidad } = datosDelPagador(pago);
+            if (!nombre)
+              ({ nombre, entidad } = await this.pagador(
+                cuenta,
+                t.operacionId,
+                entidad,
+              ));
+            return {
+              operacionId: t.operacionId,
+              importe: t.importe,
+              moneda: t.moneda,
+              fechaOperacion: t.fechaOperacion,
+              detectadaEl: t.detectadaEl,
+              nombre,
+              entidad,
+            };
+          }),
+      );
       return this.vista(await this.intentoPropio(id, playaId), {
         consulta,
         motivoRevision: decision.motivo,
@@ -654,6 +669,39 @@ export class VerificacionAliasService {
       .values(filas)
       .orIgnore()
       .execute();
+  }
+
+  /**
+   * Nombre y banco de quien pagó una operación, desde el detalle del pago (`GET /v1/payments/:id`).
+   * Solo para las opciones en revisión que la búsqueda trajo sin nombre; queda unos minutos en
+   * memoria para no pedirlo en cada consulta de la pantalla. Si falla, no hay nombre: no es error.
+   */
+  private async pagador(
+    cuenta: CuentaMercadoPago,
+    operacionId: string,
+    entidad: string | null,
+  ): Promise<{ nombre: string | null; entidad: string | null }> {
+    const guardado = pagadores.get(operacionId);
+    if (guardado && guardado.hasta > Date.now()) return guardado.datos;
+    let datos = { nombre: null as string | null, entidad };
+    try {
+      const token = await this.mercadoPago.tokenDeEmpresa(cuenta.empresaId);
+      const respuesta = await fetch(`${API}/v1/payments/${operacionId}`, {
+        headers: { authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(TIEMPO_LIMITE_MS),
+      });
+      if (respuesta.ok) {
+        const pago = await respuesta.json();
+        if (String(pago?.collector_id) === String(cuenta.mpUserId)) {
+          const d = datosDelPagador(pago);
+          datos = { nombre: d.nombre, entidad: d.entidad ?? entidad };
+        }
+      } else await respuesta.body?.cancel();
+    } catch {
+      // Sin detalle se muestra sin nombre; la elección sigue siendo del operador.
+    }
+    pagadores.set(operacionId, { datos, hasta: Date.now() + 5 * 60_000 });
+    return datos;
   }
 
   /**

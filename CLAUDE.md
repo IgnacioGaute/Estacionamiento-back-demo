@@ -83,6 +83,14 @@ the empresa's switch + alias on `mercadopago_cuentas`, and an ACTIVE connection 
 charge is unrelated and unchanged. `TicketsService.acreditarTransferenciaEn` and the private `cerrarEnTransaccion`
 let it close inside the caller's transaction — keep `closeRegistrationByPlate` going through the same path.
 
+**QR payable from any bank or wallet** (`CajasQrService`, `mercadopago_cajas`): the old QR is the Checkout Pro
+link (only the MercadoPago app or a phone camera can pay it). When a playa has a MercadoPago store + POS (created
+once by the empresa ADMIN in Configuración → MercadoPago; MercadoPago requires the full address with coordinates),
+`CobrosMercadoPagoService.crear` creates a dynamic Orders API order (`POST /v1/orders`, `type: qr`, idempotency key =
+our cobro id) and draws its standard `qr_data` (interoperable QR); `consultar` reads the order status. Without a
+POS, or if the order fails, it falls back to the link. `mercadopago_cajas` is empresa-scoped (RLS by empresa,
+explicit `playaId`).
+
 `scripts/start-compiled.cjs` registers `tsconfig-paths` before `dist/main` — sources import each other as
 `src/...`, so plain `node dist/main` only works where those paths resolve.
 `node --env-file=.env scripts/assign-legacy-tenant.cjs <empresaId> <playaId>` back-fills pre-tenancy rows (backup
