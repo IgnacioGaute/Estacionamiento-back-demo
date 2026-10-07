@@ -11,6 +11,10 @@ Reemplaza la interfaz de Consulta sin conexión. Esta entrega admite entradas po
 
 No borrar almacenamiento, cambiar de usuario/playa ni cambiar de dispositivo con pendientes. No se garantiza sincronización en segundo plano con la app cerrada. Una actualización del service worker espera a que se cierren las ventanas anteriores; si sigue apareciendo la pantalla anterior, cerrar todas las ventanas y reabrir con red.
 
+## Consulta de comprobantes
+
+El historial local permite buscar por patente, filtrar entradas/salidas, estado (pendiente, sincronizado o copia anterior al corte) y rango de fechas inclusivo según Buenos Aires. Los filtros se combinan y pueden limpiarse juntos. Muestra ocho comprobantes por página, del más reciente al más antiguo; filtrar o paginar no modifica los registros guardados y funciona sin conexión.
+
 ## Persistencia y sincronización
 - Los pendientes no vencen ni se eliminan al vencer la autorización de nuevas operaciones. El secreto local deriva AES-GCM con PBKDF2; no se envía al servidor. Se conserva envuelto con una CryptoKey no exportable en IndexedDB para acceso automático. Esto NO protege contra alguien con acceso al mismo perfil del navegador: usar bloqueo del dispositivo. No se guardan tokens de sesión. No hay bloqueo automático al cambiar de pestaña.
 - Una revisión atómica en IndexedDB rechaza escrituras desde pestañas que leyeron una versión vieja.

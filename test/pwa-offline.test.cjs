@@ -107,5 +107,67 @@ test('PWA operativa: entradas, salidas, persistencia offline, cifrado y reintent
       try { await vault.saveOperations(opened.state, 'frase-local-segura-123', opened.revision); return false; } catch { return true; }
     });
     assert.equal(race, true);
+    // Un historial grande debe poder consultarse sin red, sin perder registros al paginar.
+    await page.evaluate(async () => {
+      const vault = await import('/offline-vault.js');
+      const opened = await vault.openOperations('frase-local-segura-123');
+      opened.state.receipts = Array.from({ length: 23 }, (_, i) => ({
+        id: 'receipt-' + i, plate: 'AB' + String(i).padStart(3, '0') + 'CD', vehicleType: 'AUTO',
+        kind: i % 2 ? 'EXIT' : 'ENTRY', entry: '2026-10-06T12:00:00Z',
+        occurredAt: (i < 12 ? '2026-10-06' : '2026-10-07') + 'T15:' + String(i).padStart(2, '0') + ':00Z',
+        price: 1000, collected: 0, method: 'CASH', business: opened.state.business,
+        synced: i % 3 === 0, historical: i % 3 === 1,
+      }));
+      await vault.saveOperations(opened.state, 'frase-local-segura-123', opened.revision);
+    });
+    disconnected = true; await page.setOfflineMode(true);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => document.querySelectorAll('.receipt-row').length === 8);
+    assert.match(await page.$eval('#receipt-results', el => el.textContent), /1–8 de 23/);
+    assert.equal(await page.$eval('#receipt-prev', el => el.disabled), true);
+    await page.click('#receipt-next'); await page.click('#receipt-next');
+    assert.equal(await page.$$eval('.receipt-row', els => els.length), 7);
+    assert.equal(await page.$eval('#receipt-next', el => el.disabled), true);
+    await page.type('#receipt-search', 'AB000');
+    assert.equal(await page.$$eval('.receipt-row', els => els.length), 1);
+    assert.equal(await page.$eval('.receipt-identity strong', el => el.textContent), 'AB000CD');
+    await page.click('#receipts button');
+    await page.waitForSelector('#receipt-dialog[open]');
+    assert.match(await page.$eval('#receipt-paper', el => el.textContent), /AB000CD/);
+    await page.click('#receipt-close');
+    await page.click('#receipt-reset');
+    await page.click('[data-receipt-kind="EXIT"]');
+    await page.select('#receipt-state', 'pending');
+    await page.$eval('#receipt-from', el => { el.value = '2026-10-07'; el.dispatchEvent(new Event('change')); });
+    await page.$eval('#receipt-to', el => { el.value = '2026-10-07'; el.dispatchEvent(new Event('change')); });
+    assert.deepEqual(await page.$$eval('.receipt-identity strong', els => els.map(el => el.textContent)), ['AB017CD']);
+    await page.select('#receipt-state', 'historical');
+    assert.deepEqual(await page.$$eval('.receipt-identity strong', els => els.map(el => el.textContent)), ['AB019CD', 'AB013CD']);
+    await page.select('#receipt-state', 'synced');
+    assert.deepEqual(await page.$$eval('.receipt-identity strong', els => els.map(el => el.textContent)), ['AB021CD', 'AB015CD']);
+    await page.$eval('#receipt-from', el => { el.value = '2026-10-08'; el.dispatchEvent(new Event('change')); });
+    assert.match(await page.$eval('#receipt-results', el => el.textContent), /Desde debe ser anterior/);
+    assert.equal(await page.$$eval('.receipt-row', els => els.length), 0);
+    await page.click('#receipt-reset');
+    await page.type('#receipt-search', 'ZZZ');
+    assert.equal(await page.$$eval('.receipt-row', els => els.length), 0);
+    assert.match(await page.$eval('#receipts', el => el.textContent), /No encontramos/);
+    await page.click('#receipt-reset');
+    assert.match(await page.$eval('#receipt-results', el => el.textContent), /1–8 de 23/);
+    for (const width of [320, 390, 768, 1280]) {
+      await page.setViewport({ width, height: 900 });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'sin overflow en ' + width);
+      assert.ok(await page.evaluate(() => {
+        const panel = document.querySelector('#receipts-section').getBoundingClientRect();
+        return [...document.querySelectorAll('.receipt-filters input, .receipt-filters select')].every(el => {
+          const bounds = el.getBoundingClientRect(); return bounds.left >= panel.left && bounds.right <= panel.right;
+        });
+      }), 'filtros dentro del panel en ' + width);
+
+    }
+    await page.screenshot({ path: path.resolve(__dirname, '../.tmp/offline-desktop.png'), fullPage: true });
+    await page.setViewport({ width: 390, height: 844 });
+    await page.screenshot({ path: path.resolve(__dirname, '../.tmp/offline-mobile.png'), fullPage: true });
+
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 });
