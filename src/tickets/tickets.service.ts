@@ -1203,7 +1203,8 @@ async removePriceBracket(id: string) {
     if (filters.to) qb.andWhere('r.entryDay <= :to', { to: filters.to });
     if (filters.vehicleType) qb.andWhere('r.vehicleType = :vehicleType', { vehicleType: filters.vehicleType });
 
-    qb.having(`COUNT(*) >= :minVisits OR BOOL_OR(r."phoneCustomer" IS NOT NULL AND r."phoneCustomer" <> '')`, { minVisits });
+    // El filtro de texto debe aplicarse también a quienes califican por cantidad de visitas.
+    qb.having(`(COUNT(*) >= :minVisits OR BOOL_OR(r."phoneCustomer" IS NOT NULL AND r."phoneCustomer" <> ''))`, { minVisits });
     if (filters.search?.trim()) qb.andHaving(`CONCAT_WS(' ', r."licensePlateNormalized", MAX(r."lastNameCustomer"), MAX(r."phoneCustomer")) ILIKE :search`, { search: '%' + filters.search.slice(0, 120).trim().replace(/[\\%_]/g, '\\$&') + '%' });
     let total = 0;
     if (pagination) {

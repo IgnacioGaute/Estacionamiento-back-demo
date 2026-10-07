@@ -1128,3 +1128,42 @@ test('cámara: el operador resuelve una patente exacta solo en su playa', async 
   assert.deepEqual(response.body.daily, []);
   await request(app.getHttpServer()).get(route).set('Authorization', 'Bearer ' + token(operator)).set('X-Playa-Id', a.playaId).expect(403);
 });
+
+
+test('frecuentes: la búsqueda filtra visitas y contactos por coincidencia real', async () => {
+  const playa = await ds.getRepository(Playa).save({ nombre: 'Búsqueda de frecuentes', empresaId: b.empresaId });
+  const scope = { ...b, playaId: playa.id };
+  const save = (plate, name, phone = null) => ds.getRepository(Registration).save({
+    playaId: scope.playaId, description: 'Frequent search', price: 0, noPlate: false,
+    licensePlateOriginal: plate, licensePlateNormalized: plate, vehicleType: 'AUTO',
+    lastNameCustomer: name, phoneCustomer: phone, entryDay: '2026-10-07', entryTime: '10:00:00',
+  });
+  await scoped(scope, async () => {
+    for (const plate of ['AX246CD', 'ABC246', '246ABC']) {
+      await save(plate, 'García');
+      await save(plate, 'García');
+    }
+    await save('A246BCD', 'Pérez', '5491176543210');
+    await save('AX999CD', 'Sin contacto'); // Una visita sin teléfono no es frecuente.
+  });
+  const search = async (query, limit = 6) => (await request(app.getHttpServer())
+    .get('/tickets/registrations/frequent')
+    .query({ minVisits: 2, search: query, limit })
+    .set('Authorization', 'Bearer ' + token(adminB)).set('X-Playa-Id', scope.playaId)
+    .expect(200)).body;
+  const plates = result => result.data.map(row => row.licensePlateNormalized).sort();
+  assert.deepEqual(plates(await search('ASD')), []);
+  assert.deepEqual(plates(await search('AX')), ['AX246CD']);
+  assert.deepEqual(plates(await search('ax246cd')), ['AX246CD']);
+  assert.deepEqual(plates(await search('abc')), ['246ABC', 'ABC246']);
+  assert.deepEqual(plates(await search('a246')), ['A246BCD']);
+  assert.deepEqual(plates(await search('garcía')), ['246ABC', 'ABC246', 'AX246CD']);
+  assert.deepEqual(plates(await search('pére')), ['A246BCD']);
+  assert.deepEqual(plates(await search('765432')), ['A246BCD']);
+  assert.deepEqual(plates(await search('%')), []);
+  assert.deepEqual(plates(await search('_')), []);
+  const page = await search('garcía', 1);
+  assert.equal(page.data.length, 1);
+  assert.equal(page.meta.totalItems, 3);
+  assert.equal((await search('ASD')).meta.totalItems, 0);
+});
