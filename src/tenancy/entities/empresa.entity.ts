@@ -30,6 +30,9 @@ export class Empresa {
   @Column('numeric', { precision: 5, scale: 2, default: 0 })
   comisionTransferenciaPorcentaje: number;
 
+  @Column('jsonb', { nullable: true })
+  comisionesMp: import('src/box-lists/comisiones').ComisionesCaja | null;
+
   @Column('varchar', { length: 20, default: 'ACTIVA' })
   estado: EmpresaEstado;
 

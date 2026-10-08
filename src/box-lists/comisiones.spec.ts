@@ -1,73 +1,92 @@
 import { validate } from 'class-validator';
 import { tenantContext } from 'src/tenancy/tenant-context';
+import { CuentaMercadoPago } from 'src/mercadopago/entities/cuenta-mercadopago.entity';
 import { BoxListsService } from './box-lists.service';
-import { COMISIONES_CERO, resumenConComisiones } from './comisiones';
+import { claveComision, COMISIONES_CERO, COMISIONES_REFERENCIA, EvidenciaComisiones, resumenConComisiones } from './comisiones';
 import { ComisionesCajaDto } from './dto/comisiones-caja.dto';
 
-describe('Comisiones estimadas de caja', () => {
-  const tasas = { qrPorcentaje: 5, transferenciaPorcentaje: 1 };
-  it('suma efectivo y pagos digitales sin alterar el bruto del ticket ni el cajón', () => {
-    const box = { totalPrice: 3000, ticketMovements: [
-      { monto: 10000, metodo: 'MERCADOPAGO', tipo: 'SALDO' },
-      { monto: 2000, metodo: 'TRANSFER', tipo: 'ANTICIPO' },
-      { monto: 3000, metodo: 'CASH', tipo: 'SALDO' },
-    ] };
+const evidencia = (): EvidenciaComisiones => ({ movimientos: new Map(), abonos: new Map(), inquilinos: new Map() });
+describe('Comisiones por canal y medio de Mercado Pago', () => {
+  it.each(['QR', 'ALIAS'] as const)('clasifica %s sólo con tipos informados', canal => {
+    const p = canal === 'QR' ? 'qr' : 'alias';
+    expect(claveComision(canal, 'credit_card')).toBe(p + 'Credito');
+    expect(claveComision(canal, 'debit_card')).toBe(p + 'Debito');
+    expect(claveComision(canal, 'bank_transfer')).toBe(p + 'Saldo');
+    expect(claveComision(canal, 'account_money')).toBe(p + 'Saldo');
+    expect(claveComision(canal, undefined)).toBeNull();
+    expect(claveComision(canal, 'prepaid_card')).toBeNull();
+  });
+  it('aplica seis porcentajes distintos sin alterar los tickets ni el efectivo', () => {
+    const tasas = { qrSaldo: 1, qrDebito: 2, qrCredito: 3, aliasSaldo: 4, aliasDebito: 5, aliasCredito: 6 };
+    const e = evidencia();
+    const ticketMovements = Object.keys(tasas).map((id, index) => {
+      e.movimientos.set(id, id as keyof typeof tasas);
+      return { id, metodo: index < 3 ? 'MERCADOPAGO' : 'TRANSFER', monto: 1000, tipo: 'SALDO' };
+    });
+    const box = { totalPrice: 3000, ticketMovements };
     const antes = JSON.stringify(box);
-    expect(resumenConComisiones(box, tasas)).toMatchObject({ efectivo: 3000, totalAntesComisiones: 15000, comisionEstimada: 520, totalNetoEstimado: 14480 });
+    expect(resumenConComisiones(box, tasas, e)).toMatchObject({ totalAntesComisiones: 9000, comisionEstimada: 210, totalNetoEstimado: 8790, importePendienteComision: 0 });
     expect(JSON.stringify(box)).toBe(antes);
   });
-  it('cero por defecto conserva el total y cada empresa puede recalcular su estimación', () => {
-    const box = { totalPrice: 0, ticketMovements: [{ monto: 100, metodo: 'TRANSFER', tipo: 'SALDO' }] };
-    expect(resumenConComisiones(box, COMISIONES_CERO).totalNetoEstimado).toBe(100);
-    expect(resumenConComisiones(box, tasas).totalNetoEstimado).toBe(99);
+  it('no aplica comisión MP a transferencias manuales, recibos ni gastos', () => {
+    const box = { totalPrice: 500, ticketMovements: [{ id: 'manual', metodo: 'TRANSFER', monto: 1000, tipo: 'SALDO' }],
+      receiptPayments: [{ paymentType: 'TRANSFER', price: 1000 }], otherPayments: [{ paymentMethod: 'TRANSFER', type: 'EGRESOS', price: 100 }] };
+    expect(resumenConComisiones(box, { ...COMISIONES_REFERENCIA, aliasSaldo: 99 })).toMatchObject({ totalAntesComisiones: 2400, totalNetoEstimado: 2400, comisionEstimada: 0 });
   });
-  it('excluye cortesías y abonos impagos y suma el abono pagado', () => {
-    expect(resumenConComisiones({ totalPrice: 0,
-      ticketMovements: [{ monto: 1000, metodo: 'MERCADOPAGO', tipo: 'CORTESIA' }],
-      ticketRegistrationForDays: [{ paid: false, price: 500, paymentMetodo: 'MERCADOPAGO' }, { paid: true, price: 200, paymentMetodo: 'MERCADOPAGO' }],
-    }, tasas)).toMatchObject({ totalAntesComisiones: 200, comisionEstimada: 10, totalNetoEstimado: 190 });
+  it('medio faltante y alias crédito sin tasa quedan pendientes, nunca se asumen saldo ni 0%', () => {
+    const e = evidencia(); e.movimientos.set('alias', 'aliasCredito');
+    const result = resumenConComisiones({ totalPrice: 0, ticketMovements: [
+      { id: 'qr', metodo: 'MERCADOPAGO', monto: 1000, tipo: 'SALDO' },
+      { id: 'alias', metodo: 'TRANSFER', monto: 2000, tipo: 'SALDO' },
+    ] }, COMISIONES_REFERENCIA, e);
+    expect(result).toMatchObject({ totalNetoEstimado: 3000, importePendienteComision: 3000, comisionEstimada: 0 });
+    expect(result.medios.every(m => m.porcentaje === null)).toBe(true);
   });
-  it('cuenta una sola vez un pago de inquilino imputado a varios recibos', () => {
-    expect(resumenConComisiones({ totalPrice: 0,
-      cobrosInquilinos: [{ metodo: 'MERCADOPAGO', monto: 10000 }],
-      receiptPayments: [{ paymentType: 'MERCADOPAGO', price: 6000, cuentaMovimientoId: 'pago' }, { paymentType: 'MERCADOPAGO', price: 4000, cuentaMovimientoId: 'pago' }, { paymentType: 'TRANSFER', price: 1000 }],
-      paymentHistoryOnAccount: [{ paymentType: 'CREDIT', price: 9999 }],
-    }, tasas)).toMatchObject({ totalAntesComisiones: 11000, comisionEstimada: 510, totalNetoEstimado: 10490 });
+  it('cero explícito permite una comisión bonificada', () => {
+    const e = evidencia(); e.movimientos.set('qr', 'qrCredito');
+    expect(resumenConComisiones({ totalPrice: 0, ticketMovements: [{ id: 'qr', metodo: 'MERCADOPAGO', monto: 1000, tipo: 'SALDO' }] }, COMISIONES_CERO, e)).toMatchObject({ comisionEstimada: 0, importePendienteComision: 0, totalNetoEstimado: 1000 });
   });
-  it('resta egresos y devoluciones sin cobrar ni devolver una comisión supuesta', () => {
-    expect(resumenConComisiones({ totalPrice: -100,
-      ticketMovements: [{ monto: 1000, metodo: 'TRANSFER', tipo: 'SALDO' }, { monto: -1000, metodo: 'TRANSFER', tipo: 'AJUSTE' }],
-      otherPayments: [{ paymentMethod: 'TRANSFER', type: 'EGRESOS', price: 200 }, { paymentMethod: 'TRANSFER', type: 'INGRESOS', price: 100 }],
-    }, tasas)).toMatchObject({ totalAntesComisiones: -200, comisionEstimada: 11, totalNetoEstimado: -211 });
+  it('redondea cada operación y conserva cuatro decimales del porcentaje final con IVA', () => {
+    const e = evidencia(); ['a','b','c'].forEach(id => e.movimientos.set(id, 'qrDebito'));
+    const result = resumenConComisiones({ totalPrice: 0, ticketMovements: ['a','b','c'].map(id => ({ id, monto: 10, metodo: 'MERCADOPAGO', tipo: 'SALDO' })) }, COMISIONES_REFERENCIA, e);
+    expect(result.comisionEstimada).toBe(0.48);
+    expect(result.totalNetoEstimado).toBe(29.52);
   });
-  it('redondea por cobro a centavos', () => {
-    const result = resumenConComisiones({ totalPrice: 0, ticketMovements: Array.from({ length: 3 }, () => ({ monto: 10, metodo: 'MERCADOPAGO', tipo: 'SALDO' })) }, { qrPorcentaje: 1.35, transferenciaPorcentaje: 0 });
-    expect(result.comisionEstimada).toBe(0.42);
-    expect(result.totalNetoEstimado).toBe(29.58);
+  it('omite cortesías, abonos impagos y duplicados de recibos; una devolución no reintegra comisión', () => {
+    const e = evidencia(); e.inquilinos.set('p', 'qrCredito'); e.abonos.set('a', 'qrDebito');
+    const result = resumenConComisiones({ totalPrice: 0,
+      ticketMovements: [{ metodo: 'MERCADOPAGO', monto: 500, tipo: 'CORTESIA' }],
+      ticketRegistrationForDays: [{ id: 'a', paid: true, price: 100, paymentMetodo: 'MERCADOPAGO' }, { id: 'b', paid: false, price: 300, paymentMetodo: 'MERCADOPAGO' }],
+      cobrosInquilinos: [{ id: 'p', metodo: 'MERCADOPAGO', monto: 1000 }, { id: 'd', metodo: 'MERCADOPAGO', monto: -1000 }],
+      receiptPayments: [{ paymentType: 'MERCADOPAGO', price: 1000, cuentaMovimientoId: 'p' }],
+    }, { ...COMISIONES_CERO, qrCredito: 5, qrDebito: 1 }, e);
+    expect(result).toMatchObject({ totalAntesComisiones: 100, comisionEstimada: 51, totalNetoEstimado: 49 });
   });
-  it.each([-1, 100.01, NaN, Infinity, 1.234, '5', null, undefined])('rechaza porcentaje inválido: %s', async valor => {
-    expect((await validate(Object.assign(new ComisionesCajaDto(), { qrPorcentaje: valor, transferenciaPorcentaje: 0 }))).length).toBeGreaterThan(0);
+  it.each([-1, 100.01, NaN, Infinity, 1.23456, '5', undefined])('rechaza porcentaje inválido: %s', async valor => {
+    expect((await validate(Object.assign(new ComisionesCajaDto(), COMISIONES_REFERENCIA, { qrSaldo: valor }))).length).toBeGreaterThan(0);
   });
-  it('acepta 0 y 100', async () => {
-    expect(await validate(Object.assign(new ComisionesCajaDto(), { qrPorcentaje: 100, transferenciaPorcentaje: 0 }))).toHaveLength(0);
+  it('acepta null como pendiente, 0, 100 y cuatro decimales', async () => {
+    expect(await validate(Object.assign(new ComisionesCajaDto(), COMISIONES_REFERENCIA, { qrSaldo: 100, qrDebito: 0 }))).toHaveLength(0);
   });
 });
-
-describe('Configuración por empresa', () => {
-  const empresas = { a: { comisionQrPorcentaje: '5.00', comisionTransferenciaPorcentaje: '1.00' }, b: { comisionQrPorcentaje: '0.00', comisionTransferenciaPorcentaje: '0.00' } };
+describe('Configuración por empresa y cuenta vinculada', () => {
+  const empresas = { a: { comisionesMp: null }, b: { comisionesMp: null } };
+  let conectada = true;
   const repo = { findOneBy: jest.fn(async ({ id }) => empresas[id]), update: jest.fn(async ({ id }, cambios) => { Object.assign(empresas[id], cambios); }) };
-  const ds = { getRepository: () => repo, manager: { getRepository: () => repo } };
-  const service = new BoxListsService({} as any, {} as any, ds as any);
+  const getRepository = (entity: any) => entity === CuentaMercadoPago ? { existsBy: async () => conectada } : repo;
+  const service = new BoxListsService({} as any, {} as any, { getRepository, manager: { getRepository } } as any);
   const scope = (empresaId: string, role = 'ADMIN') => ({ empresaId, role, playaId: 'playa', userId: 'usuario' });
-  it('lee y edita únicamente la empresa de la sesión', async () => {
+  it('comparte configuración sólo dentro de la empresa y usa valores de referencia', async () => {
     await tenantContext.run(scope('a'), async () => {
-      expect(await service.getComisiones()).toEqual({ qrPorcentaje: 5, transferenciaPorcentaje: 1 });
-      expect(await service.configurarComisiones({ qrPorcentaje: 6, transferenciaPorcentaje: 2 })).toEqual({ qrPorcentaje: 6, transferenciaPorcentaje: 2 });
+      expect((await service.getComisiones()).tasas).toEqual(COMISIONES_REFERENCIA);
+      expect((await service.configurarComisiones(COMISIONES_CERO)).tasas).toEqual(COMISIONES_CERO);
     });
-    expect(await tenantContext.run(scope('b'), () => service.getComisiones())).toEqual(COMISIONES_CERO);
-    expect(repo.update).toHaveBeenCalledWith({ id: 'a' }, { comisionQrPorcentaje: 6, comisionTransferenciaPorcentaje: 2 });
+    expect((await tenantContext.run(scope('b'), () => service.getComisiones())).tasas).toEqual(COMISIONES_REFERENCIA);
+    expect(repo.update).toHaveBeenCalledWith({ id: 'a' }, { comisionesMp: COMISIONES_CERO });
   });
-  it('rechaza cambios de un operador y consultas sin empresa', async () => {
+  it('bloquea edición sin cuenta activa, de operadores y sin empresa', async () => {
+    conectada = false;
+    await expect(tenantContext.run(scope('a'), () => service.configurarComisiones(COMISIONES_CERO))).rejects.toThrow('Vinculá');
     await expect(tenantContext.run(scope('a', 'USER'), () => service.configurarComisiones(COMISIONES_CERO))).rejects.toThrow('administrador');
     await expect(service.getComisiones()).rejects.toThrow('empresa');
   });

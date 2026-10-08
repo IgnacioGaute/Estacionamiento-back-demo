@@ -343,7 +343,7 @@ export class MercadoPagoService {
   async buscarPagoAprobado(
     empresaId: string,
     referencia: string,
-  ): Promise<{ id: string; monto: number } | null> {
+  ): Promise<{ id: string; monto: number; paymentTypeId?: string | null } | null> {
     const token = await this.tokenDeEmpresa(empresaId);
     const url = new URL(`${API}/v1/payments/search`);
     url.searchParams.set('external_reference', referencia);
@@ -357,6 +357,7 @@ export class MercadoPagoService {
         id?: number | string;
         status?: string;
         transaction_amount?: number;
+        payment_type_id?: string;
       }[];
     };
     const aprobado = (datos.results ?? []).find(
@@ -366,6 +367,7 @@ export class MercadoPagoService {
     return {
       id: String(aprobado.id),
       monto: Math.round(Number(aprobado.transaction_amount) || 0),
+      paymentTypeId: aprobado.payment_type_id ?? null,
     };
   }
 

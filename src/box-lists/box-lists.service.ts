@@ -1,7 +1,10 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Empresa } from 'src/tenancy/entities/empresa.entity';
 import { ComisionesCajaDto } from './dto/comisiones-caja.dto';
-import { resumenConComisiones } from './comisiones';
+import { claveComision, COMISIONES_REFERENCIA, EvidenciaComisiones, resumenConComisiones } from './comisiones';
+import { CuentaMercadoPago } from 'src/mercadopago/entities/cuenta-mercadopago.entity';
+import { CobroMercadoPago } from 'src/mercadopago/entities/cobro-mercadopago.entity';
+import { TransferenciaRecibida } from 'src/mercadopago/entities/transferencia-recibida.entity';
 import { CreateBoxListDto } from './dto/create-box-list.dto';
 import { UpdateBoxListDto } from './dto/update-box-list.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -50,24 +53,51 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     if (!empresaId) throw new ForbiddenException('Seleccioná una empresa.');
     const empresa = await manager.getRepository(Empresa).findOneBy({ id: empresaId });
     if (!empresa) throw new NotFoundException('Empresa no encontrada.');
-    return { qrPorcentaje: Number(empresa.comisionQrPorcentaje ?? 0), transferenciaPorcentaje: Number(empresa.comisionTransferenciaPorcentaje ?? 0) };
+    const conectada = await manager.getRepository(CuentaMercadoPago).existsBy({ empresaId, estado: 'ACTIVA' });
+    return { conectada, tasas: { ...COMISIONES_REFERENCIA, ...empresa.comisionesMp }, referencia: COMISIONES_REFERENCIA };
   }
 
   async configurarComisiones(dto: ComisionesCajaDto) {
     const scope = tenantContext.getStore();
     if (!scope?.empresaId || scope.role !== 'ADMIN') throw new ForbiddenException('Sólo el administrador de la empresa puede configurar comisiones.');
+    if (!(await this.getComisiones()).conectada) throw new BadRequestException('Vinculá una cuenta de Mercado Pago para configurar sus comisiones.');
     await this.dataSource.getRepository(Empresa).update({ id: scope.empresaId }, {
-      comisionQrPorcentaje: dto.qrPorcentaje,
-      comisionTransferenciaPorcentaje: dto.transferenciaPorcentaje,
+      comisionesMp: { ...dto },
     });
     return this.getComisiones();
   }
 
-  private async withComisiones(box: BoxList, manager = this.dataSource.manager) {
+  private async withComisiones(box: BoxList & { ticketMovements?: Movimiento[]; cobrosInquilinos?: { id: string; solicitud?: string | null }[] }, manager = this.dataSource.manager) {
     // Las tareas internas sin empresa conservan la planilla original; nunca eligen
     // una configuración de otra cuenta. Los endpoints exigen contexto de empresa.
     if (!tenantContext.getStore()?.empresaId) return box;
-    return Object.assign(box, { resumenCaja: resumenConComisiones(box, await this.getComisiones(manager)) });
+    const config = await this.getComisiones(manager);
+    if (!config.conectada) return box;
+    const evidencia: EvidenciaComisiones = { movimientos: new Map(), abonos: new Map(), inquilinos: new Map() };
+    const movs = box.ticketMovements ?? [];
+    const idsQr = movs.filter(m => m.metodo === 'MERCADOPAGO').map(m => /^MercadoPago (\S+)$/.exec(m.referencia ?? '')?.[1]).filter(Boolean);
+    const idsAlias = movs.filter(m => m.metodo === 'TRANSFER').map(m => /^Transferencia MercadoPago (\S+)$/.exec(m.referencia ?? '')?.[1]).filter(Boolean);
+    const abonos = (box.ticketRegistrationForDays ?? []).filter(t => t.paid && t.paymentMetodo === 'MERCADOPAGO').map(t => t.id);
+    const solicitudes = (box.cobrosInquilinos ?? []).map(c => c.solicitud).filter(Boolean);
+    const filtros = [
+      ...(idsQr.length ? [{ estado: 'ACREDITADO' as const, mpPaymentId: In(idsQr) }] : []),
+      ...(abonos.length ? [{ estado: 'ACREDITADO' as const, tipo: 'ABONO' as const, registrationId: In(abonos) }] : []),
+      ...(solicitudes.length ? [{ estado: 'ACREDITADO' as const, tipo: 'INQUILINO' as const, id: In(solicitudes) }] : []),
+    ];
+    const qr = filtros.length ? await manager.getRepository(CobroMercadoPago).find({ where: filtros, order: { acreditadoEl: 'ASC' } }) : [];
+    const alias = idsAlias.length ? await manager.getRepository(TransferenciaRecibida).findBy({ empresaId: tenantContext.getStore()!.empresaId, usadaEnPlayaId: tenantContext.getStore()!.playaId, estado: 'USADA', operacionId: In(idsAlias) }) : [];
+    for (const m of movs) {
+      const pagoQr = m.metodo === 'MERCADOPAGO' && qr.find(p => p.tipo === 'HORA' && p.registrationId === m.ticketRegistration?.id && m.referencia === `MercadoPago ${p.mpPaymentId}`);
+      const pagoAlias = m.metodo === 'TRANSFER' && alias.find(p => p.registrationId === m.ticketRegistration?.id && m.referencia === `Transferencia MercadoPago ${p.operacionId}`);
+      if (pagoQr) evidencia.movimientos.set(m.id, claveComision('QR', pagoQr.paymentTypeId) ?? 'qrDesconocido');
+      if (pagoAlias) evidencia.movimientos.set(m.id, claveComision('ALIAS', pagoAlias.paymentTypeId) ?? 'aliasDesconocido');
+    }
+    for (const p of qr) if (p.tipo === 'ABONO') evidencia.abonos.set(p.registrationId, claveComision('QR', p.paymentTypeId) ?? 'qrDesconocido');
+    for (const c of box.cobrosInquilinos ?? []) {
+      const p = qr.find(p => p.tipo === 'INQUILINO' && p.id === c.solicitud);
+      if (p) evidencia.inquilinos.set(c.id, claveComision('QR', p.paymentTypeId) ?? 'qrDesconocido');
+    }
+    return Object.assign(box, { resumenCaja: resumenConComisiones(box as BoxList, config.tasas, evidencia) });
   }
 
   private async recordCash(boxId: string, amount: number, manager: EntityManager, description = 'Movimiento de efectivo', turnoIdOverride?: string | null, usuarioId = tenantContext.getStore()?.userId) {
@@ -298,7 +328,7 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
 
     const dia = String(box.date).slice(0, 10);
     const filas: any[] = await repository.query(
-      `SELECT m.id, m.tipo, m.metodo, m.importe, m.numero, m.detalle, m."createdAt", m."anulaId",
+      `SELECT m.id, m.tipo, m.metodo, m.importe, m.numero, m.detalle, m.solicitud, m."createdAt", m."anulaId",
               c."firstName", c."lastName",
               o.tipo AS "tipoOriginal", to_char(o.fecha, 'YYYY-MM-DD') AS "fechaOriginal"
        FROM cuenta_movimientos m
@@ -320,6 +350,7 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
       )
       .map((f) => ({
         id: f.id as string,
+        solicitud: f.solicitud as string | null,
         tipo: f.tipo as 'PAGO' | 'DEVOLUCION' | 'ANULACION',
         tipoOriginal: (f.tipoOriginal ?? null) as 'PAGO' | 'DEVOLUCION' | null,
         metodo: f.metodo as 'CASH' | 'TRANSFER' | 'CHECK' | 'MERCADOPAGO',

@@ -1,22 +1,37 @@
 # Comisiones estimadas de caja
 
-Cada empresa configura en Configuración → Mercado Pago dos porcentajes finales
-(IVA incluido si corresponde): Mercado Pago/QR y transferencias/alias. Inicialmente
-son 0%, con rango 0–100 y hasta dos decimales. La tasa de transferencias incluye las
-verificadas y las manuales; no se infiere la tarjeta usada para fondear una transferencia.
+Cada empresa configura sus porcentajes en Configuración → Mercado Pago → Comisiones.
+La pantalla y el cálculo están disponibles sólo con una cuenta ACTIVA vinculada.
+Los tickets, precios, saldos del cliente y arqueo conservan sus importes originales.
 
-Los porcentajes actuales recalculan la fecha consultada, incluso fechas anteriores.
-Son una estimación editable, no una liquidación ni un registro de cargos reales de MP.
-No se guardan en los tickets ni modifican movimientos, saldos del cliente o el arqueo.
+Hay seis tasas: QR saldo/transferencia, QR débito, QR crédito, alias transferencia,
+alias débito y alias crédito. Se admite 0–100, hasta cuatro decimales; null significa
+«a definir», mientras 0 significa expresamente sin descuento.
 
-La planilla y su PDF muestran efectivo, movimientos digitales antes de comisión,
-comisiones estimadas y total neto estimado. El total general suma el efectivo neto
-del día y los movimientos digitales netos, descontando la comisión por cada ingreso
-(redondeada a centavos). Los egresos se restan completos sin presumir reintegros de
-comisiones. Las imputaciones de un pago a recibos no vuelven a sumarse cuando ya
-están representadas en la cuenta corriente.
+Referencias consultadas el 08/10/2026 para acreditación inmediata, con IVA 21%:
+QR saldo 0,968%, débito 1,6335%, crédito en un pago 7,2479%.
+Fuente: https://www.mercadopago.com.ar/herramientas-para-vender/cobrar-con-qr
+Son estimaciones: provincia, cuotas y plazo pueden cambiar el costo real.
+Alias transferencia y alias débito parten de 0% editable; para alias crédito no se
+verificó una tarifa argentina para el receptor y se deja a definir.
 
-GET /box-lists/comisiones consulta la empresa de la sesión. PATCH sobre la misma
-ruta acepta qrPorcentaje y transferenciaPorcentaje y exige ADMIN. No acepta un
-empresaId del cliente. La tabla empresas conserva su aislamiento RLS. La migración
-1790000032000 agrega las columnas con valor cero y valida el rango en PostgreSQL.
+La clasificación requiere evidencia del cobro acreditado de Mercado Pago o de una
+transferencia verificada y usada en esa playa. Se conserva payment_type_id o
+payment_method.type. No se deduce la tarjeta usada para fondear una transferencia:
+bank_transfer se clasifica como transferencia. Los datos ausentes o tipos no
+reconocidos quedan pendientes. Las transferencias manuales no llevan comisión MP.
+Los cobros históricos sin tipo informado también quedan pendientes.
+
+El resumen de caja y su PDF muestran bruto, comisión estimada y neto estimado.
+La comisión se redondea por ingreso a centavos. Los egresos se restan completos,
+sin presumir reintegros de comisión. No se duplica una imputación de cuenta corriente.
+Los importes pendientes siguen incluidos sin descuento y el neto se marca parcial.
+Los porcentajes actuales recalculan incluso fechas anteriores; no representan una
+liquidación ni cargos reales informados por Mercado Pago.
+
+GET /box-lists/comisiones devuelve conectada, tasas y referencia para la empresa de
+la sesión. PATCH exige ADMIN y cuenta activa; recibe las seis tasas y no empresaId.
+La migración 1790000033000 agrega empresas.comisionesMp y paymentTypeId en cobros
+y transferencias. Conserva tasas anteriores no nulas y mayores que cero; en el resto
+usa referencias iniciales. No inventa tipos para pagos históricos. Mantiene RLS y
+los permisos limitados de parking_scoped.

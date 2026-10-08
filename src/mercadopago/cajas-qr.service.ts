@@ -481,6 +481,7 @@ export class CajasQrService {
       estado: String(orden?.status ?? ''),
       pagada,
       pagoId: pagada ? String(pago?.id ?? ordenId) : null,
+      paymentTypeId: pago?.payment_method?.type ?? pago?.payment_type_id ?? null,
       monto: Number(
         pago?.paid_amount ??
           pago?.amount ??

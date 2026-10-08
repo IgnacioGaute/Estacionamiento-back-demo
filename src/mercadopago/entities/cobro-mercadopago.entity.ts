@@ -65,6 +65,9 @@ export class CobroMercadoPago {
   @Column('varchar', { length: 64, nullable: true })
   mpPaymentId: string | null;
 
+  @Column('varchar', { length: 40, nullable: true })
+  paymentTypeId: string | null;
+
   @Column('timestamptz')
   expiraEl: Date;
 

@@ -680,6 +680,7 @@ export class VerificacionAliasService {
         importe: Number(p.transaction_amount),
         moneda: String(p.currency_id),
         estadoMp: String(p.status),
+        paymentTypeId: p.payment_type_id ?? p.payment_method?.type ?? null,
         fechaOperacion: new Date(p.date_created),
         fechaAcreditacion: p.date_approved ? new Date(p.date_approved) : null,
       }));

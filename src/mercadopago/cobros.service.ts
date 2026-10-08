@@ -219,7 +219,7 @@ export class CobrosMercadoPagoService {
     if (cobro.ordenId && this.cajasQr) {
       const orden = await this.cajasQr.consultarOrden(empresaId, cobro.ordenId);
       if (orden.pagada && orden.pagoId)
-        return this.acreditar(cobro, { id: orden.pagoId, monto: orden.monto });
+        return this.acreditar(cobro, { id: orden.pagoId, monto: orden.monto, paymentTypeId: orden.paymentTypeId });
     } else {
       const pago = await this.mercadoPago.buscarPagoAprobado(
         empresaId,
@@ -257,13 +257,14 @@ export class CobrosMercadoPagoService {
    */
   private async acreditar(
     cobro: CobroMercadoPago,
-    pago: { id: string; monto: number },
+    pago: { id: string; monto: number; paymentTypeId?: string | null },
   ) {
     const tomado = await this.cobros.update(
       { id: cobro.id, estado: 'PENDIENTE' },
       {
         estado: 'ACREDITADO',
         mpPaymentId: pago.id,
+        paymentTypeId: pago.paymentTypeId ?? null,
         acreditadoEl: new Date(),
       },
     );

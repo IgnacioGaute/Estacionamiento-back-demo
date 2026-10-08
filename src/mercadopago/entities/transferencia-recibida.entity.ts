@@ -65,6 +65,9 @@ export class TransferenciaRecibida {
   @Column('varchar', { length: 30 })
   estadoMp: string;
 
+  @Column('varchar', { length: 40, nullable: true })
+  paymentTypeId: string | null;
+
   // Cuándo se hizo la operación en MercadoPago.
   @Column('timestamptz')
   fechaOperacion: Date;

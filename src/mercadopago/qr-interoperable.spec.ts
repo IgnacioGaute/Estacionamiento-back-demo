@@ -127,7 +127,7 @@ describe('Cobro con QR por caja de la playa', () => {
   });
 
   test('se acredita una sola vez cuando la orden figura pagada', async () => {
-    const { servicio, cajasQr, tickets, mercadoPago } = cobrosConCaja({
+    const { servicio, cajasQr, tickets, mercadoPago, cobros } = cobrosConCaja({
       externalPosId: 'CAJA1',
     });
     const cobro = await en(() => servicio.crear('reg-1', 'HORA', 'u1'));
@@ -145,11 +145,13 @@ describe('Cobro con QR por caja de la playa', () => {
       pagada: true,
       pagoId: 'PAY1',
       monto: 1500,
+      paymentTypeId: 'credit_card',
     });
     expect((await en(() => servicio.consultar(cobro.id))).estado).toBe(
       'ACREDITADO',
     );
     await en(() => servicio.consultar(cobro.id));
+    expect(cobros.filas.get(cobro.id).paymentTypeId).toBe('credit_card');
     expect(tickets.registrarPagoExterno).toHaveBeenCalledTimes(1);
     expect(tickets.registrarPagoExterno).toHaveBeenCalledWith(
       'reg-1',
