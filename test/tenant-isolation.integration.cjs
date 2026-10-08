@@ -1177,7 +1177,7 @@ test('comisiones de caja: configuración aislada, vinculación y medios verifica
   const adminB = await ds.getRepository(User).save({ username: 'fee-admin-b', email: 'fee-b@example.test', firstName: 'B', lastName: 'Admin', role: 'ADMIN', empresaId: b.empresaId });
   const api = (method, user, playaId) => request(app.getHttpServer())[method]('/box-lists/comisiones').set('Authorization', 'Bearer ' + token(user)).set('X-Playa-Id', playaId);
   const defaults = { qrSaldo: 0.968, qrDebito: 1.6335, qrCredito: 7.2479, aliasSaldo: 0, aliasDebito: 0, aliasCredito: null };
-  const tasas = { ...defaults, qrCredito: 5.25, aliasSaldo: 1 };
+  const tasas = { ...defaults, qrCredito: 5.25, aliasCredito: 1 };
   const CuentaMp = load('mercadopago/entities/cuenta-mercadopago.entity', 'CuentaMercadoPago');
   const CobroMp = load('mercadopago/entities/cobro-mercadopago.entity', 'CobroMercadoPago');
   const Transferencia = load('mercadopago/entities/transferencia-recibida.entity', 'TransferenciaRecibida');
@@ -1205,7 +1205,7 @@ test('comisiones de caja: configuración aislada, vinculación y medios verifica
     const box = await ds.getRepository(Box).save({ date, boxNumber: 1, totalPrice: 3000 });
     registration = await ds.getRepository(Registration).save({ description: 'Comisiones', entryMode: 'PLATE', vehicleType: 'AUTO', entryDay: date, entryTime: '08:00:00', price: 10000, noPlate: false, licensePlateOriginal: 'COM123', licensePlateNormalized: 'COM123', boxList: { id: box.id } });
     await ds.getRepository(CobroMp).save({ registrationId: registration.id, tipo: 'HORA', monto: 10000, estado: 'ACREDITADO', mpPaymentId: 'fee-qr', paymentTypeId: 'credit_card', preferenceId: '', initPoint: '', expiraEl: new Date(), acreditadoEl: new Date() });
-    await ds.getRepository(Transferencia).save({ empresaId: a.empresaId, mpUserId: cuenta.mpUserId, operacionId: 'fee-alias', registrationId: registration.id, usadaEnPlayaId: playa.id, importe: 2000, moneda: 'ARS', estadoMp: 'approved', estado: 'USADA', fechaOperacion: new Date(), paymentTypeId: 'bank_transfer' });
+    await ds.getRepository(Transferencia).save({ empresaId: a.empresaId, mpUserId: cuenta.mpUserId, operacionId: 'fee-alias', registrationId: registration.id, usadaEnPlayaId: playa.id, importe: 2000, moneda: 'ARS', estadoMp: 'approved', estado: 'USADA', fechaOperacion: new Date(), paymentTypeId: 'credit_card' });
     for (const [metodo, monto, referencia] of [['MERCADOPAGO', 10000, 'MercadoPago fee-qr'], ['TRANSFER', 2000, 'Transferencia MercadoPago fee-alias'], ['TRANSFER', 5000, 'manual']]) {
       await ds.getRepository(Movimiento).save({ ticketRegistration: { id: registration.id }, monto, metodo, tipo: 'ANTICIPO', referencia, usuario: { id: adminA.id }, fechaHora: new Date(date + 'T12:00:00-03:00') });
     }
@@ -1218,6 +1218,9 @@ test('comisiones de caja: configuración aislada, vinculación y medios verifica
   assert.equal(result.resumenCaja.totalNetoEstimado, 19455);
   assert.equal(result.resumenCaja.importePendienteComision, 0);
   assert.equal(result.resumenCaja.medios.find(m => m.metodo === 'TRANSFER').comision, 0);
+  assert.equal(result.ticketMovements.find(m => m.referencia === 'MercadoPago fee-qr').medioPagoDetalle, 'QR · crédito');
+  assert.equal(result.ticketMovements.find(m => m.referencia === 'Transferencia MercadoPago fee-alias').medioPagoDetalle, 'Alias MP · crédito');
+  assert.equal(result.ticketMovements.find(m => m.referencia === 'manual').medioPagoDetalle, undefined);
   assert.equal((await scoped(scope, () => ds.getRepository(Registration).findOneBy({ id: registration.id }))).price, 10000);
   await ds.getRepository(CuentaMp).update(cuenta.id, { estado: 'DESCONECTADA' });
   assert.equal((await leer()).body.data.resumenCaja, undefined);

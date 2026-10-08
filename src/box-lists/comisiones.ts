@@ -26,6 +26,11 @@ const ETIQUETAS: Record<ClaveComision, string> = {
   aliasSaldo: 'Alias MP · transferencia', aliasDebito: 'Alias MP · débito', aliasCredito: 'Alias MP · crédito',
 };
 type Clasificacion = ClaveComision | 'qrDesconocido' | 'aliasDesconocido';
+export function etiquetaMedioMp(clasificacion: Clasificacion): string {
+  if (clasificacion === 'qrDesconocido') return 'QR · medio no informado';
+  if (clasificacion === 'aliasDesconocido') return 'Alias MP · medio no informado';
+  return ETIQUETAS[clasificacion];
+}
 export interface EvidenciaComisiones {
   movimientos: Map<string, Clasificacion>;
   abonos: Map<string, Clasificacion>;

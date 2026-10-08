@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Empresa } from 'src/tenancy/entities/empresa.entity';
 import { ComisionesCajaDto } from './dto/comisiones-caja.dto';
-import { claveComision, COMISIONES_REFERENCIA, EvidenciaComisiones, resumenConComisiones } from './comisiones';
+import { claveComision, COMISIONES_REFERENCIA, etiquetaMedioMp, EvidenciaComisiones, resumenConComisiones } from './comisiones';
 import { CuentaMercadoPago } from 'src/mercadopago/entities/cuenta-mercadopago.entity';
 import { CobroMercadoPago } from 'src/mercadopago/entities/cobro-mercadopago.entity';
 import { TransferenciaRecibida } from 'src/mercadopago/entities/transferencia-recibida.entity';
@@ -96,6 +96,18 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     for (const c of box.cobrosInquilinos ?? []) {
       const p = qr.find(p => p.tipo === 'INQUILINO' && p.id === c.solicitud);
       if (p) evidencia.inquilinos.set(c.id, claveComision('QR', p.paymentTypeId) ?? 'qrDesconocido');
+    }
+    // Detalle exclusivo de la planilla: conserva el canal y el medio verificados
+    // sin cambiar el método contable, el importe ni el ticket del cliente.
+    for (const [filas, clasificaciones] of [
+      [movs, evidencia.movimientos],
+      [box.ticketRegistrationForDays ?? [], evidencia.abonos],
+      [box.cobrosInquilinos ?? [], evidencia.inquilinos],
+    ] as const) {
+      for (const fila of filas) {
+        const clasificacion = clasificaciones.get(fila.id);
+        if (clasificacion) Object.assign(fila, { medioPagoDetalle: etiquetaMedioMp(clasificacion) });
+      }
     }
     return Object.assign(box, { resumenCaja: resumenConComisiones(box as BoxList, config.tasas, evidencia) });
   }

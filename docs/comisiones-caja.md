@@ -22,6 +22,11 @@ bank_transfer se clasifica como transferencia. Los datos ausentes o tipos no
 reconocidos quedan pendientes. Las transferencias manuales no llevan comisión MP.
 Los cobros históricos sin tipo informado también quedan pendientes.
 
+La respuesta de la planilla agrega medioPagoDetalle a cada movimiento, abono y cobro
+de inquilino respaldado por esa evidencia. La vista y las filas del PDF muestran,
+por ejemplo, «QR · crédito» o «Alias MP · crédito», sin modificar el método contable.
+Las transferencias manuales no reciben estas etiquetas.
+
 El resumen de caja y su PDF muestran bruto, comisión estimada y neto estimado.
 La comisión se redondea por ingreso a centavos. Los egresos se restan completos,
 sin presumir reintegros de comisión. No se duplica una imputación de cuenta corriente.
