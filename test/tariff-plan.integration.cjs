@@ -50,7 +50,11 @@ before(async () => {
   ds = new DataSource({ type: 'postgres', host: '127.0.0.1', port, username: 'postgres', database: 'postgres', entities: [path.resolve('dist/**/*.entity.js')], synchronize: true });
   await ds.initialize();
   const runner = ds.createQueryRunner();
-  try { await new (load('database/migrations/1790000001000-tenant-isolation', 'TenantIsolation1790000001000'))().up(runner); }
+  try {
+    await new (load('database/migrations/1790000001000-tenant-isolation', 'TenantIsolation1790000001000'))().up(runner);
+    // Aplicar tarifas deja su rastro en audit_log, que el rol de las rutas solo puede escribir con esto.
+    await new (load('database/migrations/1790000008000-audit-permisos', 'AuditPermisos1790000008000'))().up(runner);
+  }
   finally { await runner.release(); }
   installTenantConnections(ds);
   const repo = entity => ds.getRepository(entity);
@@ -130,6 +134,20 @@ test('aplicar conserva ids, snapshots antiguos, modo DERIVED y opciones ajenas a
   const next = await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'NEW001' });
   assert.equal(next.pricingSnapshot.schedule.dayEndHour, 18);
   assert.equal(next.pricingSnapshot.brackets[0].price, 2700);
+  // La Actividad de la empresa cuenta qué cambió, quién y en qué playa; no lo que el servicio ignora.
+  const [registro] = await ds.query(`SELECT detalle, "usuarioId", "playaId" FROM audit_log WHERE accion = 'TARIFAS_APLICADAS' ORDER BY fecha DESC LIMIT 1`);
+  assert.equal(registro.usuarioId, a.userId);
+  assert.equal(registro.playaId, a.playaId);
+  assert.deepEqual(registro.detalle['franjas.«Auto · Hora».price'], { de: 1000, a: 2700 });
+  assert.equal(registro.detalle.dayEndHour.a, 18);
+  assert.ok(!Object.keys(registro.detalle).some(clave => clave.startsWith('pricingOptions.stay')));
+}));
+
+test('aplicar sin cambios no deja una fila en la Actividad', async () => scoped(a, async () => {
+  const contar = async () => (await ds.query(`SELECT count(*)::int AS n FROM audit_log WHERE accion = 'TARIFAS_APLICADAS'`))[0].n;
+  const antes = await contar();
+  await plans.updatePlan(requestFor(await plans.getPlan()));
+  assert.equal(await contar(), antes);
 }));
 
 test('una revisión vieja o dos guardados simultáneos nunca pisan cambios', async () => scoped(a, async () => {

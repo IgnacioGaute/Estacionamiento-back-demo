@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { DataSource, EntityManager } from 'typeorm';
 import dayjs from 'dayjs';
@@ -10,6 +10,9 @@ import { PricingBracket, PricingSchedule, PricingSnapshot } from './pricing/pric
 import { validateBracket } from './pricing/pricing';
 import { assertPricingCoverage, calculateStayPrice, validatePricingOptions } from './pricing/stay-pricing';
 import { TicketsService } from './tickets.service';
+import { cambiosDeTarifas } from './tariff-plan-cambios';
+import { AuditLog } from 'src/tenancy/entities/audit-log.entity';
+import { tenantContext } from 'src/tenancy/tenant-context';
 
 export interface TariffPlan {
   revision: string;
@@ -28,6 +31,8 @@ const bracketScope = (row: { vehicleType: string; ticketDayType?: string | null;
 
 @Injectable()
 export class TariffPlanService {
+  private readonly logger = new Logger(TariffPlanService.name);
+
   constructor(private readonly dataSource: DataSource, private readonly tickets: TicketsService) {}
 
   private scheduleFields(schedule: PricingSchedule): PricingSchedule {
@@ -102,8 +107,8 @@ export class TariffPlanService {
     return { schedule, brackets };
   }
 
-  updatePlan(dto: UpdateTariffPlanDto): Promise<TariffPlan> {
-    return this.dataSource.transaction(async manager => {
+  async updatePlan(dto: UpdateTariffPlanDto): Promise<TariffPlan> {
+    const { aplicado, cambios } = await this.dataSource.transaction(async manager => {
       // Es el mismo bloqueo que usa el ingreso al congelar sus precios y la edición anterior.
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
       const { plan: current, rows, vehicles } = await this.read(manager);
@@ -123,8 +128,33 @@ export class TariffPlanService {
       const [stored] = await scheduleRepo.find({ order: { updatedAt: 'DESC' }, take: 1 });
       // Sólo se escriben campos tarifarios; recibos, tarjetas y turnos conservan su estado.
       await scheduleRepo.save(scheduleRepo.create({ ...stored, ...plan.schedule }));
-      return (await this.read(manager)).plan;
+      const aplicado = (await this.read(manager)).plan;
+      return { aplicado, cambios: cambiosDeTarifas(current, aplicado, vehicles) };
     });
+    await this.registrarCambios(cambios);
+    return aplicado;
+  }
+
+  // El historial de la empresa se escribe acá y no en AuditInterceptor: el plan se aplica entero,
+  // y solo dentro de la transacción están el antes y el después. Se guarda después de confirmar y
+  // nunca hace fallar el guardado, como el resto de la auditoría: las tarifas ya están aplicadas, y
+  // perderlas sería peor que perder su rastro. Aplicar sin cambios no deja fila.
+  private async registrarCambios(detalle: Record<string, unknown>) {
+    const scope = tenantContext.getStore();
+    if (!scope?.empresaId || !Object.keys(detalle).length) return;
+    try {
+      await this.dataSource.getRepository(AuditLog).insert({
+        empresaId: scope.empresaId,
+        playaId: scope.playaId ?? null,
+        usuarioId: scope.userId ?? null,
+        accion: 'TARIFAS_APLICADAS',
+        entidad: 'tarifas',
+        entidadId: null,
+        detalle,
+      });
+    } catch (error) {
+      this.logger.warn(`No se pudo registrar la auditoría TARIFAS_APLICADAS: ${error instanceof Error ? error.message : error}`);
+    }
   }
 
   simulate(dto: SimulateTariffPlanDto) {

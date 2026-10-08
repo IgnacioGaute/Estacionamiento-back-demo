@@ -39,19 +39,29 @@ export class AuditInterceptor implements NestInterceptor {
     // El estado anterior se lee ANTES de que el handler lo pise. Si falla, se sigue igual: se
     // registra el cambio sin el «de», que es mejor que no registrar nada.
     const previo = regla.previo
-      ? await this.leerPrevio(regla, req, scope.playaId).catch(() => null)
+      ? await this.leerPrevio(regla, req, scope).catch(() => null)
       : null;
 
     return next.handle().pipe(
       // Solo el camino feliz: si el handler rechaza, no hubo cambio que registrar.
       tap((respuesta) => {
-        const detalle = this.diferencias(regla, req.body, previo);
+        if (regla.registrarSi && !regla.registrarSi(respuesta)) return;
+        const detalle = {
+          ...this.diferencias(regla, req.body, previo),
+          ...this.deLaRespuesta(regla, respuesta),
+        };
+        // El cuerpo ya pasó por el DTO (un uuid) y el servicio comprobó que la playa es de la
+        // empresa: si no, el handler habría fallado y no estaríamos acá.
+        const playaDelCuerpo = regla.playa ? req.body?.[regla.playa] : null;
 
         this.ds
           .getRepository(AuditLog)
           .insert({
             empresaId: scope.empresaId,
-            playaId: scope.playaId ?? null,
+            playaId:
+              typeof playaDelCuerpo === 'string'
+                ? playaDelCuerpo
+                : (scope.playaId ?? null),
             usuarioId: scope.userId ?? null,
             accion: regla.accion,
             entidad: regla.entidad,
@@ -80,14 +90,44 @@ export class AuditInterceptor implements NestInterceptor {
   private async leerPrevio(
     regla: AuditRule,
     req: any,
-    playaId?: string,
+    scope: { empresaId?: string; playaId?: string },
   ): Promise<Record<string, unknown> | null> {
-    const tabla = `"${regla.previo!.tabla.replace(/"/g, '')}"`;
+    const fila = await this.filaPrevia(regla, req, scope);
+    if (!fila) return null;
+    const { dentroDe, columnas } = regla.previo!;
+    // Una columna jsonb todavía vacía (comisiones nunca configuradas) es un estado anterior sin
+    // valores, no la falta de estado: así cada campo queda como «de nada a X».
+    const base: Record<string, unknown> = dentroDe
+      ? ((fila[dentroDe] as Record<string, unknown> | null) ?? {})
+      : fila;
+    if (!columnas) return base;
+    const traducida = { ...base };
+    for (const [campo, columna] of Object.entries(columnas))
+      traducida[campo] = fila[columna];
+    return traducida;
+  }
+
+  private async filaPrevia(
+    regla: AuditRule,
+    req: any,
+    scope: { empresaId?: string; playaId?: string },
+  ): Promise<Record<string, unknown> | null> {
+    const limpio = (nombre: string) => `"${nombre.replace(/"/g, '')}"`;
+    const tabla = limpio(regla.previo!.tabla);
     if (regla.previo!.por === 'playa') {
-      if (!playaId) return null;
+      if (!scope.playaId) return null;
       const [fila] = await this.ds.query(
         `SELECT * FROM ${tabla} WHERE "playaId" = $1 LIMIT 1`,
-        [playaId],
+        [scope.playaId],
+      );
+      return fila ?? null;
+    }
+    if (regla.previo!.por === 'empresa') {
+      if (!scope.empresaId) return null;
+      const columna = limpio(regla.previo!.columnaEmpresa ?? 'empresaId');
+      const [fila] = await this.ds.query(
+        `SELECT * FROM ${tabla} WHERE ${columna} = $1 LIMIT 1`,
+        [scope.empresaId],
       );
       return fila ?? null;
     }
@@ -98,6 +138,23 @@ export class AuditInterceptor implements NestInterceptor {
       [id],
     );
     return fila ?? null;
+  }
+
+  // Solo valores simples: lo que se copia de una respuesta es un dato para leer (un nombre de
+  // cuenta), nunca un objeto que pueda arrastrar más de lo que se quiso guardar.
+  private deLaRespuesta(
+    regla: AuditRule,
+    respuesta: unknown,
+  ): Record<string, unknown> {
+    const salida: Record<string, unknown> = {};
+    if (!regla.respuesta || !respuesta || typeof respuesta !== 'object')
+      return salida;
+    for (const campo of regla.respuesta) {
+      const valor = (respuesta as Record<string, unknown>)[campo];
+      if (['string', 'number', 'boolean'].includes(typeof valor))
+        salida[campo] = valor;
+    }
+    return salida;
   }
 
   // Qué cambió realmente. El panel manda la sección entera en cada guardado, así que sin comparar
@@ -144,7 +201,9 @@ export class AuditInterceptor implements NestInterceptor {
       hojas(previo[campo], campo, viejas);
       for (const [ruta, valor] of nuevas) {
         const antes = viejas.get(ruta);
-        if (JSON.stringify(valor) !== JSON.stringify(antes))
+        // Ausente y nulo son lo mismo: una comisión que nunca se cargó y una que se deja «de
+        // referencia» (null) no son un cambio.
+        if (JSON.stringify(valor ?? null) !== JSON.stringify(antes ?? null))
           salida[ruta] = { de: antes ?? null, a: valor };
       }
     }

@@ -2,24 +2,59 @@
 // handler resuelto por Nest (igual que endpoint-policy.ts: la URL no se usa, porque Express
 // acepta mayúsculas y barras de más).
 //
-// Criterio de qué entra: los cambios de CONFIGURACIÓN y de cuentas — precios, franjas, tipos de
-// vehículo, horarios, comprobantes, usuarios, clientes, cocheras. La operación del día (entradas,
-// salidas, cobros, apertura y cierre de turno) NO entra: ya está en `movimientos`, `turnos` y las
+// Criterio de qué entra: todo lo que hace la ADMINISTRACIÓN — precios, franjas, tipos de
+// vehículo, horarios, comprobantes, usuarios, clientes, cocheras, cajas, la cuenta de MercadoPago
+// (conexión, condiciones, alias, cajas QR, comisiones) y las correcciones a mano de las cuentas de
+// inquilinos y los recibos. La operación del día (entradas, salidas, cobros, pagos, apertura y
+// cierre de turno) NO entra: ya está en `movimientos`, `turnos`, `cuenta_movimientos` y las
 // estadías, y acá solo haría ruido sobre lo que importa, que es quién cambió las reglas.
 //
+// Lo que no pasa por un handler propio se registra en su servicio: las tarifas (se aplican como un
+// plan entero y solo el servicio sabe qué cambió) y la plataforma (TenancyController, suscripciones).
+//
 // `entidad` es el sustantivo que se muestra; `campos` son los datos del cuerpo que se guardan como
-// detalle. Un campo que no esté acá no se guarda: así no entra una contraseña por descuido.
+// detalle. Un campo que no esté acá no se guarda: así no entra una contraseña ni un token por
+// descuido.
 export type AuditRule = {
   accion: string;
   entidad: string;
   campos?: readonly string[];
+  // Datos que se toman de la RESPUESTA del handler y no del cuerpo: lo que resolvió el servidor
+  // (con qué cuenta de MercadoPago quedó conectada la empresa). El cuerpo de esa conexión es un
+  // código de autorización y no se guarda.
+  respuesta?: readonly string[];
   // De dónde leer el estado ANTERIOR para guardar solo lo que cambió. Sin esto, el panel envía
   // la sección entera y el historial diría «cambió la configuración» listando los veinte campos
   // en vez de «desactivó los turnos».
   //
-  // `por`: 'id' usa el parámetro de la ruta; 'playa' la fila única de la playa del scope.
-  previo?: { tabla: string; por: 'id' | 'playa' };
+  // `por`: 'id' usa el parámetro de la ruta; 'playa' la fila única de la playa del scope;
+  // 'empresa' la fila única de la empresa del scope, por `columnaEmpresa` ("empresaId" si no se
+  // dice). `dentroDe`: los campos viven en esa columna jsonb y no en columnas propias.
+  // `columnas`: campo del cuerpo → columna de la tabla, cuando se llaman distinto.
+  previo?: {
+    tabla: string;
+    por: 'id' | 'playa' | 'empresa';
+    columnaEmpresa?: string;
+    dentroDe?: string;
+    columnas?: Record<string, string>;
+  };
+  // Campo del cuerpo con la playa afectada, cuando no es la del scope: las cajas QR se crean para
+  // cualquier playa desde la configuración de la empresa.
+  playa?: string;
+  // Hay handlers que responden bien sin haber cambiado nada (la caja QR cuya localidad no se
+  // reconoció): solo se registra si esto da true.
+  registrarSi?: (respuesta: any) => boolean;
 };
+
+// Las seis comisiones estimadas de MercadoPago (`ComisionesCajaDto`).
+const COMISIONES = [
+  'qrSaldo',
+  'qrDebito',
+  'qrCredito',
+  'aliasSaldo',
+  'aliasDebito',
+  'aliasCredito',
+] as const;
 
 export const AUDIT_RULES: Record<string, Record<string, AuditRule>> = {
   TicketsController: {
@@ -175,6 +210,120 @@ export const AUDIT_RULES: Record<string, Record<string, AuditRule>> = {
     removeRenterParkingType: {
       accion: 'INQUILINO_TIPO_ELIMINADO',
       entidad: 'tipo de alquiler',
+    },
+  },
+  MercadoPagoController: {
+    // La conexión se completa en el canje del código (`callback`); `conectar` solo arma la URL de
+    // autorización y todavía no cambió nada.
+    callback: {
+      accion: 'MERCADOPAGO_CONECTADO',
+      entidad: 'cuenta de MercadoPago',
+      respuesta: ['nickname'],
+    },
+    aceptarCondiciones: {
+      accion: 'MERCADOPAGO_CONDICIONES',
+      entidad: 'condiciones de MercadoPago',
+      campos: ['condiciones'],
+    },
+    desconectar: {
+      accion: 'MERCADOPAGO_DESCONECTADO',
+      entidad: 'cuenta de MercadoPago',
+    },
+    configurarVerificacionAlias: {
+      accion: 'ALIAS_CONFIGURADO',
+      entidad: 'verificación de transferencias al alias',
+      previo: {
+        tabla: 'mercadopago_cuentas',
+        por: 'empresa',
+        columnas: { activa: 'verificacionAlias' },
+      },
+      campos: ['activa', 'alias'],
+    },
+    crearCajaQr: {
+      accion: 'QR_CAJA_CREADA',
+      entidad: 'caja QR de MercadoPago',
+      playa: 'playaId',
+      campos: ['calle', 'numero', 'ciudad', 'provincia'],
+    },
+    crearCajaQrConUbicacion: {
+      accion: 'QR_CAJA_CREADA',
+      entidad: 'caja QR de MercadoPago',
+      playa: 'playaId',
+      registrarSi: (respuesta) => respuesta?.creada !== false,
+    },
+  },
+  PruebaTransferenciasController: {
+    // Crea la configuración del reporte de liquidaciones en la cuenta de MercadoPago de la empresa.
+    configurarReporte: {
+      accion: 'MERCADOPAGO_REPORTE',
+      entidad: 'reporte de MercadoPago',
+      registrarSi: (respuesta) => respuesta?.creada !== false,
+    },
+  },
+  BoxListsController: {
+    configurarComisiones: {
+      accion: 'COMISIONES_CAMBIADAS',
+      entidad: 'comisiones de MercadoPago',
+      previo: {
+        tabla: 'empresas',
+        por: 'empresa',
+        columnaEmpresa: 'id',
+        dentroDe: 'comisionesMp',
+      },
+      campos: COMISIONES,
+    },
+  },
+  TurnosController: {
+    createCaja: {
+      accion: 'CAJA_CREADA',
+      entidad: 'caja',
+      campos: ['nombre', 'activa'],
+    },
+    updateCaja: {
+      accion: 'CAJA_EDITADA',
+      entidad: 'caja',
+      previo: { tabla: 'cash_registers', por: 'id' },
+      campos: ['nombre', 'activa'],
+    },
+  },
+  // Cuenta corriente de inquilinos: las correcciones que hace el administrador. Los pagos y las
+  // devoluciones son cobros del mostrador y quedan solo en el libro de la cuenta.
+  CuentasController: {
+    registrarSaldoInicial: {
+      accion: 'CUENTA_SALDO_INICIAL',
+      entidad: 'cuenta de inquilino',
+      campos: ['tipo', 'importe', 'fecha'],
+    },
+    registrarAjuste: {
+      accion: 'CUENTA_AJUSTE',
+      entidad: 'cuenta de inquilino',
+      campos: ['tipo', 'importe', 'motivo'],
+    },
+    anular: {
+      accion: 'CUENTA_ANULACION',
+      entidad: 'cuenta de inquilino',
+      campos: ['motivo', 'confirmacion'],
+    },
+    cargarAbonos: {
+      accion: 'ABONOS_CARGADOS',
+      entidad: 'abonos del mes',
+      campos: ['mes', 'vencimientoDia'],
+    },
+  },
+  // Recibos de abonados particulares. Cobrar uno (`updateByOwner`) es operación y no entra.
+  ReceiptsController: {
+    generateReceiptsManual: {
+      accion: 'RECIBOS_GENERADOS',
+      entidad: 'recibos del mes',
+      campos: ['dateNow'],
+    },
+    cancelReceiptByOwner: {
+      accion: 'RECIBO_ANULADO',
+      entidad: 'recibo',
+    },
+    deleteReceipt: {
+      accion: 'RECIBO_ELIMINADO',
+      entidad: 'recibo',
     },
   },
 };
