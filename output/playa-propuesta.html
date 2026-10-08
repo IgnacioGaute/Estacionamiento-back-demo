@@ -1,0 +1,121 @@
+<div id="playa-propuesta">
+<style>
+#playa-propuesta{--p-bg:#12110e;--p-panel:#1d1b16;--p-line:#363127;--p-text:#f5f1e8;--p-muted:#aaa395;--p-accent:#f5c900;font-family:Inter,system-ui,sans-serif;color:var(--p-text);max-width:410px;margin:auto}#playa-propuesta *{box-sizing:border-box}#playa-propuesta button,#playa-propuesta input{font:inherit}#playa-propuesta button{cursor:pointer;color:inherit}#playa-propuesta .phone{background:var(--p-bg);border:1px solid var(--p-line);border-radius:30px;overflow:hidden;padding:22px 20px 16px}#playa-propuesta .chrome{display:flex;justify-content:space-between;align-items:center;margin-bottom:26px}#playa-propuesta .brand{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600}#playa-propuesta .mark{display:grid;place-items:center;width:34px;height:34px;border-radius:11px;background:var(--p-accent);color:#262718;font-size:22px}#playa-propuesta .avatar{border:1px solid #4a4e3e;border-radius:50%;background:#30352a;width:36px;height:36px;font-size:12px}#playa-propuesta .muted{color:var(--p-muted);font-size:12px}#playa-propuesta h1{font-size:27px;letter-spacing:-1px;margin:5px 0 20px;font-weight:600;line-height:1.2}#playa-propuesta h2{font-size:15px;margin:0;font-weight:600}#playa-propuesta .row{display:flex;align-items:center;justify-content:space-between;gap:10px}#playa-propuesta .hero{background:#e4e9d5;color:#242d24;padding:20px;border-radius:24px;position:relative}#playa-propuesta .hero-top{font-size:13px;font-weight:500}#playa-propuesta .status{font-size:11px;white-space:nowrap;color:#456345}#playa-propuesta .count{font-size:66px;line-height:1.1;letter-spacing:-4px;font-weight:600;margin-top:8px}#playa-propuesta .count-label{font-size:13px;color:#52604f}#playa-propuesta .hero-go{background:#28372b;color:#f2f5e9;border:0;border-radius:50%;width:46px;height:46px;display:grid;place-items:center}#playa-propuesta .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;border-top:1px solid #bbc6af;margin-top:17px;padding-top:14px}#playa-propuesta .stats strong{display:block;font-size:19px;font-weight:600}#playa-propuesta .stats span{font-size:11px;color:#52604f}#playa-propuesta .alert{display:flex;align-items:center;gap:9px;width:100%;background:#34271f;color:#efb88c;border:0;border-radius:13px;margin:10px 0 16px;padding:12px;font-size:12px;text-align:left}#playa-propuesta .actions{display:grid;grid-template-columns:1fr 1.5fr;gap:8px;margin-bottom:17px}#playa-propuesta .outline{background:var(--p-panel);border:1px solid var(--p-line);border-radius:12px;min-height:42px;display:flex;align-items:center;justify-content:center;gap:7px;font-size:12px}#playa-propuesta .history{width:100%;padding:12px 0;border:0;border-top:1px solid var(--p-line);border-bottom:1px solid var(--p-line);background:transparent;display:flex;align-items:center;gap:10px;text-align:left;margin:0 0 22px}#playa-propuesta .history-icon{background:#303629;border-radius:12px;padding:10px;color:#d2dcbd;display:flex}#playa-propuesta .history-text{flex:1;font-size:13px}#playa-propuesta .history-text small{display:block;margin-top:4px;color:var(--p-muted);font-size:11px}#playa-propuesta .entries{margin-top:12px;display:grid;gap:8px}#playa-propuesta .entry{background:var(--p-panel);border:1px solid #30332a;border-radius:14px;padding:13px 11px;display:flex;align-items:center;gap:12px;font-size:13px}#playa-propuesta .plate{background:#f2f1e8;border-top:4px solid #426080;color:#252823;border-radius:4px;padding:3px 6px;font:600 12px monospace;letter-spacing:.3px;white-space:nowrap}#playa-propuesta .entry small{display:block;color:var(--p-muted);font-size:11px;margin-top:3px}#playa-propuesta .entry .detail{flex:1}#playa-propuesta .text-button{border:0;background:transparent;color:var(--p-accent);font-size:12px;min-height:40px;padding:8px}#playa-propuesta .all{width:100%;margin-top:6px}#playa-propuesta .dock{display:grid;grid-template-columns:1fr 65px 1fr;align-items:center;gap:8px;background:#24271f;border:1px solid #393d30;border-radius:23px;padding:8px;margin-top:18px}#playa-propuesta .dock button{border:0;border-radius:16px;min-height:52px;display:flex;align-items:center;justify-content:center;gap:7px;background:#383b30;font-size:12px;font-weight:600;text-align:center}#playa-propuesta .dock .entry-action{background:var(--p-accent);color:#262618}#playa-propuesta .dock small{display:block;font-size:10px;font-weight:400;text-align:center;margin-top:2px}#playa-propuesta .dock .scan{background:transparent;flex-direction:column;gap:3px;font-size:9px;color:var(--p-accent)}#playa-propuesta .scan i{width:25px;height:25px}#playa-propuesta .back{background:transparent;border:0;padding:0;min-height:38px;display:flex;align-items:center;gap:7px;font-size:12px;color:var(--p-muted);margin-bottom:12px}#playa-propuesta input{width:100%;background:var(--p-panel);border:1px solid var(--p-line);color:var(--p-text);border-radius:12px;padding:12px;font-size:14px;min-width:0}#playa-propuesta .filters{display:flex;gap:6px;margin:12px 0 22px;flex-wrap:wrap}#playa-propuesta .filters button{border:1px solid var(--p-line);background:var(--p-panel);border-radius:20px;padding:9px 12px;font-size:11px}#playa-propuesta .filters button[aria-pressed=true]{background:#e4e9d5;color:#242d24}#playa-propuesta .date{margin:14px 0;display:flex;gap:8px;align-items:center}#playa-propuesta .receipt{padding:16px;background:var(--p-panel);border:1px solid var(--p-line);border-radius:16px;margin-top:10px}#playa-propuesta .receipt-meta{display:flex;justify-content:space-between;gap:8px;margin:13px 0;color:var(--p-muted);font-size:12px}#playa-propuesta .receipt-buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px}#playa-propuesta .receipt-buttons button{background:#303629;border:0;border-radius:9px;min-height:38px;font-size:12px;color:#e0e7d4}#playa-propuesta .receipt-buttons button:disabled{opacity:.4;cursor:default}#playa-propuesta .empty{font-size:13px;color:var(--p-muted);padding:25px 0}#playa-propuesta .sheet{margin-top:16px;background:#e4e9d5;color:#242d24;border-radius:20px;padding:22px}#playa-propuesta .sheet p{font-size:13px;line-height:1.6}#playa-propuesta .sheet .outline{color:#242d24;background:#d1dac4;border:1px solid #bac6ab;width:100%}#playa-propuesta [hidden]{display:none!important}#playa-propuesta svg{width:17px;height:17px;flex-shrink:0}#playa-propuesta button:focus-visible,#playa-propuesta input:focus-visible{outline:2px solid var(--p-accent);outline-offset:3px}@media(max-width:350px){#playa-propuesta .phone{padding:18px 13px}#playa-propuesta .hero{padding:16px}#playa-propuesta .dock{gap:4px}}@media(prefers-reduced-motion:reduce){#playa-propuesta *{animation:none!important}}
+
+#playa-propuesta .phone{border-radius:22px;padding:20px 18px 16px}
+#playa-propuesta .chrome{margin-bottom:24px}
+#playa-propuesta .brand .muted{color:#25ba8b;font-size:10px;letter-spacing:1px}
+#playa-propuesta .avatar{background:#ec501c;color:white;border:0}
+#playa-propuesta h1{font-size:25px;letter-spacing:-.8px;margin-bottom:18px}
+#playa-propuesta .hero{background:#1d1b16;color:#f5f1e8;border:1px solid #373125;border-radius:20px;padding:17px 18px 0;overflow:hidden}
+#playa-propuesta .hero-top{color:#b8b0a0;font-size:12px}
+#playa-propuesta .status{color:#2cc798;background:#173027;border-radius:20px;padding:6px 8px;font-size:10px}
+#playa-propuesta .count{font-size:58px;letter-spacing:-2.5px;margin-top:12px;line-height:1}
+#playa-propuesta .count-label{color:#b8b0a0;font-size:12px;margin:7px 0 17px}
+#playa-propuesta .hero-go{background:transparent;color:#f5c900;border:0;border-radius:0;width:auto;height:44px;display:flex;gap:5px;font-size:11px;align-self:center;padding:0}
+#playa-propuesta .stats{margin:0 -18px;padding:13px 18px 15px;border-top:1px solid #373125;background:#171510;gap:12px}
+#playa-propuesta .stats strong{font-size:18px;color:#f5f1e8}
+#playa-propuesta .stats span{font-size:10px;color:#aaa395;white-space:nowrap}
+#playa-propuesta .alert{background:#2b1d13;color:#f28a47;border:1px solid #49301b;border-radius:12px;margin:9px 0 13px;padding:10px 11px;font-size:11px}
+#playa-propuesta .alert span{flex:1}
+#playa-propuesta .actions{margin-bottom:12px;gap:8px}
+#playa-propuesta .outline{background:#211e18;border-color:#40392d;border-radius:12px;font-size:11px}
+#playa-propuesta .history{border:1px solid #373125;background:#191712;border-radius:12px;padding:10px 12px;margin-bottom:22px;gap:10px}
+#playa-propuesta .history-icon{color:#f5c900;background:transparent;padding:0}
+#playa-propuesta .history-text{font-size:12px}
+#playa-propuesta .history-text small{font-size:10px;margin-top:3px}
+#playa-propuesta .history>svg{color:#aaa395}
+#playa-propuesta .entry{background:#1d1b16;border-color:#302b22}
+#playa-propuesta .dock{background:#211e18;border-color:#383126;border-radius:26px;gap:5px;padding:7px;margin-top:24px;grid-template-columns:1fr 70px 1fr}
+#playa-propuesta .dock button{background:#302b23;border-radius:19px;min-height:48px;gap:7px}
+#playa-propuesta .dock button>span{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+#playa-propuesta .dock .entry-action{background:#f5c900;color:#211b08}
+#playa-propuesta .dock .scan{position:relative;overflow:visible;margin-top:-28px;background:transparent;color:#f5c900;gap:7px}
+#playa-propuesta .dock .scan svg{background:#f5c900;color:#211b08;width:57px;height:57px;padding:14px;border-radius:50%;border:4px solid #12110e}
+#playa-propuesta .filters button[aria-pressed=true]{background:#f5f1e8;color:#221e16}
+#playa-propuesta .receipt-buttons button{background:#302a1d;color:#f5c900}
+#playa-propuesta .sheet{background:#211e18;color:#f5f1e8}
+#playa-propuesta .sheet .outline{background:#302a1d;color:#f5c900;border-color:#40392d}
+#playa-propuesta .phone{border-radius:0;position:relative;padding-top:18px}
+#playa-propuesta .phone:before{content:"";position:absolute;inset:0 0 auto;height:4px;background:repeating-linear-gradient(135deg,#f5c900 0 8px,#12110e 8px 16px)}
+#playa-propuesta .chrome{margin-bottom:20px}
+#playa-propuesta .brand>span{display:flex;flex-direction:column-reverse;gap:3px}
+#playa-propuesta .hero{background:transparent;border:0;border-radius:0;padding:0;overflow:visible}
+#playa-propuesta .occupancy{display:flex;align-items:center;gap:13px;padding:12px 0 17px}
+#playa-propuesta .occupancy>svg{width:35px;height:35px;color:#f5c900}
+#playa-propuesta .count{font-size:58px;margin:0;letter-spacing:-2px}
+#playa-propuesta .count-label{font-size:12px;margin:0 0 7px;color:#c7c0b2}
+#playa-propuesta .status{background:transparent;padding:0;font-size:11px;color:#27c193}
+#playa-propuesta .stats{margin:0;padding:17px 0 13px;background:transparent;border-top:1px solid #40392d;gap:0}
+#playa-propuesta .stats>div{padding-left:17px;border-left:1px solid #40392d}
+#playa-propuesta .stats>div:first-child{padding-left:0;border-left:0}
+#playa-propuesta .stats strong{font-size:25px;margin-bottom:4px}
+#playa-propuesta .stats span{font-size:11px}
+#playa-propuesta .actions{margin:0 0 8px}
+#playa-propuesta .actions .outline{min-height:44px;font-size:12px;background:#1c1914;border-color:#4a4132;transition:background .18s,border-color .18s,transform .18s}
+#playa-propuesta .actions .outline:hover{background:#2a2418;border-color:#9b8129}
+#playa-propuesta .actions .outline:active{transform:scale(.97)}
+#playa-propuesta .alert{border:0;border-radius:16px;color:#ee6b2f;background:#342014;font-size:11px;min-height:42px;margin:0 0 8px}
+#playa-propuesta .last-exit{display:flex;align-items:center;gap:7px;font-size:10px;color:#aaa395;margin-bottom:6px}
+#playa-propuesta .last-exit>svg{color:#24bb87;background:#173026;box-sizing:content-box;padding:6px;border-radius:50%;width:13px;height:13px}
+#playa-propuesta .last-exit>span{flex:1}
+#playa-propuesta .last-exit .text-button{font-size:10px;padding:4px;min-height:38px}
+#playa-propuesta .history{background:transparent;border:0;border-radius:0;padding:0;min-height:40px;margin:0 0 15px}
+#playa-propuesta .history-text{font-size:11px}
+#playa-propuesta .all{border:1px solid #373125;border-radius:22px;color:#d8d1c3}
+#playa-propuesta #p-content{position:relative;isolation:isolate}
+#playa-propuesta [data-page]{background:#12110e}
+@media(prefers-reduced-motion:reduce){#playa-propuesta .actions .outline{transition:none}}
+</style>
+<div class="phone" aria-label="Propuesta de la playa">
+ <header class="chrome"><div class="brand"><span>Playa Mitre 1543<span class="muted">● OPERATIVO</span></span></div><button class="avatar" aria-label="Perfil de Andrés">AG</button></header>
+ <main id="p-content">
+ <section data-page="home"><div class="muted">Buenas tardes, Andrés</div><h1>Entradas y salidas</h1>
+ <div class="actions"><button class="outline" data-modal="Tarifas"><i data-lucide="receipt-text"></i>Tarifas</button><button class="outline" data-modal="Administrar tarifas"><i data-lucide="sliders-horizontal"></i>Administrar tarifas</button></div>
+ <div class="hero"><div class="occupancy"><i data-lucide="car-front"></i><div class="count">100</div><div><div class="count-label">vehículos en la playa</div><span class="status">● Turno abierto</span></div></div><div class="stats"><div><strong>18</strong><span>Menos de 1 h</span></div><div><strong>41</strong><span>De 1 a 4 h</span></div><div><strong>41</strong><span>Más de 4 h</span></div></div></div>
+ <button class="alert" data-overdue><i data-lucide="clock-3"></i><span>6 superaron el tiempo avisado</span><i data-lucide="chevron-right"></i></button>
+ <div class="last-exit"><i data-lucide="arrow-up-right"></i><span>Última salida <strong>A232NT0</strong> · 17:17</span><button class="text-button" data-receipt="A232NT0" data-kind="Salida">Comprobante</button></div>
+ <button class="history" data-go="history"><span class="history-icon"><i data-lucide="history"></i></span><span class="history-text">Historial de comprobantes</span><i data-lucide="chevron-right"></i></button>
+ <div class="row"><h2>Últimas entradas</h2><i data-lucide="search"></i></div><div class="entries"><div class="entry"><span class="plate">AC771ZZ</span><div class="detail"><strong>8 min</strong><small>Entró 12:15 · Auto</small></div><i data-lucide="chevron-right"></i></div><div class="entry"><span class="plate">A232NT0</span><div class="detail"><strong>24 min</strong><small>Entró 11:59 · Camioneta</small></div><i data-lucide="chevron-right"></i></div></div><button class="text-button all" data-go="vehicles">Ver los 100 vehículos →</button>
+ </section>
+ <section data-page="vehicles" hidden><button class="back" data-go="home"><i data-lucide="arrow-left"></i>Volver a la playa</button><div class="muted">Vehículos estacionados</div><h1>En la playa <span class="muted">100</span></h1><input id="p-vehicle-search" aria-label="Buscar vehículo" placeholder="Buscar patente o apellido"><div class="filters" id="p-vehicle-filters"><button data-filter="all" aria-pressed="true">Todos</button><button data-filter="late" aria-pressed="false">Se pasaron · 6</button><button data-filter="recent" aria-pressed="false">Más recientes</button></div><div id="p-vehicles"></div></section>
+ <section data-page="history" hidden><button class="back" data-go="home"><i data-lucide="arrow-left"></i>Volver a la playa</button><div class="muted">Todo queda guardado</div><h1>Comprobantes</h1><input id="p-receipt-search" aria-label="Buscar comprobante por patente o apellido" placeholder="Buscar patente o apellido"><div class="date"><input id="p-date" aria-label="Fecha de los comprobantes" type="date" value="2026-10-07"><button class="text-button" id="p-today">Hoy</button></div><div class="filters" id="p-receipt-filters"><button data-filter="all" aria-pressed="true">Todos</button><button data-filter="active" aria-pressed="false">En la playa</button><button data-filter="closed" aria-pressed="false">Finalizados</button></div><div class="row"><h2 id="p-history-title">Hoy</h2><span class="muted" id="p-history-count"></span></div><div id="p-receipts"></div></section>
+ <section data-page="detail" hidden><button class="back" data-go="history"><i data-lucide="arrow-left"></i>Volver al historial</button><h1 id="p-detail-title">Comprobante</h1><div class="sheet"><div class="muted" style="color:#52604f">PLAYA MITRE 1543</div><h2 id="p-detail-plate" style="font-size:28px;margin-top:18px"></h2><p id="p-detail-copy"></p><button class="outline" data-go="history">Volver a los comprobantes</button></div></section>
+ <section data-page="modal" hidden><button class="back" data-go="home"><i data-lucide="arrow-left"></i>Volver a la playa</button><h1 id="p-modal-title"></h1><div class="sheet"><p id="p-modal-copy"></p><button class="outline" data-go="home">Volver a la playa</button></div></section>
+ </main>
+ <nav class="dock" aria-label="Operaciones"><button class="entry-action" data-modal="Registrar entrada"><i data-lucide="car-front"></i><span>ENTRADA<small>Registrar</small></span></button><button class="scan" data-modal="Escanear patente"><i data-lucide="scan-line"></i><span>ESCANEAR</span></button><button data-modal="Cobrar salida"><span>SALIDA<small>Cobrar</small></span><i data-lucide="banknote"></i></button></nav>
+</div>
+<script>
+(()=>{const root=document.getElementById('playa-propuesta');const $=s=>root.querySelector(s);let page='home',vf='all',rf='all';const config={accent:'#f5c900',duration:320};const cars=[{plate:'A213NJU',name:'Gómez',time:'12 d 13 h',meta:'Entró 24/09 · Avisó 2 h',late:true},{plate:'OPQ512',name:'Pérez',time:'5 h 40 min',meta:'Entró 06:43 · Avisó 4 h',late:true},{plate:'AC771ZZ',name:'',time:'8 min',meta:'Entró 12:15 · Auto',late:false},{plate:'A232NT0',name:'',time:'24 min',meta:'Entró 11:59 · Camioneta',late:false},{plate:'AD965LM',name:'Medina',time:'41 min',meta:'Medina · Entró 11:42',late:false}];const receipts=[{plate:'A232NT0',name:'Gauto',entry:'10:51',exit:'17:17',amount:'$ 12.500',closed:true,date:'2026-10-07'},{plate:'AC771ZZ',name:'',entry:'12:15',exit:'',amount:'',closed:false,date:'2026-10-07'},{plate:'AF112RT',name:'Pérez',entry:'12:23',exit:'',amount:'$ 45.000',closed:false,date:'2026-10-07',long:true},{plate:'AD965LM',name:'Medina',entry:'09:10',exit:'11:42',amount:'$ 8.000',closed:true,date:'2026-10-06'}];
+function icons(){if(globalThis.lucide)lucide.createIcons({attrs:{width:17,height:17}})}
+function save(){if(window.openai?.setWidgetState)window.openai.setWidgetState({modelContent:{screen:page,proposal:'Diseño original negro y amarillo con navegación animada e historial'},privateContent:{page,vf,rf}}).catch(()=>{})}
+let transitionCleanup=null;
+function go(next,remember=true){
+ if(!root.querySelector('[data-page="'+next+'"]'))next='home';
+ if(transitionCleanup)transitionCleanup();
+ if(next===page)return;
+ const old=page,container=$('#p-content'),outgoing=root.querySelector('[data-page="'+old+'"]'),incoming=root.querySelector('[data-page="'+next+'"]');
+ const back=next==='home'||(old==='detail'&&next==='history');
+ const startHeight=outgoing.offsetHeight;
+ page=next;
+ root.querySelectorAll('[data-page]').forEach(el=>el.hidden=el!==incoming);
+ if(remember&&!matchMedia('(prefers-reduced-motion: reduce)').matches&&typeof incoming.animate==='function'){
+  const endHeight=incoming.offsetHeight;
+  outgoing.hidden=false;outgoing.inert=true;
+  Object.assign(outgoing.style,{position:'absolute',inset:'0 0 auto',width:'100%',zIndex:back?'2':'1'});
+  incoming.style.position='relative';incoming.style.zIndex=back?'1':'2';
+  container.style.overflow='hidden';container.style.height=startHeight+'px';
+  const options={duration:config.duration+60,easing:'cubic-bezier(.22,.8,.25,1)',fill:'both'};
+  const animations=[outgoing.animate([{transform:'translateX(0)',opacity:1},{transform:back?'translateX(100%)':'translateX(-24%)',opacity:back?1:.45}],options),incoming.animate([{transform:back?'translateX(-24%)':'translateX(100%)',opacity:back?.45:1},{transform:'translateX(0)',opacity:1}],options),container.animate([{height:startHeight+'px'},{height:endHeight+'px'}],options)];
+  let finished=false;const clean=()=>{if(finished)return;finished=true;outgoing.hidden=true;outgoing.inert=false;outgoing.removeAttribute('style');incoming.removeAttribute('style');container.removeAttribute('style');animations.forEach(a=>a.cancel());transitionCleanup=null;};
+  transitionCleanup=clean;Promise.all(animations.map(a=>a.finished)).then(clean).catch(()=>{});
+ }
+ if(remember)save();
+}
+function renderCars(){const q=$('#p-vehicle-search').value.toLowerCase();const data=cars.filter(c=>(c.plate+' '+c.name).toLowerCase().includes(q)&&(vf!=='late'||c.late));if(vf==='recent')data.reverse();$('#p-vehicles').innerHTML=data.length?data.map(c=>'<div class="entry" style="margin-bottom:8px"><span class="plate">'+c.plate+'</span><div class="detail"><strong style="'+(c.late?'color:#efb88c':'')+'">'+c.time+'</strong><small>'+c.meta+'</small></div></div>').join(''):'<p class="empty">No encontramos esa patente.</p>';}
+function renderReceipts(){const q=$('#p-receipt-search').value.toLowerCase();const date=$('#p-date').value;const data=receipts.filter(r=>r.date===date&&(r.plate+' '+r.name).toLowerCase().includes(q)&&(rf==='all'||(rf==='closed'?r.closed:!r.closed)));$('#p-history-count').textContent=data.length+' estadías';$('#p-history-title').textContent=date==='2026-10-07'?'Hoy':date.split('-').reverse().join('/');$('#p-receipts').innerHTML=data.length?data.map(r=>'<article class="receipt"><div class="row"><span class="plate">'+r.plate+'</span><span class="muted">'+(r.closed?'Finalizado':r.long?'Estadía larga':'En la playa')+'</span></div><div class="receipt-meta"><span>'+r.entry+' → '+(r.exit||'Sin salida')+'</span><span>'+r.amount+'</span></div><div class="receipt-buttons"><button data-receipt="'+r.plate+'" data-kind="Entrada">↙ Entrada</button><button data-receipt="'+r.plate+'" data-kind="Salida" '+(!r.closed?'disabled':'')+'>↗ Salida</button></div></article>').join(''):'<p class="empty">No hay comprobantes para esta búsqueda.</p>';}
+root.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.go)go(b.dataset.go);if(b.hasAttribute('data-overdue')){vf='late';$('#p-vehicle-filters').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.filter===vf));renderCars();go('vehicles');}if(b.dataset.filter){const vehicle=b.parentElement.id==='p-vehicle-filters';if(vehicle)vf=b.dataset.filter;else rf=b.dataset.filter;b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));vehicle?renderCars():renderReceipts();save();}if(b.id==='p-today'){$('#p-date').value='2026-10-07';renderReceipts();}if(b.dataset.receipt){const r=receipts.find(x=>x.plate===b.dataset.receipt);$('#p-detail-title').textContent='Comprobante de '+b.dataset.kind.toLowerCase();$('#p-detail-plate').textContent=r.plate;$('#p-detail-copy').textContent=(r.long?'Estadía por semana. ':'Estadía por hora. ')+(b.dataset.kind==='Entrada'?'Entrada registrada a las '+r.entry+'.':'Salida registrada a las '+r.exit+'. Total cobrado: '+r.amount+'.');go('detail');}if(b.dataset.modal){$('#p-modal-title').textContent=b.dataset.modal;$('#p-modal-copy').textContent=b.dataset.modal==='Administrar tarifas'?'Este acceso abre la administración de precios de la playa.':b.dataset.modal==='Tarifas'?'Acá se abre tu consulta de precios por tiempo y por día, semana o mes.':'Este acceso conserva el formulario actual de la operación.';go('modal');}});
+$('#p-vehicle-search').addEventListener('input',renderCars);$('#p-receipt-search').addEventListener('input',renderReceipts);$('#p-date').addEventListener('change',renderReceipts);renderCars();renderReceipts();icons();function restore(s){if(s?.privateContent?.page&&['home','vehicles','history'].includes(s.privateContent.page))go(s.privateContent.page,false)}restore(window.openai?.widgetState);window.addEventListener('openai:set_globals',e=>restore(e.detail?.globals?.widgetState));if(globalThis.Tweak){const tweak=new Tweak({container:root,onChange:()=>root.style.setProperty('--p-accent',config.accent)});tweak.addColorPicker(config,'accent',{label:'Color de las acciones'});tweak.addSlider(config,'duration',{label:'Duración de transición',min:180,max:500,step:20,unit:'ms'});}
+})();
+</script>
+</div>
