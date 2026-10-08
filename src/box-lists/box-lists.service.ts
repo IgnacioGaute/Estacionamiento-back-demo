@@ -5,6 +5,7 @@ import { claveComision, COMISIONES_REFERENCIA, detalleComisionPago, etiquetaMedi
 import { CuentaMercadoPago } from 'src/mercadopago/entities/cuenta-mercadopago.entity';
 import { CobroMercadoPago } from 'src/mercadopago/entities/cobro-mercadopago.entity';
 import { TransferenciaRecibida } from 'src/mercadopago/entities/transferencia-recibida.entity';
+import { CobroTransferencia } from 'src/mercadopago/entities/cobro-transferencia.entity';
 import { CreateBoxListDto } from './dto/create-box-list.dto';
 import { UpdateBoxListDto } from './dto/update-box-list.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -85,7 +86,10 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
       ...(solicitudes.length ? [{ estado: 'ACREDITADO' as const, tipo: 'INQUILINO' as const, id: In(solicitudes) }] : []),
     ];
     const qr = filtros.length ? await manager.getRepository(CobroMercadoPago).find({ where: filtros, order: { acreditadoEl: 'ASC' } }) : [];
-    const alias = idsAlias.length ? await manager.getRepository(TransferenciaRecibida).findBy({ empresaId: tenantContext.getStore()!.empresaId, usadaEnPlayaId: tenantContext.getStore()!.playaId, estado: 'USADA', operacionId: In(idsAlias) }) : [];
+    const abonosAlias = (box.ticketRegistrationForDays ?? []).filter(t => t.paid && t.paymentMetodo === 'TRANSFER').map(t => t.id);
+    const intentosAbono = abonosAlias.length ? await manager.getRepository(CobroTransferencia).findBy({ empresaId: tenantContext.getStore()!.empresaId, playaId: tenantContext.getStore()!.playaId, tipo: 'ABONO', estado: 'CONFIRMADO', registrationId: In(abonosAlias) }) : [];
+    const operacionesAlias = [...idsAlias, ...intentosAbono.map(i => i.operacionId).filter(Boolean)];
+    const alias = operacionesAlias.length ? await manager.getRepository(TransferenciaRecibida).findBy({ empresaId: tenantContext.getStore()!.empresaId, usadaEnPlayaId: tenantContext.getStore()!.playaId, estado: 'USADA', operacionId: In(operacionesAlias) }) : [];
     for (const m of movs) {
       const pagoQr = m.metodo === 'MERCADOPAGO' && qr.find(p => p.tipo === 'HORA' && p.registrationId === m.ticketRegistration?.id && m.referencia === `MercadoPago ${p.mpPaymentId}`);
       const pagoAlias = m.metodo === 'TRANSFER' && alias.find(p => p.registrationId === m.ticketRegistration?.id && m.referencia === `Transferencia MercadoPago ${p.operacionId}`);
@@ -93,6 +97,10 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
       if (pagoAlias) evidencia.movimientos.set(m.id, claveComision('ALIAS', pagoAlias.paymentTypeId) ?? 'aliasDesconocido');
     }
     for (const p of qr) if (p.tipo === 'ABONO') evidencia.abonos.set(p.registrationId, claveComision('QR', p.paymentTypeId) ?? 'qrDesconocido');
+    for (const i of intentosAbono) {
+      const p = alias.find(t => t.cobroId === i.id);
+      if (p) evidencia.abonos.set(i.registrationId, claveComision('ALIAS', p.paymentTypeId) ?? 'aliasDesconocido');
+    }
     for (const c of box.cobrosInquilinos ?? []) {
       const p = qr.find(p => p.tipo === 'INQUILINO' && p.id === c.solicitud);
       if (p) evidencia.inquilinos.set(c.id, claveComision('QR', p.paymentTypeId) ?? 'qrDesconocido');

@@ -151,6 +151,7 @@ before(async () => {
     await new (load('database/migrations/1790000031000-qr-interoperable', 'QrInteroperable1790000031000'))().up(migrationRunner);
     await new (load('database/migrations/1790000032000-comisiones-caja', 'ComisionesCaja1790000032000'))().up(migrationRunner);
     await new (load('database/migrations/1790000033000-comisiones-medios-mp', 'ComisionesMediosMp1790000033000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000034000-alias-abonos', 'AliasAbonos1790000034000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -1069,6 +1070,74 @@ test('verificación por alias: intentos y transferencias se leen en toda la empr
   assert.equal(await scoped(a, () => ds.getRepository(Adicional).countBy({ empresaId: a.empresaId })), 1);
   assert.equal(await scoped(b, () => ds.getRepository(Adicional).countBy({ empresaId: a.empresaId })), 0);
   await assert.rejects(scoped(a, () => ds.getRepository(Adicional).update({ empresaId: a.empresaId }, { habilitado: false })));
+});
+
+test('alias en abonos: coincidencia única cobra y sale; duplicados se eligen y una transferencia se consume una sola vez', async () => {
+  const AliasService = load('mercadopago/verificacion-alias.service', 'VerificacionAliasService');
+  const Cuenta = load('mercadopago/entities/cuenta-mercadopago.entity', 'CuentaMercadoPago');
+  const Intento = load('mercadopago/entities/cobro-transferencia.entity', 'CobroTransferencia');
+  const Transferencia = load('mercadopago/entities/transferencia-recibida.entity', 'TransferenciaRecibida');
+  const Adicional = load('saas/entities/empresa-adicional.entity', 'EmpresaAdicional');
+  const service = new AliasService(ds.getRepository(Cuenta), ds.getRepository(Intento), ds.getRepository(Transferencia), ds.getRepository(Adicional), {}, app.get(TicketsService), ds);
+  const playa = await ds.getRepository(Playa).save({ empresaId: a.empresaId, nombre: 'Alias abonos' });
+  const scope = { ...a, playaId: playa.id };
+  const anterior = await ds.getRepository(Cuenta).findOneBy({ empresaId: a.empresaId });
+  const cuenta = await ds.getRepository(Cuenta).save({ ...anterior, empresaId: a.empresaId, mpUserId: 'alias-abono-test', estado: 'ACTIVA', alias: 'alias.test', accessToken: 'fixture', refreshToken: 'fixture', expiraEl: new Date('2030-01-01') });
+  const crear = (price, playaId = playa.id) => ds.getRepository(RegistrationDay).save({ playaId, description: 'Abono pendiente', vehicleType: 'AUTO', ticketTimeType: 'SEMANA', weeks: 1, price, paid: false, retired: false, dateNow: '2026-10-08' });
+  let pagos = [];
+  const originales = { habilitacion: service.habilitacion, leer: service.leer };
+  service.habilitacion = async () => ({ ok: true, cuenta });
+  service.leer = async () => ({ ok: true, consultadoEl: new Date(), pagos });
+  const pago = (id, monto) => ({ id, collector_id: cuenta.mpUserId, transaction_amount: monto, currency_id: 'ARS', status: 'approved', payment_type_id: 'bank_transfer', point_of_interaction: { type: 'PSP_TRANSFER' }, date_created: new Date().toISOString(), payer: { first_name: 'Pagador', last_name: id, identification: { type: 'CUIT', number: '20123456789' } } });
+  try {
+    const ajeno = await crear(700, a2.playaId);
+    await assert.rejects(scoped(scope, () => service.iniciar(ajeno.id, 'ABONO')), /no encontrado/);
+    await assert.rejects(scoped(scope, () => ds.getRepository(Intento).save({ empresaId: a.empresaId, registrationId: ajeno.id, tipo: 'ABONO', mpUserId: cuenta.mpUserId, importe: 700, moneda: 'ARS', buscarDesde: new Date(), venceEl: new Date(Date.now() + 9e5) })), /Referencia fuera/);
+    const unico = await crear(1100);
+    pagos = [pago('abono-unico', 1100)];
+    const confirmado = await scoped(scope, () => service.iniciar(unico.id, 'ABONO'));
+    assert.equal(confirmado.estado, 'CONFIRMADO');
+    assert.equal(confirmado.salidaRegistrada, true);
+    assert.equal(confirmado.modo, 'AUTOMATICO_COINCIDENCIA_UNICA');
+    const guardado = await ds.getRepository(RegistrationDay).findOne({ where: { id: unico.id }, relations: ['boxList'] });
+    assert.equal(guardado.paid, true);
+    assert.equal(guardado.retired, true);
+    assert.equal(guardado.price, 1100);
+    assert.equal(guardado.paymentMetodo, 'TRANSFER');
+    assert.equal(guardado.boxList.totalPrice, 0);
+    const planilla = await scoped(scope, () => app.get(BoxListsService).findOne(guardado.boxList.id));
+    assert.equal(planilla.ticketRegistrationForDays.find(r => r.id === unico.id).medioPagoDetalle, 'Alias MP · transferencia');
+    assert.equal(planilla.resumenCaja.efectivo, 0);
+    assert.equal(planilla.resumenCaja.totalAntesComisiones, 1100);
+    await assert.rejects(scoped(scope, () => service.iniciar(unico.id, 'ABONO')));
+    const uno = await crear(2200), dos = await crear(2200);
+    pagos = [];
+    const i1 = await scoped(scope, () => service.iniciar(uno.id, 'ABONO'));
+    const i2 = await scoped(scope, () => service.iniciar(dos.id, 'ABONO'));
+    assert.equal((await scoped(scope, () => service.iniciar(uno.id, 'ABONO'))).id, i1.id);
+    pagos = [pago('abono-compartido', 2200)];
+    const revision = await scoped(scope, () => service.consultar(i1.id));
+    assert.equal(revision.estado, 'REVISION');
+    assert.equal(revision.motivoRevision, 'VARIOS_COBROS');
+    assert.equal(revision.opciones[0].documento, 'CUIT 20123456789');
+    await scoped(scope, () => service.consultar(i2.id));
+    const resultados = await Promise.allSettled([scoped(scope, () => service.asignar(i1.id, 'abono-compartido')), scoped(scope, () => service.asignar(i2.id, 'abono-compartido'))]);
+    assert.equal(resultados.filter(r => r.status === 'fulfilled').length, 1);
+    assert.equal(await ds.getRepository(RegistrationDay).countBy({ playaId: playa.id, price: 2200, paid: true }), 1);
+    assert.equal(await ds.getRepository(Transferencia).countBy({ mpUserId: cuenta.mpUserId, operacionId: 'abono-compartido', estado: 'USADA' }), 1);
+    const pendiente = resultados[0].status === 'rejected' ? i1 : i2;
+    assert.equal((await scoped(scope, () => service.consultar(pendiente.id))).opciones.length, 0);
+    const manual = await crear(3300);
+    pagos = [];
+    const i3 = await scoped(scope, () => service.iniciar(manual.id, 'ABONO'));
+    await scoped(scope, () => app.get(TicketsService).updateTicketStatus(manual.id, { paid: true, paymentMetodo: 'CASH', retired: true }, a.userId));
+    pagos = [pago('abono-tardio', 3300)];
+    assert.equal((await scoped(scope, () => service.consultar(i3.id))).estado, 'PAGADO_OTRO_MEDIO');
+    assert.equal(await ds.getRepository(Transferencia).countBy({ operacionId: 'abono-tardio', estado: 'USADA' }), 0);
+  } finally {
+    Object.assign(service, originales);
+    if (anterior) await ds.getRepository(Cuenta).save(anterior);
+  }
 });
 
 test('cajas de MercadoPago por playa: las ve y las crea su empresa, otra empresa no', async () => {

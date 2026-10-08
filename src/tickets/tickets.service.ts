@@ -1119,6 +1119,26 @@ async removePriceBracket(id: string) {
     return { yaCerrada: false as const, cerrada: true, saldoPendiente: 0, registration: saved };
   }
 
+  /** Cobra y retira el abono en la misma transacción que consume la transferencia. */
+  async acreditarTransferenciaAbonoEn(manager: EntityManager, id: string, monto: number, _referencia: string, usuarioId: string) {
+    await manager.query('SELECT pg_advisory_xact_lock(718904)');
+    const repo = manager.getRepository(TicketRegistrationForDay);
+    const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+    if (!registration) throw new NotFoundException('Abono no encontrado.');
+    if (registration.paid || registration.retired) return { yaCerrada: true as const };
+    if (registration.price !== monto) throw new ConflictException('El importe del abono cambió. Cancelá y empezá nuevamente.');
+    const fecha = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+    const box = await this.boxListsService.applyTicketPayment(fecha, 0, manager, undefined, usuarioId);
+    registration.boxList = { id: box.id } as BoxList;
+    registration.paid = true;
+    registration.paymentMetodo = 'TRANSFER';
+    registration.retired = true;
+    registration.retiredAt = new Date();
+    registration.exitOperatorName = await this.operatorName(usuarioId, manager);
+    await repo.save(registration);
+    return { yaCerrada: false as const, cerrada: true, saldoPendiente: 0, registration };
+  }
+
   /** Avisa a las pantallas que una estadía cambió (lo que hacen los cierres al terminar). */
   emitirRegistro(registration: TicketRegistration) {
     this.ticketGateway.emitNewRegistration(registration);

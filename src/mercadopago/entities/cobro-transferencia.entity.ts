@@ -10,7 +10,6 @@ import {
 } from 'typeorm';
 import { Empresa } from 'src/tenancy/entities/empresa.entity';
 import { Playa } from 'src/tenancy/entities/playa.entity';
-import { TicketRegistration } from 'src/tickets/entities/ticket-registration.entity';
 
 // ESPERANDO: se busca la transferencia. REVISION: hubo más de una posibilidad y la elige el
 // operador. CONFIRMADO: se asoció una transferencia (y se registró el cobro). CANCELADO: lo cortó
@@ -40,7 +39,7 @@ export type ModoAsociacion = 'AUTOMATICO_COINCIDENCIA_UNICA' | 'MANUAL';
 @Index('tenant_cobros_transferencia', ['playaId'])
 // Los mismos índices únicos que la migración, con sus nombres, para que una base creada con
 // synchronize (las pruebas, el primer arranque) tenga las mismas garantías.
-@Index('cobros_transferencia_abierto', ['registrationId'], {
+@Index('cobros_transferencia_abierto', ['registrationId', 'tipo'], {
   unique: true,
   where: `"estado" IN ('ESPERANDO', 'REVISION')`,
 })
@@ -69,9 +68,10 @@ export class CobroTransferencia {
   @Column('uuid')
   registrationId: string;
 
-  @ManyToOne(() => TicketRegistration, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'registrationId' })
-  registration?: TicketRegistration;
+  // Como los cobros QR: el destino puede ser una estadía por hora o un abono.
+  // El servicio valida el registro dentro de la playa al iniciar y al acreditar.
+  @Column('varchar', { length: 10, default: 'HORA' })
+  tipo: 'HORA' | 'ABONO';
 
   // La cuenta receptora: la de la empresa al momento de abrir el intento.
   @Column('varchar', { length: 64 })

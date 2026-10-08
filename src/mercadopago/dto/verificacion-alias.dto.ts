@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -13,6 +14,10 @@ import {
 export class IniciarCobroAliasDto {
   @IsUUID()
   registrationId: string;
+
+  @IsOptional()
+  @IsIn(['HORA', 'ABONO'])
+  tipo?: 'HORA' | 'ABONO';
 }
 
 // La operación que el operador eligió entre las opciones. El servidor verifica que sea una de las

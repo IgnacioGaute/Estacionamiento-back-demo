@@ -116,6 +116,17 @@ Resultados:
 
 ## 6. La verificación por alias (implementada, en prueba)
 
+También se ofrece al cobrar la salida de un abono por día, semana o mes que quedó pendiente.
+`POST /mercadopago/alias/cobros` recibe `{ registrationId, tipo: 'ABONO' }`; si se omite `tipo`,
+continúa usando `HORA`. Para recuperar el último intento se consulta la ruta de estadía con
+`?tipo=ABONO`. El servidor obtiene el importe del registro de esa playa, sin aceptar montos del cliente.
+La confirmación consume la transferencia, marca el abono pagado por transferencia y registra su salida
+en una sola transacción; no suma efectivo a la caja ni cambia el importe del ticket. Las coincidencias
+compiten en toda la cuenta, incluyendo abonos y tickets por hora. La planilla conserva la clasificación
+`Alias MP` con el medio informado por MercadoPago y las comisiones configuradas por la empresa.
+La migración `AliasAbonos1790000034000` incorpora el tipo del destino y mantiene la comprobación del
+registro dentro de su playa mediante un trigger, además de los índices de operación única.
+
 Construida sobre lo observado: una transferencia al CVU apareció en `/v1/payments/search` 22 segundos después de
 hecha. El QR sigue igual y no depende de esto.
 

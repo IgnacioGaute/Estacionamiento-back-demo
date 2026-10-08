@@ -6,6 +6,7 @@ import {
   ParseUUIDPipe,
   Post,
   Req,
+  Query,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
@@ -37,16 +38,17 @@ export class VerificacionAliasController {
   @Post('cobros')
   iniciarCobro(@Req() req: any, @Body() dto: IniciarCobroAliasDto) {
     usuario(req);
-    return this.alias.iniciar(dto.registrationId);
+    return this.alias.iniciar(dto.registrationId, dto.tipo);
   }
 
   @Get('cobros/estadia/:registrationId')
   cobroDeEstadia(
     @Req() req: any,
     @Param('registrationId', ParseUUIDPipe) registrationId: string,
+    @Query('tipo') tipo?: string,
   ) {
     usuario(req);
-    return this.alias.deEstadia(registrationId);
+    return this.alias.deEstadia(registrationId, tipo);
   }
 
   @Get('cobros/:id')

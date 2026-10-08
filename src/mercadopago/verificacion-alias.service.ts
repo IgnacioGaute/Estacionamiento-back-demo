@@ -16,6 +16,7 @@ import {
 import { TransferenciaRecibida } from './entities/transferencia-recibida.entity';
 import { EmpresaAdicional } from 'src/saas/entities/empresa-adicional.entity';
 import { TicketRegistration } from 'src/tickets/entities/ticket-registration.entity';
+import { TicketRegistrationForDay } from 'src/tickets/entities/ticket-registration-for-day.entity';
 import { MercadoPagoService } from './mercadopago.service';
 import { TicketsService } from 'src/tickets/tickets.service';
 import { CONDICIONES_VIGENTES } from './condiciones';
@@ -253,11 +254,12 @@ export class VerificacionAliasService {
    * Abre la espera de una transferencia para una estadía. No registra cobro ni salida. Si la
    * estadía ya tenía un intento abierto, devuelve ese (reabrir la pantalla no duplica nada).
    */
-  async iniciar(registrationId: string) {
+  async iniciar(registrationId: string, tipo: 'HORA' | 'ABONO' = 'HORA') {
     const { empresaId, playaId, userId } = this.scope();
     const cuenta = await this.exigirHabilitacion(empresaId);
     const abierto = await this.intentos.findOneBy({
       registrationId,
+      tipo,
       estado: In([...ABIERTOS]),
     });
     if (abierto) {
@@ -266,7 +268,9 @@ export class VerificacionAliasService {
       return this.consultar(abierto.id);
     }
     // El resumen de cierre lee la estadía con el alcance de la playa: la de otra playa no existe.
-    const resumen = await this.tickets.getCloseSummary(registrationId);
+    const resumen = tipo === 'ABONO'
+      ? await this.resumenAbono(registrationId)
+      : await this.tickets.getCloseSummary(registrationId);
     if (resumen.saldoACobrar <= 0)
       throw new BadRequestException('No queda saldo por cobrar.');
     const ahora = Date.now();
@@ -276,6 +280,7 @@ export class VerificacionAliasService {
           empresaId,
           playaId,
           registrationId,
+          tipo,
           mpUserId: cuenta.mpUserId,
           importe: resumen.saldoACobrar,
           moneda: 'ARS',
@@ -292,6 +297,7 @@ export class VerificacionAliasService {
       if (error?.code !== '23505') throw error;
       const otro = await this.intentos.findOneBy({
         registrationId,
+        tipo,
         estado: In([...ABIERTOS]),
       });
       if (!otro || otro.playaId !== playaId) throw error;
@@ -300,10 +306,11 @@ export class VerificacionAliasService {
   }
 
   /** El último intento de una estadía de esta playa, para recuperar la pantalla al volver. */
-  async deEstadia(registrationId: string) {
+  async deEstadia(registrationId: string, tipo: string = 'HORA') {
+    if (tipo !== 'HORA' && tipo !== 'ABONO') throw new BadRequestException('Tipo de estadía inválido.');
     const { playaId } = this.scope();
     const ultimo = await this.intentos.findOne({
-      where: { registrationId, playaId },
+      where: { registrationId, playaId, tipo },
       order: { createdAt: 'DESC' },
     });
     if (!ultimo) return null;
@@ -322,7 +329,7 @@ export class VerificacionAliasService {
     if (!(ABIERTOS as readonly string[]).includes(intento.estado))
       return this.vista(intento);
 
-    if (await this.cobradaPorOtroMedio(intento.registrationId)) {
+    if (await this.cobradaPorOtroMedio(intento.registrationId, intento.tipo)) {
       await this.cerrar(intento.id, 'PAGADO_OTRO_MEDIO');
       return this.vista(await this.intentoPropio(id, playaId));
     }
@@ -565,7 +572,10 @@ export class VerificacionAliasService {
           'Esa transferencia no corresponde a este cobro: el importe o la hora no coinciden.',
         );
 
-      const r = await this.tickets.acreditarTransferenciaEn(
+      const acreditar = intento.tipo === 'ABONO'
+        ? this.tickets.acreditarTransferenciaAbonoEn.bind(this.tickets)
+        : this.tickets.acreditarTransferenciaEn.bind(this.tickets);
+      const r = await acreditar(
         m,
         intento.registrationId,
         intento.importe,
@@ -603,9 +613,9 @@ export class VerificacionAliasService {
           saldoPendiente: r.saldoPendiente || null,
         },
       );
-      return r.registration;
+      return intento.tipo === 'ABONO' ? null : r.registration as TicketRegistration;
     });
-    this.tickets.emitirRegistro(registro);
+    if (registro) this.tickets.emitirRegistro(registro);
     this.logger.log(
       `Cobro por transferencia ${intentoId} confirmado con la operación ${operacionId} (${modo}).`,
     );
@@ -628,7 +638,18 @@ export class VerificacionAliasService {
     );
   }
 
-  private async cobradaPorOtroMedio(registrationId: string) {
+  private async resumenAbono(id: string) {
+    const registro = await this.tickets.getRegistrationForDay(id);
+    if (!registro || registro.playaId !== this.scope().playaId) throw new NotFoundException('Abono no encontrado.');
+    if (registro.retired) throw new BadRequestException('Este abono ya está cerrado.');
+    return { saldoACobrar: registro.paid ? 0 : registro.price };
+  }
+
+  private async cobradaPorOtroMedio(registrationId: string, tipo: 'HORA' | 'ABONO' = 'HORA') {
+    if (tipo === 'ABONO') {
+      const registro = await this.dataSource.getRepository(TicketRegistrationForDay).findOneBy({ id: registrationId });
+      return !registro || !!registro.retired || !!registro.paid;
+    }
     const registro = await this.dataSource
       .getRepository(TicketRegistration)
       .findOneBy({ id: registrationId });
@@ -857,6 +878,7 @@ export class VerificacionAliasService {
     return {
       id: intento.id,
       registrationId: intento.registrationId,
+      tipo: intento.tipo,
       estado: intento.estado,
       importe: intento.importe,
       moneda: intento.moneda,
