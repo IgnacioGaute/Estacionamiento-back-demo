@@ -27,7 +27,15 @@ de inquilino respaldado por esa evidencia. La vista y las filas del PDF muestran
 por ejemplo, «QR · crédito» o «Alias MP · crédito», sin modificar el método contable.
 Las transferencias manuales no reciben estas etiquetas.
 
-El resumen de caja y su PDF muestran bruto, comisión estimada y neto estimado.
+Cada operación verificada incluye comisionPagoEstimada (bruto, porcentaje, comisión,
+neto y pendiente). Las filas del PDF usan TR QR y TR Alias. El neto digital se muestra
+por igual en entradas y salidas, por lo que nunca aporta efectivo al subtotal. Las
+devoluciones digitales revierten ambas columnas y no presumen devolución de comisión.
+La vista conserva el efectivo como total principal. «Totales de comisión» se abre
+desde una línea discreta; omite los medios con tasa 0%. El PDF conserva un resumen
+compacto sólo de comisiones aplicadas o pendientes y no suma digital al efectivo.
+
+El desglose de comisiones muestra bruto, comisión estimada y neto digital estimado.
 La comisión se redondea por ingreso a centavos. Los egresos se restan completos,
 sin presumir reintegros de comisión. No se duplica una imputación de cuenta corriente.
 Los importes pendientes siguen incluidos sin descuento y el neto se marca parcial.

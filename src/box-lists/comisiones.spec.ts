@@ -2,11 +2,17 @@ import { validate } from 'class-validator';
 import { tenantContext } from 'src/tenancy/tenant-context';
 import { CuentaMercadoPago } from 'src/mercadopago/entities/cuenta-mercadopago.entity';
 import { BoxListsService } from './box-lists.service';
-import { claveComision, COMISIONES_CERO, COMISIONES_REFERENCIA, EvidenciaComisiones, resumenConComisiones } from './comisiones';
+import { claveComision, COMISIONES_CERO, COMISIONES_REFERENCIA, detalleComisionPago, EvidenciaComisiones, resumenConComisiones } from './comisiones';
 import { ComisionesCajaDto } from './dto/comisiones-caja.dto';
 
 const evidencia = (): EvidenciaComisiones => ({ movimientos: new Map(), abonos: new Map(), inquilinos: new Map() });
 describe('Comisiones por canal y medio de Mercado Pago', () => {
+  it('detalla el neto por operación con el mismo redondeo del resumen, sin reintegros supuestos', () => {
+    expect(detalleComisionPago(100, 0.968)).toEqual({ bruto: 100, porcentaje: 0.968, comision: 0.97, neto: 99.03, pendiente: false });
+    expect(detalleComisionPago(100, 0)).toMatchObject({ comision: 0, neto: 100, pendiente: false });
+    expect(detalleComisionPago(100, null)).toMatchObject({ comision: null, neto: 100, pendiente: true });
+    expect(detalleComisionPago(-100, 5)).toMatchObject({ comision: 0, neto: -100, pendiente: false });
+  });
   it.each(['QR', 'ALIAS'] as const)('clasifica %s sólo con tipos informados', canal => {
     const p = canal === 'QR' ? 'qr' : 'alias';
     expect(claveComision(canal, 'credit_card')).toBe(p + 'Credito');

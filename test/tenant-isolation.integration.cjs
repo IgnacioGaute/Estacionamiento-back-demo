@@ -1219,8 +1219,10 @@ test('comisiones de caja: configuración aislada, vinculación y medios verifica
   assert.equal(result.resumenCaja.importePendienteComision, 0);
   assert.equal(result.resumenCaja.medios.find(m => m.metodo === 'TRANSFER').comision, 0);
   assert.equal(result.ticketMovements.find(m => m.referencia === 'MercadoPago fee-qr').medioPagoDetalle, 'QR · crédito');
+  assert.deepEqual(result.ticketMovements.find(m => m.referencia === 'MercadoPago fee-qr').comisionPagoEstimada, { bruto: 10000, porcentaje: 5.25, comision: 525, neto: 9475, pendiente: false });
   assert.equal(result.ticketMovements.find(m => m.referencia === 'Transferencia MercadoPago fee-alias').medioPagoDetalle, 'Alias MP · crédito');
   assert.equal(result.ticketMovements.find(m => m.referencia === 'manual').medioPagoDetalle, undefined);
+  assert.equal(result.ticketMovements.find(m => m.referencia === 'manual').comisionPagoEstimada, undefined);
   assert.equal((await scoped(scope, () => ds.getRepository(Registration).findOneBy({ id: registration.id }))).price, 10000);
   await ds.getRepository(CuentaMp).update(cuenta.id, { estado: 'DESCONECTADA' });
   assert.equal((await leer()).body.data.resumenCaja, undefined);

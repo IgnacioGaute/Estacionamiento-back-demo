@@ -21,6 +21,13 @@ export function claveComision(canal: 'QR' | 'ALIAS', tipo: string | null | undef
   return null;
 }
 const centavos = (n: number) => Math.round((n + Number.EPSILON) * 100);
+export function detalleComisionPago(monto: number, porcentaje: number | null) {
+  const bruto = centavos(Number(monto));
+  const pendiente = bruto > 0 && porcentaje === null;
+  // Una devolución mantiene su importe completo: no se presume reintegro de cargos.
+  const comision = bruto > 0 && porcentaje !== null ? Math.round(bruto * porcentaje / 100) : 0;
+  return { bruto: bruto / 100, porcentaje, comision: pendiente ? null : comision / 100, neto: (bruto - comision) / 100, pendiente };
+}
 const ETIQUETAS: Record<ClaveComision, string> = {
   qrSaldo: 'QR · saldo / transferencia', qrDebito: 'QR · débito', qrCredito: 'QR · crédito',
   aliasSaldo: 'Alias MP · transferencia', aliasDebito: 'Alias MP · débito', aliasCredito: 'Alias MP · crédito',
@@ -60,8 +67,9 @@ export function resumenConComisiones(box: DatosCaja, config: ComisionesCaja, evi
     const importe = centavos(Number(monto));
     grupo.bruto += importe;
     if (importe > 0) {
-      if (grupo.porcentaje === null) grupo.pendiente += importe;
-      else grupo.comision += Math.round(importe * grupo.porcentaje / 100);
+      const detalle = detalleComisionPago(monto, grupo.porcentaje);
+      if (detalle.pendiente) grupo.pendiente += importe;
+      else grupo.comision += centavos(detalle.comision!);
     }
   };
   for (const m of box.ticketMovements ?? []) if (m.tipo !== 'CORTESIA') sumar(m.metodo, m.monto, evidencia.movimientos.get(m.id ?? ''));

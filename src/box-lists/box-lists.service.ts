@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Empresa } from 'src/tenancy/entities/empresa.entity';
 import { ComisionesCajaDto } from './dto/comisiones-caja.dto';
-import { claveComision, COMISIONES_REFERENCIA, etiquetaMedioMp, EvidenciaComisiones, resumenConComisiones } from './comisiones';
+import { claveComision, COMISIONES_REFERENCIA, detalleComisionPago, etiquetaMedioMp, EvidenciaComisiones, resumenConComisiones } from './comisiones';
 import { CuentaMercadoPago } from 'src/mercadopago/entities/cuenta-mercadopago.entity';
 import { CobroMercadoPago } from 'src/mercadopago/entities/cobro-mercadopago.entity';
 import { TransferenciaRecibida } from 'src/mercadopago/entities/transferencia-recibida.entity';
@@ -67,7 +67,7 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     return this.getComisiones();
   }
 
-  private async withComisiones(box: BoxList & { ticketMovements?: Movimiento[]; cobrosInquilinos?: { id: string; solicitud?: string | null }[] }, manager = this.dataSource.manager) {
+  private async withComisiones(box: BoxList & { ticketMovements?: Movimiento[]; cobrosInquilinos?: { id: string; monto: number; solicitud?: string | null }[] }, manager = this.dataSource.manager) {
     // Las tareas internas sin empresa conservan la planilla original; nunca eligen
     // una configuración de otra cuenta. Los endpoints exigen contexto de empresa.
     if (!tenantContext.getStore()?.empresaId) return box;
@@ -106,7 +106,11 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     ] as const) {
       for (const fila of filas) {
         const clasificacion = clasificaciones.get(fila.id);
-        if (clasificacion) Object.assign(fila, { medioPagoDetalle: etiquetaMedioMp(clasificacion) });
+        if (clasificacion) {
+          const monto = 'monto' in fila ? fila.monto : fila.price;
+          const porcentaje = clasificacion === 'qrDesconocido' || clasificacion === 'aliasDesconocido' ? null : config.tasas[clasificacion];
+          Object.assign(fila, { medioPagoDetalle: etiquetaMedioMp(clasificacion), comisionPagoEstimada: detalleComisionPago(monto, porcentaje) });
+        }
       }
     }
     return Object.assign(box, { resumenCaja: resumenConComisiones(box as BoxList, config.tasas, evidencia) });
