@@ -720,15 +720,13 @@ async addAdvancePayment(id: string, dto: AdvancePaymentTicketRegistrationDto, us
 
 /**
  * Registra en la estadía un pago que se cobró por fuera del mostrador (hoy, el QR de MercadoPago
- * ya acreditado). Entra como ANTICIPO y no como cierre: la plata llega mientras la estadía sigue
- * abierta, y el cajero cierra después viendo que ya no queda saldo. Así el cobro no depende de
- * que el precio no se haya movido mientras el cliente pagaba.
+ * ya acreditado). Igual que una transferencia al alias: entra como un pago más y, si con eso no
+ * queda saldo, la salida se registra en la misma transacción, así el cajero no tiene que tocar
+ * nada más. Si la tarifa subió mientras el cliente pagaba, queda el pago y el saldo a cobrar, y
+ * cierra el cajero: nunca se registra una salida con plata de menos.
  *
  * `referencia` guarda el id del pago en MercadoPago: es el rastro que permite reconciliar una
  * fila del libro con un pago real.
- *
- * Pasa por linkToTodaysBoxList aunque no sea efectivo —con importe 0— porque es lo que hace que
- * el pago sea visible en la caja del día y en la planilla; un movimiento suelto no aparece.
  */
 async registrarPagoExterno(
   registrationId: string,
@@ -737,19 +735,10 @@ async registrarPagoExterno(
   referencia: string,
   usuarioId: string,
 ) {
-  const saved = await this.dataSource.transaction(async manager => {
-    const repository = manager.getRepository(TicketRegistration);
-    const registration = await repository.findOne({ where: { id: registrationId }, lock: { mode: 'pessimistic_write' } });
-    if (!registration) throw new NotFoundException('Registro no encontrado.');
-    if (registration.departureTime) throw new BadRequestException('El ticket ya está cerrado.');
-    await this.movimientosService.create({ ticketRegistrationId: registrationId, monto, metodo, tipo: 'ANTICIPO', referencia, usuarioId }, manager);
-    await this.linkToTodaysBoxList(registration, metodo === 'CASH' ? monto : 0, manager, usuarioId);
-    registration.advancePaidAmount = await this.collectedAmount(registration, manager);
-    await repository.save(registration);
-    return repository.findOne({ where: { id: registrationId }, relations: ['ticket'] });
-  });
-  this.ticketGateway.emitNewRegistration(saved);
-  return saved;
+  const r = await this.dataSource.transaction(manager => this.acreditarPagoEn(manager, registrationId, monto, metodo, referencia, usuarioId));
+  if (r.yaCerrada) throw new BadRequestException('El ticket ya está cerrado.');
+  this.ticketGateway.emitNewRegistration(r.registration);
+  return { cerrada: r.cerrada, saldoPendiente: r.saldoPendiente };
 }
 
 async findAllPriceBrackets(vehicleType?: string) {
@@ -1100,12 +1089,19 @@ async removePriceBracket(id: string) {
    * subió mientras se esperaba, queda el pago y el saldo a cobrar, sin salida.
    */
   async acreditarTransferenciaEn(manager: EntityManager, id: string, monto: number, referencia: string, usuarioId: string) {
+    return this.acreditarPagoEn(manager, id, monto, 'TRANSFER', referencia, usuarioId);
+  }
+
+  // El pago entra como ANTICIPO y la salida, si corresponde, como un cierre sin cobro: el libro
+  // queda igual que si el cajero hubiera cobrado a mano. Pasa por linkToTodaysBoxList aunque no
+  // sea efectivo —con importe 0— porque es lo que hace visible el pago en la caja y la planilla.
+  private async acreditarPagoEn(manager: EntityManager, id: string, monto: number, metodo: MovimientoMetodo, referencia: string, usuarioId: string) {
     const repository = manager.getRepository(TicketRegistration);
     const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
     if (!registration) throw new NotFoundException('Registro no encontrado.');
     if (registration.departureTime) return { yaCerrada: true as const };
-    await this.movimientosService.create({ ticketRegistrationId: id, monto, metodo: 'TRANSFER', tipo: 'ANTICIPO', referencia, usuarioId }, manager);
-    await this.linkToTodaysBoxList(registration, 0, manager, usuarioId);
+    await this.movimientosService.create({ ticketRegistrationId: id, monto, metodo, tipo: 'ANTICIPO', referencia, usuarioId }, manager);
+    await this.linkToTodaysBoxList(registration, metodo === 'CASH' ? monto : 0, manager, usuarioId);
     registration.advancePaidAmount = await this.collectedAmount(registration, manager);
     await repository.save(registration);
     const withTicket = await repository.findOne({ where: { id }, relations: ['ticket'] });

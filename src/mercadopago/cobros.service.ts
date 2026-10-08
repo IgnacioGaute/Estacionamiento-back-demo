@@ -22,10 +22,11 @@ const MINUTOS_DE_VIGENCIA = 15;
 
 // El cobro por QR de una estadía: generarlo, consultarlo y acreditarlo.
 //
-// La idea que sostiene todo esto: el pago se registra como un movimiento más de la estadía, no
-// como el cierre. El cajero cierra después, cuando ve que no queda saldo. Así un cliente que
-// tarda y cruza un escalón de tarifa no rompe la operación —queda una diferencia chica— y no hace
-// falta cerrar la estadía sin un cajero detrás.
+// La idea que sostiene todo esto: el pago se registra como un movimiento más de la estadía y, si
+// con eso no queda saldo, la salida se registra sola en la misma transacción, como con la
+// transferencia al alias (el cajero generó el QR y está mirando la pantalla que lo consulta). Si
+// el cliente tarda y cruza un escalón de tarifa, no se cierra: queda el pago y una diferencia
+// chica que cobra el cajero.
 @Injectable()
 export class CobrosMercadoPagoService {
   private readonly logger = new Logger(CobrosMercadoPagoService.name);
@@ -286,12 +287,13 @@ export class CobrosMercadoPagoService {
           cobro.creadoPor,
         );
       } else if (cobro.tipo === 'ABONO') {
-        // El abono no pasa por el libro de movimientos: se marca pagado, igual que cuando se
-        // cobra en efectivo, y con el medio puesto no suma a la caja física.
-        await this.tickets.updateTicketStatus(cobro.registrationId, {
-          paid: true,
-          paymentMetodo: 'MERCADOPAGO',
-        });
+        // El abono no pasa por el libro de movimientos: se marca pagado y retirado, igual que
+        // cuando se cobra en efectivo al salir, y con el medio puesto no suma a la caja física.
+        await this.tickets.updateTicketStatus(
+          cobro.registrationId,
+          { paid: true, paymentMetodo: 'MERCADOPAGO', retired: true },
+          cobro.creadoPor ?? undefined,
+        );
       } else {
         // Se registra lo que MercadoPago dice que entró, no lo que habíamos pedido: si por lo que
         // fuera difieren, el libro tiene que reflejar la plata real.
@@ -339,9 +341,27 @@ export class CobrosMercadoPagoService {
       interoperable: !!cobro.qrData,
       expiraEl: cobro.expiraEl,
       acreditadoEl: cobro.acreditadoEl,
+      salidaRegistrada: await this.salidaRegistrada(cobro),
       ...(cobro.tipo === 'INQUILINO' && cobro.estado === 'ACREDITADO'
         ? { recibo: await this.cuentas.reciboDeCobro(cobro.id) }
         : {}),
     };
+  }
+
+  // Si con el pago la estadía o el abono quedaron cerrados: el mostrador lo usa para confirmar la
+  // salida y cerrar solo. Se lee de la estadía y no se guarda en el cobro: así lo ve igual quien
+  // vuelve a consultar un cobro que acreditó otra consulta.
+  private async salidaRegistrada(cobro: CobroMercadoPago) {
+    if (cobro.estado !== 'ACREDITADO') return false;
+    if (cobro.tipo === 'HORA') {
+      const estadia = await this.tickets
+        .findOneRegistration(cobro.registrationId)
+        .catch(() => null);
+      return !!estadia?.departureTime;
+    }
+    if (cobro.tipo === 'ABONO')
+      return !!(await this.tickets.getRegistrationForDay(cobro.registrationId))
+        ?.retired;
+    return false;
   }
 }

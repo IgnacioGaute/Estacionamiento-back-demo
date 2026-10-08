@@ -88,7 +88,9 @@ link (only the MercadoPago app or a phone camera can pay it). When a playa has a
 once by the empresa ADMIN in Configuración → MercadoPago; MercadoPago requires the full address with coordinates),
 `CobrosMercadoPagoService.crear` creates a dynamic Orders API order (`POST /v1/orders`, `type: qr`, idempotency key =
 our cobro id) and draws its standard `qr_data` (interoperable QR); `consultar` reads the order status. Without a
-POS, or if the order fails, it falls back to the link. `mercadopago_cajas` is empresa-scoped (RLS by empresa,
+POS, or if the order fails, it falls back to the link. An accredited stay QR registers the payment and, when no
+saldo is left, the exit in the same transaction (`registrarPagoExterno` shares `acreditarPagoEn` with the alias
+path); an ABONO QR leaves the abono paid and retired. The view's `salidaRegistrada` is read from the stay. `mercadopago_cajas` is empresa-scoped (RLS by empresa,
 explicit `playaId`). MercadoPago validates the store's province/city against MercadoLibre's public
 `classified_locations` list (exact spelling, accents included), so the admin activates a playa with one tap
 (`POST /mercadopago/cajas/con-ubicacion`): the device location is reverse-geocoded with OpenStreetMap Nominatim

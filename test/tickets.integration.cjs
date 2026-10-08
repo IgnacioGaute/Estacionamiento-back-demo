@@ -259,6 +259,22 @@ test('anticipo de ficha física conserva la relación del ticket en la respuesta
   assert.equal(updated.ticket.id, ticket.id);
 });
 
+test('pago por QR de MercadoPago: si cubre el saldo registra la salida en la misma operación; si no, la deja abierta', async () => {
+  const caja = await totalBox();
+  const pagada = await openPlate();
+  assert.deepEqual(await tickets.registrarPagoExterno(pagada.id, 1000, 'MERCADOPAGO', 'MercadoPago QR-1', user.id), { cerrada: true, saldoPendiente: 0 });
+  assert.ok((await ds.getRepository(Registration).findOneBy({ id: pagada.id })).departureTime, 'la salida quedó registrada');
+  const movs = await ds.getRepository(Movimiento).find({ where: { ticketRegistration: { id: pagada.id } } });
+  assert.deepEqual(movs.map(m => [m.metodo, m.monto]), [['MERCADOPAGO', 1000]], 'el cierre no agrega otro cobro');
+  assert.equal(await totalBox(), caja, 'MercadoPago no suma al efectivo');
+  await assert.rejects(tickets.registrarPagoExterno(pagada.id, 1000, 'MERCADOPAGO', 'MercadoPago QR-2', user.id), /ya está cerrado/);
+
+  // La tarifa subió mientras pagaba: queda el pago y el saldo, y la salida la registra el cajero.
+  const parcial = await openPlate();
+  assert.deepEqual(await tickets.registrarPagoExterno(parcial.id, 600, 'MERCADOPAGO', 'MercadoPago QR-3', user.id), { cerrada: false, saldoPendiente: 400 });
+  assert.equal((await ds.getRepository(Registration).findOneBy({ id: parcial.id })).departureTime, null);
+});
+
 
 async function closeCurrent(carry = 0, operator = user.id) {
   const ctx = await shifts.getCashContext(operator);

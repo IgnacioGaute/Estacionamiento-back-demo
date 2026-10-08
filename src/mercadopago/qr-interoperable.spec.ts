@@ -50,12 +50,28 @@ function cobrosConCaja(caja: object | null, crearOrden?: jest.Mock) {
     }),
     buscarPagoAprobado: jest.fn().mockResolvedValue(null),
   };
+  // Como los de verdad: el pago que cubre el saldo deja la estadía cerrada y el abono, retirado.
+  const estadia = { departureTime: null as Date | null };
+  const abono = {
+    price: 1500,
+    paid: false,
+    retired: false,
+    vehiclePlateCustomer: 'AB123CD',
+  };
   const tickets = {
     getCloseSummary: jest.fn().mockResolvedValue({
       saldoACobrar: 1500,
       registration: { licensePlateOriginal: 'AB123CD' },
     }),
-    registrarPagoExterno: jest.fn().mockResolvedValue({}),
+    registrarPagoExterno: jest.fn().mockImplementation(async () => {
+      estadia.departureTime = new Date();
+      return { cerrada: true, saldoPendiente: 0 };
+    }),
+    findOneRegistration: jest.fn(async () => estadia),
+    getRegistrationForDay: jest.fn(async () => abono),
+    updateTicketStatus: jest.fn(async (_id: string, cambios: object) =>
+      Object.assign(abono, cambios),
+    ),
   };
   const cajasQr = {
     cajaDePlaya: jest.fn().mockResolvedValue(caja),
@@ -137,9 +153,10 @@ describe('Cobro con QR por caja de la playa', () => {
       pagoId: null,
       monto: 0,
     });
-    expect((await en(() => servicio.consultar(cobro.id))).estado).toBe(
-      'PENDIENTE',
-    );
+    expect(await en(() => servicio.consultar(cobro.id))).toMatchObject({
+      estado: 'PENDIENTE',
+      salidaRegistrada: false,
+    });
     cajasQr.consultarOrden.mockResolvedValue({
       estado: 'processed',
       pagada: true,
@@ -147,10 +164,14 @@ describe('Cobro con QR por caja de la playa', () => {
       monto: 1500,
       paymentTypeId: 'credit_card',
     });
-    expect((await en(() => servicio.consultar(cobro.id))).estado).toBe(
-      'ACREDITADO',
-    );
-    await en(() => servicio.consultar(cobro.id));
+    expect(await en(() => servicio.consultar(cobro.id))).toMatchObject({
+      estado: 'ACREDITADO',
+      salidaRegistrada: true,
+    });
+    // La consulta que llega después ve lo mismo sin volver a registrar nada.
+    expect(
+      (await en(() => servicio.consultar(cobro.id))).salidaRegistrada,
+    ).toBe(true);
     expect(cobros.filas.get(cobro.id).paymentTypeId).toBe('credit_card');
     expect(tickets.registrarPagoExterno).toHaveBeenCalledTimes(1);
     expect(tickets.registrarPagoExterno).toHaveBeenCalledWith(
@@ -161,6 +182,48 @@ describe('Cobro con QR por caja de la playa', () => {
       'u1',
     );
     expect(mercadoPago.buscarPagoAprobado).not.toHaveBeenCalled();
+  });
+
+  test('si la tarifa subió mientras pagaba, se acredita sin registrar la salida', async () => {
+    const { servicio, cajasQr, tickets } = cobrosConCaja({
+      externalPosId: 'CAJA1',
+    });
+    tickets.registrarPagoExterno.mockResolvedValue({
+      cerrada: false,
+      saldoPendiente: 200,
+    });
+    const cobro = await en(() => servicio.crear('reg-1', 'HORA', 'u1'));
+    cajasQr.consultarOrden.mockResolvedValue({
+      pagada: true,
+      pagoId: 'PAY1',
+      monto: 1500,
+    });
+    expect(await en(() => servicio.consultar(cobro.id))).toMatchObject({
+      estado: 'ACREDITADO',
+      salidaRegistrada: false,
+    });
+  });
+
+  test('un abono pagado por QR queda pagado y retirado de una vez', async () => {
+    const { servicio, cajasQr, tickets } = cobrosConCaja({
+      externalPosId: 'CAJA1',
+    });
+    const cobro = await en(() => servicio.crear('ab-1', 'ABONO', 'u1'));
+    cajasQr.consultarOrden.mockResolvedValue({
+      pagada: true,
+      pagoId: 'PAY2',
+      monto: 1500,
+    });
+    expect(await en(() => servicio.consultar(cobro.id))).toMatchObject({
+      estado: 'ACREDITADO',
+      salidaRegistrada: true,
+    });
+    expect(tickets.updateTicketStatus).toHaveBeenCalledWith(
+      'ab-1',
+      { paid: true, paymentMetodo: 'MERCADOPAGO', retired: true },
+      'u1',
+    );
+    expect(tickets.registrarPagoExterno).not.toHaveBeenCalled();
   });
 
   test('cancelar o generar otro QR cancela la orden en MercadoPago', async () => {
