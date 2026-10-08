@@ -6,11 +6,18 @@ import { CreateOtherPaymentDto } from './dto/create-other-payment.dto';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
 import { UpdateOtherPaymentDto } from './dto/update-other-payment.dto';
 import { listPagination } from 'src/utils/list-pagination';
+import { ComisionesCajaDto } from './dto/comisiones-caja.dto';
 
 @Controller('box-lists')
 @UseGuards(AuthOrTokenAuthGuard)
 export class BoxListsController {
   constructor(private readonly boxListsService: BoxListsService) {}
+
+  @Get('comisiones')
+  comisiones() { return this.boxListsService.getComisiones(); }
+
+  @Patch('comisiones')
+  configurarComisiones(@Body() dto: ComisionesCajaDto) { return this.boxListsService.configurarComisiones(dto); }
 
   @Post()
   async createBox(@Body() createBoxListDto: CreateBoxListDto) {

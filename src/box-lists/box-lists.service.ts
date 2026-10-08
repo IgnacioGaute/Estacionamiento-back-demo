@@ -1,4 +1,7 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Empresa } from 'src/tenancy/entities/empresa.entity';
+import { ComisionesCajaDto } from './dto/comisiones-caja.dto';
+import { resumenConComisiones } from './comisiones';
 import { CreateBoxListDto } from './dto/create-box-list.dto';
 import { UpdateBoxListDto } from './dto/update-box-list.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -41,6 +44,31 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
   return manager ? this.applyTicketPayment(dto.date, dto.totalPrice, manager)
     : this.dataSource.transaction(tx => this.applyTicketPayment(dto.date, dto.totalPrice, tx));
 }
+
+  async getComisiones(manager = this.dataSource.manager) {
+    const empresaId = tenantContext.getStore()?.empresaId;
+    if (!empresaId) throw new ForbiddenException('Seleccioná una empresa.');
+    const empresa = await manager.getRepository(Empresa).findOneBy({ id: empresaId });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada.');
+    return { qrPorcentaje: Number(empresa.comisionQrPorcentaje ?? 0), transferenciaPorcentaje: Number(empresa.comisionTransferenciaPorcentaje ?? 0) };
+  }
+
+  async configurarComisiones(dto: ComisionesCajaDto) {
+    const scope = tenantContext.getStore();
+    if (!scope?.empresaId || scope.role !== 'ADMIN') throw new ForbiddenException('Sólo el administrador de la empresa puede configurar comisiones.');
+    await this.dataSource.getRepository(Empresa).update({ id: scope.empresaId }, {
+      comisionQrPorcentaje: dto.qrPorcentaje,
+      comisionTransferenciaPorcentaje: dto.transferenciaPorcentaje,
+    });
+    return this.getComisiones();
+  }
+
+  private async withComisiones(box: BoxList, manager = this.dataSource.manager) {
+    // Las tareas internas sin empresa conservan la planilla original; nunca eligen
+    // una configuración de otra cuenta. Los endpoints exigen contexto de empresa.
+    if (!tenantContext.getStore()?.empresaId) return box;
+    return Object.assign(box, { resumenCaja: resumenConComisiones(box, await this.getComisiones(manager)) });
+  }
 
   private async recordCash(boxId: string, amount: number, manager: EntityManager, description = 'Movimiento de efectivo', turnoIdOverride?: string | null, usuarioId = tenantContext.getStore()?.userId) {
     if (!amount) return;
@@ -343,10 +371,10 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
         return null;
       }
   
-      return this.withCobrosInquilinos(
+      return this.withComisiones(await this.withCobrosInquilinos(
         await this.withTurnos(await this.withTicketMovements(boxList, manager), manager),
         manager,
-      );
+      ), manager);
     } catch (error: any) {
       this.logger.error(`Error buscando BoxList por fecha: ${error.message}`, error.stack);
       throw error;
@@ -358,12 +386,12 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     try{
       const boxListWithRegistrations = await this.boxListRepository.findOne({
         where: { id: boxListId },
-        relations: ['ticketRegistrations', 'ticketRegistrations.movimientos', 'receipts', 'ticketRegistrationForDays','otherPayments', 'receipts.customer.parkingRenters', 'receipts.customer.parkingOwners'],
+        relations: ['ticketRegistrations', 'ticketRegistrations.movimientos', 'receipts', 'receiptPayments', 'paymentHistoryOnAccount', 'ticketRegistrationForDays','otherPayments', 'receipts.customer.parkingRenters', 'receipts.customer.parkingOwners'],
       });
       if(!boxListWithRegistrations){
         throw new NotFoundException('Box list not found')
       }
-      return this.withTurnos(await this.withTicketMovements(boxListWithRegistrations));
+      return this.withComisiones(await this.withCobrosInquilinos(await this.withTurnos(await this.withTicketMovements(boxListWithRegistrations))));
     } catch (error: any) {
       if (!(error instanceof NotFoundException)) {
         this.logger.error(error.message, error.stack);

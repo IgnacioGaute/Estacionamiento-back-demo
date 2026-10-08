@@ -147,6 +147,7 @@ before(async () => {
     await new (load('database/migrations/1790000029000-condiciones-mercadopago', 'CondicionesMercadoPago1790000029000'))().up(migrationRunner);
     await new (load('database/migrations/1790000030000-verificacion-alias', 'VerificacionAlias1790000030000'))().up(migrationRunner);
     await new (load('database/migrations/1790000031000-qr-interoperable', 'QrInteroperable1790000031000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000032000-comisiones-caja', 'ComisionesCaja1790000032000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -1166,4 +1167,39 @@ test('frecuentes: la búsqueda filtra visitas y contactos por coincidencia real'
   assert.equal(page.data.length, 1);
   assert.equal(page.meta.totalItems, 3);
   assert.equal((await search('ASD')).meta.totalItems, 0);
+});
+
+test('comisiones de caja: configuración aislada, validación y neto sin alterar tickets', async () => {
+  // Las pruebas de revocación anteriores dan de baja sus usuarios; estos son propios.
+  const adminA = await ds.getRepository(User).save({ username: 'fee-admin-a', email: 'fee-a@example.test', firstName: 'A', lastName: 'Admin', role: 'ADMIN', empresaId: a.empresaId });
+  const adminB = await ds.getRepository(User).save({ username: 'fee-admin-b', email: 'fee-b@example.test', firstName: 'B', lastName: 'Admin', role: 'ADMIN', empresaId: b.empresaId });
+  const api = (method, user, playaId) => request(app.getHttpServer())[method]('/box-lists/comisiones')
+    .set('Authorization', 'Bearer ' + token(user)).set('X-Playa-Id', playaId);
+  assert.deepEqual((await api('get', adminA, a.playaId).expect(200)).body, { qrPorcentaje: 0, transferenciaPorcentaje: 0 });
+  await api('patch', adminA, a.playaId).send({ qrPorcentaje: 5.25, transferenciaPorcentaje: 1 }).expect(200);
+  assert.deepEqual((await api('get', adminA, a2.playaId).expect(200)).body, { qrPorcentaje: 5.25, transferenciaPorcentaje: 1 });
+  assert.deepEqual((await api('get', adminB, b.playaId).expect(200)).body, { qrPorcentaje: 0, transferenciaPorcentaje: 0 });
+  await api('patch', adminA, a.playaId).send({ qrPorcentaje: 101, transferenciaPorcentaje: 0 }).expect(400);
+  await api('patch', adminA, a.playaId).send({ qrPorcentaje: 1, transferenciaPorcentaje: 0, empresaId: b.empresaId }).expect(400);
+  await api('patch', adminA, b.playaId).send({ qrPorcentaje: 1, transferenciaPorcentaje: 0 }).expect(403);
+  const operator = await ds.getRepository(User).save({ username: 'fee-operator', email: 'fees@example.test', firstName: 'Fee', lastName: 'Operator', role: 'USER', empresaId: a.empresaId });
+  await ds.getRepository(load('tenancy/entities/usuario-playa.entity', 'UsuarioPlaya')).save({ usuarioId: operator.id, playaId: a.playaId, rolPlaya: 'OPERADOR' });
+  await api('patch', operator, a.playaId).send({ qrPorcentaje: 1, transferenciaPorcentaje: 0 }).expect(403);
+
+  const date = '2026-10-07';
+  const playaComisiones = await ds.getRepository(Playa).save({ nombre: 'Caja comisiones', empresaId: a.empresaId });
+  const scopeComisiones = { ...a, playaId: playaComisiones.id };
+  let box, registration;
+  await scoped(scopeComisiones, async () => {
+    box = await ds.getRepository(Box).save({ date, boxNumber: 1, totalPrice: 3000 });
+    registration = await ds.getRepository(Registration).save({ description: 'Comisiones', entryMode: 'PLATE', vehicleType: 'AUTO', entryDay: date, entryTime: '08:00:00', price: 10000, noPlate: false, licensePlateOriginal: 'COM123', licensePlateNormalized: 'COM123', boxList: { id: box.id } });
+    await ds.getRepository(Movimiento).save({ ticketRegistration: { id: registration.id }, monto: 10000, metodo: 'MERCADOPAGO', tipo: 'SALDO', usuario: { id: adminA.id }, fechaHora: new Date(date + 'T12:00:00-03:00') });
+  });
+  const result = await request(app.getHttpServer()).get('/box-lists/date/' + date).set('Authorization', 'Bearer ' + token(adminA)).set('X-Playa-Id', scopeComisiones.playaId).expect(200);
+  assert.equal(result.body.data.totalPrice, 3000);
+  assert.equal(result.body.data.resumenCaja.totalAntesComisiones, 13000);
+  assert.equal(result.body.data.resumenCaja.comisionEstimada, 525);
+  assert.equal(result.body.data.resumenCaja.totalNetoEstimado, 12475);
+  assert.equal((await scoped(scopeComisiones, () => ds.getRepository(Registration).findOneBy({ id: registration.id }))).price, 10000);
+  await api('patch', adminA, a.playaId).send({ qrPorcentaje: 0, transferenciaPorcentaje: 0 }).expect(200);
 });

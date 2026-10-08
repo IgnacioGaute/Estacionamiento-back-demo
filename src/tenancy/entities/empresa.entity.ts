@@ -24,6 +24,12 @@ export class Empresa {
   @Column('varchar', { length: 255 })
   nombre: string;
 
+  @Column('numeric', { precision: 5, scale: 2, default: 0 })
+  comisionQrPorcentaje: number;
+
+  @Column('numeric', { precision: 5, scale: 2, default: 0 })
+  comisionTransferenciaPorcentaje: number;
+
   @Column('varchar', { length: 20, default: 'ACTIVA' })
   estado: EmpresaEstado;
 
