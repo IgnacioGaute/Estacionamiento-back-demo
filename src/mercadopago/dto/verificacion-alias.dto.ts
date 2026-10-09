@@ -1,5 +1,11 @@
 import {
   IsBoolean,
+  IsArray,
+  IsInt,
+  ArrayMaxSize,
+  Max,
+  Min,
+  ValidateIf,
   IsIn,
   IsNotEmpty,
   IsOptional,
@@ -9,15 +15,33 @@ import {
   MaxLength,
 } from 'class-validator';
 
-// Abrir la espera de una transferencia: solo la estadía. El importe lo calcula el servidor con el
-// resumen de cierre; si lo mandara el mostrador, un pedido manipulado podría esperar cualquier cosa.
+// Para las estadías, el importe sale del resumen de cierre del servidor. Los inquilinos
+// permiten un importe elegido por el mostrador, igual que los pagos parciales y anticipos.
 export class IniciarCobroAliasDto {
   @IsUUID()
   registrationId: string;
 
   @IsOptional()
-  @IsIn(['HORA', 'ABONO'])
-  tipo?: 'HORA' | 'ABONO';
+  @IsIn(['HORA', 'ABONO', 'INQUILINO'])
+  tipo?: 'HORA' | 'ABONO' | 'INQUILINO';
+
+  // Un inquilino puede pagar una parte o dejar saldo a favor: el mostrador decide el importe.
+  @ValidateIf((dto: IniciarCobroAliasDto) => dto.tipo === 'INQUILINO')
+  @IsInt()
+  @Min(1)
+  @Max(1_000_000_000)
+  monto?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(60)
+  @IsUUID('all', { each: true })
+  receiptIds?: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  nota?: string;
 }
 
 // La operación que el operador eligió entre las opciones. El servidor verifica que sea una de las

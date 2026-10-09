@@ -152,6 +152,7 @@ before(async () => {
     await new (load('database/migrations/1790000032000-comisiones-caja', 'ComisionesCaja1790000032000'))().up(migrationRunner);
     await new (load('database/migrations/1790000033000-comisiones-medios-mp', 'ComisionesMediosMp1790000033000'))().up(migrationRunner);
     await new (load('database/migrations/1790000034000-alias-abonos', 'AliasAbonos1790000034000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000035000-alias-inquilinos', 'AliasInquilinos1790000035000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -1050,6 +1051,16 @@ test('verificación por alias: intentos y transferencias se leen en toda la empr
   // Leer: la empresa ve los de todas sus playas (para decidir si una coincidencia es única); otra empresa, nada.
   assert.equal(await scoped(a, () => intentos().countBy({ mpUserId: '555' })), 2);
   assert.equal(await scoped(b, () => intentos().countBy({ mpUserId: '555' })), 0);
+  // La migración de inquilinos valida el cliente y la playa incluso con escrituras directas.
+  const clienteA = await ds.getRepository(Customer).save({ playaId: a.playaId, firstName: 'Alias propio', lastName: 'Fixture', customerType: 'RENTER', numberOfVehicles: 1 });
+  const clienteB = await ds.getRepository(Customer).save({ playaId: a2.playaId, firstName: 'Alias ajeno', lastName: 'Fixture', customerType: 'RENTER', numberOfVehicles: 1 });
+  const propietario = await ds.getRepository(Customer).save({ playaId: a.playaId, firstName: 'Propietario', lastName: 'Fixture', customerType: 'OWNER', numberOfVehicles: 1 });
+  const deCliente = id => ({ ...base, empresaId: a.empresaId, registrationId: id, tipo: 'INQUILINO', detalle: { receiptIds: [], nota: 'Fixture' } });
+  const propio = await scoped(a, () => intentos().save(deCliente(clienteA.id)));
+  assert.equal(propio.playaId, a.playaId);
+  assert.deepEqual(propio.detalle, { receiptIds: [], nota: 'Fixture' });
+  await assert.rejects(scoped(a, () => intentos().save(deCliente(clienteB.id))), /Referencia fuera/);
+  await assert.rejects(scoped(a, () => intentos().save(deCliente(propietario.id))), /Referencia fuera/);
   // Cambiar: solo su playa.
   assert.equal((await scoped(a, () => intentos().update({ id: iA2.id }, { estado: 'CANCELADO' }))).affected, 0);
   assert.equal((await intentos().findOneBy({ id: iA2.id })).estado, 'ESPERANDO');

@@ -71,7 +71,10 @@ export class CobroTransferencia {
   // Como los cobros QR: el destino puede ser una estadía por hora o un abono.
   // El servicio valida el registro dentro de la playa al iniciar y al acreditar.
   @Column('varchar', { length: 10, default: 'HORA' })
-  tipo: 'HORA' | 'ABONO';
+  tipo: 'HORA' | 'ABONO' | 'INQUILINO';
+
+  @Column('jsonb', { nullable: true })
+  detalle: { receiptIds?: string[]; nota?: string | null } | null;
 
   // La cuenta receptora: la de la empresa al momento de abrir el intento.
   @Column('varchar', { length: 64 })

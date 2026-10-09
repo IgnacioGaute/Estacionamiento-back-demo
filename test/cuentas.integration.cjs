@@ -38,6 +38,13 @@ const ReceiptsService = load('receipts/receipts.service', 'ReceiptsService');
 const BoxListsService = load('box-lists/box-lists.service', 'BoxListsService');
 const CuentasService = load('cuentas/cuentas.service', 'CuentasService');
 const { tenantContext } = require('../dist/tenancy/tenant-context');
+const CuentaMp = load('mercadopago/entities/cuenta-mercadopago.entity', 'CuentaMercadoPago');
+const IntentoAlias = load('mercadopago/entities/cobro-transferencia.entity', 'CobroTransferencia');
+const TransferenciaAlias = load('mercadopago/entities/transferencia-recibida.entity', 'TransferenciaRecibida');
+const AdicionalAlias = load('saas/entities/empresa-adicional.entity', 'EmpresaAdicional');
+const { VerificacionAliasService, olvidarLecturas } = require('../dist/mercadopago/verificacion-alias.service');
+const { CONDICIONES_VIGENTES } = require('../dist/mercadopago/condiciones');
+
 
 let ds, root, pgStarted = false, receipts, cuentas, boxes, user, playa, empresa;
 const bin = process.env.PG_TEST_BIN || 'C:/Program Files/PostgreSQL/18/bin';
@@ -605,4 +612,82 @@ test('el recibo de un pago se entrega como comprobante público según la config
   await enPlaya(() => cuentas.anular(pago.id, { motivo: 'Se cobró por error', confirmacion: 700 }, user.id));
   assert.equal((await lector.readPublic(emitido.token)).anulado, true, 'el enlace muestra que se anuló');
   await assert.rejects(enPlaya(() => cuentas.emitirComprobante(pago.id)), /anulado/);
+});
+
+test('alias de inquilinos: parcial, prioridad, duplicados, recibo y caja sin efectivo', { timeout: 30000 }, async () => {
+  const repo = e => ds.getRepository(e);
+  const servicio = new VerificacionAliasService(repo(CuentaMp), repo(IntentoAlias), repo(TransferenciaAlias), repo(AdicionalAlias),
+    { tokenDeEmpresa: async () => 'token-fixture' }, { acreditarTransferenciaEn() {}, acreditarTransferenciaAbonoEn() {} }, ds, cuentas);
+  assert.equal((await enPlaya(() => servicio.disponibilidad())).qrDisponible, false);
+  await repo(CuentaMp).save({ empresaId: empresa.id, mpUserId: '998800', accessToken: 'fixture', refreshToken: 'fixture', expiraEl: new Date('2030-01-01'), estado: 'ACTIVA', condicionesVersion: CONDICIONES_VIGENTES.version, alias: 'playa.fixture', verificacionAlias: true });
+  // QR no depende del adicional de verificación por alias.
+  assert.deepEqual((({ qrDisponible, disponible }) => ({ qrDisponible, disponible }))(await enPlaya(() => servicio.disponibilidad())), { qrDisponible: true, disponible: false });
+  await repo(AdicionalAlias).save({ empresaId: empresa.id, codigo: 'VERIFICACION_ALIAS', habilitado: true, precioMensual: 0 });
+  const original = global.fetch;
+  let pagos = [];
+  global.fetch = async () => new Response(JSON.stringify({ results: pagos, paging: { total: pagos.length } }), { status: 200 });
+  const consultar = id => { olvidarLecturas(); return enPlaya(() => servicio.consultar(id)); };
+  const iniciar = (id, datos) => { olvidarLecturas(); return enPlaya(() => servicio.iniciar(id, 'INQUILINO', datos)); };
+  const transferencia = (id, monto, documento) => ({ id, collector_id: 998800, status: 'approved', currency_id: 'ARS', transaction_amount: monto,
+    operation_type: 'account_fund', payment_type_id: 'bank_transfer', payment_method_id: 'cvu', point_of_interaction: { type: 'PSP_TRANSFER' },
+    date_created: new Date().toISOString(), date_approved: new Date().toISOString(), payer: { first_name: 'Persona', identification: { type: 'CUIT', number: documento } } });
+  try {
+    const c = await inquilino('Alias parcial');
+    await enPlaya(() => ds.transaction(m => receipts.createReceipt(c.id, m, 600, `${mes(0)}-02`)));
+    const elegido = await enPlaya(() => ds.transaction(m => receipts.createReceipt(c.id, m, 400, `${mes(1)}-02`)));
+    await assert.rejects(iniciar(c.id, {}), /importe/);
+    const inicio = await iniciar(c.id, { monto: 300, receiptIds: [elegido.id], nota: 'Pago parcial por alias' });
+    assert.equal(inicio.estado, 'ESPERANDO');
+    await assert.rejects(iniciar(c.id, { monto: 301 }), /otro importe/);
+    assert.equal((await iniciar(c.id, { monto: 300 })).id, inicio.id);
+    const cajaAntes = await totalCaja();
+    pagos = [transferencia(990001, 300, '20111111112')];
+    const confirmado = await consultar(inicio.id);
+    assert.equal(confirmado.estado, 'CONFIRMADO');
+    assert.equal(confirmado.salidaRegistrada, false);
+    assert.equal(confirmado.recibo.total, 300);
+    assert.equal(confirmado.recibo.medios[0].metodo, 'TRANSFER');
+    assert.equal(confirmado.recibo.nota, 'Pago parcial por alias');
+    assert.equal(confirmado.recibo.imputaciones[0].receiptId, elegido.id);
+    assert.equal(confirmado.recibo.saldo, 700);
+    assert.equal((await consultar(inicio.id)).recibo.id, confirmado.recibo.id);
+    assert.equal(await repo(CuentaMovimiento).countBy({ solicitud: inicio.id, tipo: 'PAGO' }), 1);
+    assert.equal(await totalCaja(), cajaAntes);
+    const caja = await enPlaya(() => boxes.findBoxByDate(hoy()));
+    const fila = caja.cobrosInquilinos.find(x => x.solicitud === inicio.id);
+    assert.equal(fila.medioPagoDetalle, 'Alias MP · transferencia');
+    assert.equal(fila.comisionPagoEstimada.neto, 300);
+
+    const c2 = await inquilino('Alias duplicado');
+    pagos = [];
+    const a = await iniciar(c.id, { monto: 800 });
+    const b = await iniciar(c2.id, { monto: 800 });
+    pagos = [transferencia(990002, 800, '20222222223'), transferencia(990003, 800, '20333333334')];
+    const revision = await consultar(a.id);
+    assert.equal(revision.estado, 'REVISION');
+    assert.equal(revision.opciones.length, 2);
+    assert.ok(revision.opciones.some(x => x.documento?.includes('20222222223')));
+    assert.equal(await repo(CuentaMovimiento).countBy({ solicitud: a.id, tipo: 'PAGO' }), 0);
+    const elegidoA = await enPlaya(() => servicio.asignar(a.id, '990002'));
+    assert.equal(elegidoA.recibo.total, 800);
+    assert.equal(elegidoA.recibo.aFavor, 100);
+    await assert.rejects(enPlaya(() => servicio.asignar(b.id, '990002')));
+    await consultar(b.id);
+    const elegidoB = await enPlaya(() => servicio.asignar(b.id, '990003'));
+    assert.equal(elegidoB.recibo.aFavor, 800);
+    assert.equal(await totalCaja(), cajaAntes);
+
+    // Una falla después de asentar se revierte junto con el consumo de la transferencia.
+    pagos = [];
+    const pendiente = await iniciar(c2.id, { monto: 150 });
+    pagos = [transferencia(990004, 150, '20333333334')];
+    const registrar = cuentas.registrarTransferenciaAliasEn.bind(cuentas);
+    cuentas.registrarTransferenciaAliasEn = async (...args) => { await registrar(...args); throw new Error('Falla simulada al confirmar'); };
+    try { await assert.rejects(consultar(pendiente.id), /Falla simulada/); }
+    finally { cuentas.registrarTransferenciaAliasEn = registrar; }
+    assert.equal(await repo(CuentaMovimiento).countBy({ solicitud: pendiente.id, tipo: 'PAGO' }), 0);
+    assert.equal((await repo(TransferenciaAlias).findOneBy({ operacionId: '990004' })).estado, 'DISPONIBLE');
+    assert.equal((await consultar(pendiente.id)).estado, 'CONFIRMADO');
+    assert.equal(await repo(CuentaMovimiento).countBy({ solicitud: pendiente.id, tipo: 'PAGO' }), 1);
+  } finally { global.fetch = original; olvidarLecturas(); }
 });

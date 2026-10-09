@@ -88,7 +88,8 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     const qr = filtros.length ? await manager.getRepository(CobroMercadoPago).find({ where: filtros, order: { acreditadoEl: 'ASC' } }) : [];
     const abonosAlias = (box.ticketRegistrationForDays ?? []).filter(t => t.paid && t.paymentMetodo === 'TRANSFER').map(t => t.id);
     const intentosAbono = abonosAlias.length ? await manager.getRepository(CobroTransferencia).findBy({ empresaId: tenantContext.getStore()!.empresaId, playaId: tenantContext.getStore()!.playaId, tipo: 'ABONO', estado: 'CONFIRMADO', registrationId: In(abonosAlias) }) : [];
-    const operacionesAlias = [...idsAlias, ...intentosAbono.map(i => i.operacionId).filter(Boolean)];
+    const intentosInquilino = solicitudes.length ? await manager.getRepository(CobroTransferencia).findBy({ empresaId: tenantContext.getStore()!.empresaId, playaId: tenantContext.getStore()!.playaId, tipo: 'INQUILINO', estado: 'CONFIRMADO', id: In(solicitudes) }) : [];
+    const operacionesAlias = [...idsAlias, ...[...intentosAbono, ...intentosInquilino].map(i => i.operacionId).filter(Boolean)];
     const alias = operacionesAlias.length ? await manager.getRepository(TransferenciaRecibida).findBy({ empresaId: tenantContext.getStore()!.empresaId, usadaEnPlayaId: tenantContext.getStore()!.playaId, estado: 'USADA', operacionId: In(operacionesAlias) }) : [];
     for (const m of movs) {
       const pagoQr = m.metodo === 'MERCADOPAGO' && qr.find(p => p.tipo === 'HORA' && p.registrationId === m.ticketRegistration?.id && m.referencia === `MercadoPago ${p.mpPaymentId}`);
@@ -104,6 +105,9 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     for (const c of box.cobrosInquilinos ?? []) {
       const p = qr.find(p => p.tipo === 'INQUILINO' && p.id === c.solicitud);
       if (p) evidencia.inquilinos.set(c.id, claveComision('QR', p.paymentTypeId) ?? 'qrDesconocido');
+      const i = intentosInquilino.find(i => i.id === c.solicitud);
+      const transferencia = i && alias.find(t => t.cobroId === i.id);
+      if (transferencia) evidencia.inquilinos.set(c.id, claveComision('ALIAS', transferencia.paymentTypeId) ?? 'aliasDesconocido');
     }
     // Detalle exclusivo de la planilla: conserva el canal y el medio verificados
     // sin cambiar el método contable, el importe ni el ticket del cliente.

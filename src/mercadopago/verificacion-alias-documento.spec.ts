@@ -42,6 +42,7 @@ describe('Documento al elegir una transferencia', () => {
         { tokenDeEmpresa: jest.fn().mockResolvedValue('token') } as any,
         {} as any,
         {} as any,
+        {} as any,
       );
       s.intentoPropio = jest.fn().mockResolvedValue(intento);
       s.cobradaPorOtroMedio = jest.fn().mockResolvedValue(false);

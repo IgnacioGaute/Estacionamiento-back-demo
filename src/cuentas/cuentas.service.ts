@@ -116,7 +116,7 @@ export class CuentasService {
       relations: ['parkingRenters', 'parkingRenters.parkingOwner', 'parkingRenters.parkingOwner.customer'],
       withDeleted: true,
     });
-    if (!customer || customer.customerType !== 'RENTER')
+    if (!customer || customer.customerType !== 'RENTER' || customer.playaId !== tenantContext.getStore()?.playaId)
       throw new NotFoundException('Inquilino no encontrado en esta playa.');
     return customer;
   }
@@ -492,132 +492,153 @@ export class CuentasService {
     tolerante = false,
   ) {
     const playaId = await this.asegurarModulo();
-    return this.ds.transaction(async (m) => {
-      const c = await this.inquilino(m, customerId);
-      await asegurarCuenta(m, customerId);
-      await bloquearCliente(m, customerId);
+    return this.ds.transaction((m) => this.registrarPagoEn(m, customerId, dto, usuarioId, tolerante, playaId));
+  }
 
-      // Reintento de un cobro ya registrado (se perdió la respuesta): se devuelve el mismo recibo.
-      // El bloqueo del cliente ordena los pedidos, así el segundo ya ve lo que guardó el primero.
-      if (dto.solicitudId) {
-        const previas = await m.find(CuentaMovimiento, { where: { solicitud: dto.solicitudId, tipo: 'PAGO' } });
-        if (previas.length) {
-          if (previas.some((f) => f.customerId !== customerId))
-            throw new ConflictException('Ese pedido de cobro corresponde a otro inquilino.');
-          return { ...(await this.reciboDePago(m, previas, c)), repetido: true };
-        }
+  private async registrarPagoEn(
+    m: EntityManager,
+    customerId: string,
+    dto: Omit<RegistrarPagoDto, 'pagos' | 'solicitudId'> & { pagos: { metodo: CuentaMetodo; importe: number }[]; solicitudId?: string },
+    usuarioId: string | null,
+    tolerante: boolean,
+    playaId: string,
+  ) {
+    const c = await this.inquilino(m, customerId);
+    await asegurarCuenta(m, customerId);
+    await bloquearCliente(m, customerId);
+
+    // Reintento de un cobro ya registrado (se perdió la respuesta): se devuelve el mismo recibo.
+    // El bloqueo del cliente ordena los pedidos, así el segundo ya ve lo que guardó el primero.
+    if (dto.solicitudId) {
+      const previas = await m.find(CuentaMovimiento, { where: { solicitud: dto.solicitudId, tipo: 'PAGO' } });
+      if (previas.length) {
+        if (previas.some((f) => f.customerId !== customerId))
+          throw new ConflictException('Ese pedido de cobro corresponde a otro inquilino.');
+        return { ...(await this.reciboDePago(m, previas, c)), repetido: true };
       }
+    }
 
-      const pagos = dto.pagos.filter((p) => p.importe > 0);
-      const total = pagos.reduce((s, p) => s + p.importe, 0);
-      if (!total) throw new BadRequestException('Ingresá el importe cobrado.');
-      if (new Set(pagos.map((p) => p.metodo)).size !== pagos.length)
-        throw new BadRequestException('Cada medio de pago va una sola vez.');
-      const saldoAnterior = await saldoDe(m, customerId);
+    const pagos = dto.pagos.filter((p) => p.importe > 0);
+    const total = pagos.reduce((s, p) => s + p.importe, 0);
+    if (!total) throw new BadRequestException('Ingresá el importe cobrado.');
+    if (new Set(pagos.map((p) => p.metodo)).size !== pagos.length)
+      throw new BadRequestException('Cada medio de pago va una sola vez.');
+    const saldoAnterior = await saldoDe(m, customerId);
 
-      // Orden de imputación: primero los recibos elegidos, después el resto del más viejo al
-      // más nuevo. Lo que sobra queda como saldo a favor.
-      const pendientes = await m.find(Receipt, {
-        ...cargosDe(customerId, { status: 'PENDING' }),
-        order: { startDate: 'ASC', createdAt: 'ASC' },
-      });
-      const elegidos = [...new Set(dto.receiptIds ?? [])].filter((id) => !tolerante || pendientes.some((r) => r.id === id));
-      for (const id of elegidos)
-        if (!pendientes.some((r) => r.id === id))
-          throw new BadRequestException('Alguno de los cargos elegidos ya no está pendiente.');
-      const orden = [
-        ...elegidos.map((id) => pendientes.find((r) => r.id === id)!),
-        ...pendientes.filter((r) => !elegidos.includes(r.id)),
-      ];
-
-      // Numeración de comprobantes por playa, sin saltos ni repetidos entre cajas simultáneas.
-      await m.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`pagos-inquilinos:${playaId}`]);
-      const [ultimo] = await m.query(
-        `SELECT numero FROM cuenta_movimientos WHERE tipo = 'PAGO' AND numero IS NOT NULL ORDER BY sequence DESC LIMIT 1`,
-      );
-      const numero = String((parseInt(ultimo?.numero ?? '0', 10) || 0) + 1).padStart(8, '0');
-      const fecha = hoy();
-
-      // El efectivo entra a la caja del día (y al turno abierto) en la misma transacción.
-      const efectivo = pagos.filter((p) => p.metodo === 'CASH').reduce((s, p) => s + p.importe, 0);
-      const caja = await this.boxLists.applyTicketPayment(fecha, efectivo, m);
-
-      // Primero se reparte todo el cobro y recién después se asienta: cada fila guarda cómo
-      // quedó cada recibo y la cuenta al terminar, porque el libro no se puede editar después y
-      // una reimpresión tiene que decir lo mismo que el comprobante original.
-      const restante = new Map(orden.map((r) => [r.id, Math.max(0, r.price ?? 0)]));
-      const reparto = pagos.map((pago) => {
-        let resta = pago.importe;
-        const detalle: { receiptId: string; aplicado: number }[] = [];
-        for (const r of orden) {
-          if (resta <= 0) break;
-          const disponible = restante.get(r.id) ?? 0;
-          if (disponible <= 0) continue;
-          const aplicado = Math.min(disponible, resta);
-          detalle.push({ receiptId: r.id, aplicado });
-          restante.set(r.id, disponible - aplicado);
-          resta -= aplicado;
-        }
-        return { pago, detalle, aFavor: resta };
-      });
-      const saldoDespues = saldoAnterior - total;
-      // El turno de la caja compartida en que se cobra: el pago solo se puede anular mientras
-      // siga abierto (ver anulacion.ts). Sin turnos en uso queda null y rige el día.
-      const [turno] = await m.query(`SELECT id FROM turnos WHERE estado = 'ABIERTO' AND "cashVersion" = 2 LIMIT 1`);
-
-      const mediosDe = new Map<string, Set<string>>();
-      const filas: CuentaMovimiento[] = [];
-      for (const { pago, detalle, aFavor: sobra } of reparto) {
-        const fila = await asentar(m, {
-          customerId,
-          tipo: 'PAGO',
-          importe: -pago.importe,
-          fecha,
-          concepto: `Pago N° ${numero}`,
-          metodo: pago.metodo,
-          numero,
-          motivo: dto.nota?.trim() || null,
-          usuarioId,
-          solicitud: dto.solicitudId ?? null,
-          detalle: {
-            imputaciones: detalle.map((d) => ({ ...d, resta: restante.get(d.receiptId) ?? 0 })),
-            aFavor: sobra,
-            saldoDespues,
-            turnoId: turno?.id ?? null,
-          },
-        });
-        filas.push(fila!);
-        for (const d of detalle) {
-          await m.save(
-            m.create(ReceiptPayment, {
-              paymentType: pago.metodo,
-              price: d.aplicado,
-              paymentDate: fecha,
-              receipt: { id: d.receiptId } as Receipt,
-              boxList: { id: caja.id } as any,
-              numberInBox: d.aplicado,
-              cuentaMovimientoId: fila!.id,
-            }),
-          );
-          mediosDe.set(d.receiptId, (mediosDe.get(d.receiptId) ?? new Set()).add(pago.metodo));
-        }
-      }
-
-      for (const r of orden) {
-        const nuevo = restante.get(r.id) ?? 0;
-        if (nuevo === Math.max(0, r.price ?? 0)) continue;
-        const medios = [...(mediosDe.get(r.id) ?? [])];
-        await m.update(Receipt, { id: r.id }, {
-          price: nuevo,
-          ...(nuevo <= 0
-            ? { status: 'PAID' as const, paymentDate: fecha, paymentType: (medios.length === 1 ? medios[0] : 'MIX') as any }
-            : {}),
-        });
-      }
-
-      await conciliar(m, customerId);
-      return { ...(await this.reciboDePago(m, filas, c)), repetido: false };
+    // Orden de imputación: primero los recibos elegidos, después el resto del más viejo al
+    // más nuevo. Lo que sobra queda como saldo a favor.
+    const pendientes = await m.find(Receipt, {
+      ...cargosDe(customerId, { status: 'PENDING' }),
+      order: { startDate: 'ASC', createdAt: 'ASC' },
     });
+    const elegidos = [...new Set(dto.receiptIds ?? [])].filter((id) => !tolerante || pendientes.some((r) => r.id === id));
+    for (const id of elegidos)
+      if (!pendientes.some((r) => r.id === id))
+        throw new BadRequestException('Alguno de los cargos elegidos ya no está pendiente.');
+    const orden = [
+      ...elegidos.map((id) => pendientes.find((r) => r.id === id)!),
+      ...pendientes.filter((r) => !elegidos.includes(r.id)),
+    ];
+
+    // Numeración de comprobantes por playa, sin saltos ni repetidos entre cajas simultáneas.
+    await m.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`pagos-inquilinos:${playaId}`]);
+    const [ultimo] = await m.query(
+      `SELECT numero FROM cuenta_movimientos WHERE tipo = 'PAGO' AND numero IS NOT NULL ORDER BY sequence DESC LIMIT 1`,
+    );
+    const numero = String((parseInt(ultimo?.numero ?? '0', 10) || 0) + 1).padStart(8, '0');
+    const fecha = hoy();
+
+    // El efectivo entra a la caja del día (y al turno abierto) en la misma transacción.
+    const efectivo = pagos.filter((p) => p.metodo === 'CASH').reduce((s, p) => s + p.importe, 0);
+    const caja = await this.boxLists.applyTicketPayment(fecha, efectivo, m);
+
+    // Primero se reparte todo el cobro y recién después se asienta: cada fila guarda cómo
+    // quedó cada recibo y la cuenta al terminar, porque el libro no se puede editar después y
+    // una reimpresión tiene que decir lo mismo que el comprobante original.
+    const restante = new Map(orden.map((r) => [r.id, Math.max(0, r.price ?? 0)]));
+    const reparto = pagos.map((pago) => {
+      let resta = pago.importe;
+      const detalle: { receiptId: string; aplicado: number }[] = [];
+      for (const r of orden) {
+        if (resta <= 0) break;
+        const disponible = restante.get(r.id) ?? 0;
+        if (disponible <= 0) continue;
+        const aplicado = Math.min(disponible, resta);
+        detalle.push({ receiptId: r.id, aplicado });
+        restante.set(r.id, disponible - aplicado);
+        resta -= aplicado;
+      }
+      return { pago, detalle, aFavor: resta };
+    });
+    const saldoDespues = saldoAnterior - total;
+    // El turno de la caja compartida en que se cobra: el pago solo se puede anular mientras
+    // siga abierto (ver anulacion.ts). Sin turnos en uso queda null y rige el día.
+    const [turno] = await m.query(`SELECT id FROM turnos WHERE estado = 'ABIERTO' AND "cashVersion" = 2 LIMIT 1`);
+
+    const mediosDe = new Map<string, Set<string>>();
+    const filas: CuentaMovimiento[] = [];
+    for (const { pago, detalle, aFavor: sobra } of reparto) {
+      const fila = await asentar(m, {
+        customerId,
+        tipo: 'PAGO',
+        importe: -pago.importe,
+        fecha,
+        concepto: `Pago N° ${numero}`,
+        metodo: pago.metodo,
+        numero,
+        motivo: dto.nota?.trim() || null,
+        usuarioId,
+        solicitud: dto.solicitudId ?? null,
+        detalle: {
+          imputaciones: detalle.map((d) => ({ ...d, resta: restante.get(d.receiptId) ?? 0 })),
+          aFavor: sobra,
+          saldoDespues,
+          turnoId: turno?.id ?? null,
+        },
+      });
+      filas.push(fila!);
+      for (const d of detalle) {
+        await m.save(
+          m.create(ReceiptPayment, {
+            paymentType: pago.metodo,
+            price: d.aplicado,
+            paymentDate: fecha,
+            receipt: { id: d.receiptId } as Receipt,
+            boxList: { id: caja.id } as any,
+            numberInBox: d.aplicado,
+            cuentaMovimientoId: fila!.id,
+          }),
+        );
+        mediosDe.set(d.receiptId, (mediosDe.get(d.receiptId) ?? new Set()).add(pago.metodo));
+      }
+    }
+
+    for (const r of orden) {
+      const nuevo = restante.get(r.id) ?? 0;
+      if (nuevo === Math.max(0, r.price ?? 0)) continue;
+      const medios = [...(mediosDe.get(r.id) ?? [])];
+      await m.update(Receipt, { id: r.id }, {
+        price: nuevo,
+        ...(nuevo <= 0
+          ? { status: 'PAID' as const, paymentDate: fecha, paymentType: (medios.length === 1 ? medios[0] : 'MIX') as any }
+          : {}),
+      });
+    }
+
+    await conciliar(m, customerId);
+    return { ...(await this.reciboDePago(m, filas, c)), repetido: false };
+  }
+
+  /** Dentro de la transacción que marca la transferencia como usada. */
+  async registrarTransferenciaAliasEn(
+    m: EntityManager, customerId: string,
+    datos: { importe: number; receiptIds?: string[]; nota?: string | null; cobroId: string }, usuarioId: string,
+  ) {
+    const playaId = await this.asegurarModulo();
+    return this.registrarPagoEn(m, customerId, {
+      pagos: [{ metodo: 'TRANSFER', importe: datos.importe }], receiptIds: datos.receiptIds,
+      nota: datos.nota ?? undefined, solicitudId: datos.cobroId,
+    }, usuarioId, true, playaId);
   }
 
   // El recibo de un pago, armado solo con lo que quedó asentado: el cobro recién hecho, su

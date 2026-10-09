@@ -17,6 +17,8 @@ import { TransferenciaRecibida } from './entities/transferencia-recibida.entity'
 import { EmpresaAdicional } from 'src/saas/entities/empresa-adicional.entity';
 import { TicketRegistration } from 'src/tickets/entities/ticket-registration.entity';
 import { TicketRegistrationForDay } from 'src/tickets/entities/ticket-registration-for-day.entity';
+import { CuentasService } from 'src/cuentas/cuentas.service';
+import { Customer } from 'src/customers/entities/customer.entity';
 import { MercadoPagoService } from './mercadopago.service';
 import { TicketsService } from 'src/tickets/tickets.service';
 import { CONDICIONES_VIGENTES } from './condiciones';
@@ -100,6 +102,7 @@ export class VerificacionAliasService {
     private readonly mercadoPago: MercadoPagoService,
     private readonly tickets: TicketsService,
     private readonly dataSource: DataSource,
+    private readonly cuentasCorriente: CuentasService,
   ) {}
 
   private scope() {
@@ -236,10 +239,11 @@ export class VerificacionAliasService {
   /** Para la pantalla de cobro: si se ofrece «Transferencia al alias» y con qué alias. */
   async disponibilidad() {
     const { empresaId } = this.scope();
-    const h = await this.habilitacion(empresaId);
+    const [h, cuenta] = await Promise.all([this.habilitacion(empresaId), this.cuentas.findOneBy({ empresaId })]);
+    const qrDisponible = !!cuenta && cuenta.estado === 'ACTIVA' && !!cuenta.accessToken && cuenta.condicionesVersion === CONDICIONES_VIGENTES.version;
     return h.ok === true
-      ? { disponible: true as const, alias: h.cuenta.alias }
-      : { disponible: false as const, code: h.code, motivo: h.message };
+      ? { disponible: true as const, alias: h.cuenta.alias, qrDisponible }
+      : { disponible: false as const, code: h.code, motivo: h.message, qrDisponible };
   }
 
   /** El intento de esta playa, o 404: los de otras playas se leen, pero no se tocan. */
@@ -254,9 +258,13 @@ export class VerificacionAliasService {
    * Abre la espera de una transferencia para una estadía. No registra cobro ni salida. Si la
    * estadía ya tenía un intento abierto, devuelve ese (reabrir la pantalla no duplica nada).
    */
-  async iniciar(registrationId: string, tipo: 'HORA' | 'ABONO' = 'HORA') {
+  async iniciar(registrationId: string, tipo: 'HORA' | 'ABONO' | 'INQUILINO' = 'HORA', datos?: { monto?: number; receiptIds?: string[]; nota?: string }) {
     const { empresaId, playaId, userId } = this.scope();
     const cuenta = await this.exigirHabilitacion(empresaId);
+    if (tipo === 'INQUILINO') {
+      if (!datos?.monto || !Number.isInteger(datos.monto) || datos.monto < 1 || datos.monto > 1_000_000_000) throw new BadRequestException('Ingresá el importe a cobrar, en pesos enteros.');
+      await this.cuentasCorriente.validarCobroQr(registrationId);
+    }
     const abierto = await this.intentos.findOneBy({
       registrationId,
       tipo,
@@ -265,10 +273,11 @@ export class VerificacionAliasService {
     if (abierto) {
       if (abierto.playaId !== playaId)
         throw new NotFoundException('Registro no encontrado.');
+      if (tipo === 'INQUILINO' && abierto.importe !== datos?.monto) throw new ConflictException('Este inquilino ya tiene un cobro por alias esperando otro importe. Cancelalo antes de empezar uno nuevo.');
       return this.consultar(abierto.id);
     }
     // El resumen de cierre lee la estadía con el alcance de la playa: la de otra playa no existe.
-    const resumen = tipo === 'ABONO'
+    const resumen = tipo === 'INQUILINO' ? { saldoACobrar: datos!.monto! } : tipo === 'ABONO'
       ? await this.resumenAbono(registrationId)
       : await this.tickets.getCloseSummary(registrationId);
     if (resumen.saldoACobrar <= 0)
@@ -281,6 +290,7 @@ export class VerificacionAliasService {
           playaId,
           registrationId,
           tipo,
+          detalle: tipo === 'INQUILINO' ? { receiptIds: datos?.receiptIds ?? [], nota: datos?.nota?.trim() || null } : null,
           mpUserId: cuenta.mpUserId,
           importe: resumen.saldoACobrar,
           moneda: 'ARS',
@@ -301,13 +311,14 @@ export class VerificacionAliasService {
         estado: In([...ABIERTOS]),
       });
       if (!otro || otro.playaId !== playaId) throw error;
+      if (tipo === 'INQUILINO' && otro.importe !== datos?.monto) throw new ConflictException('Este inquilino ya tiene un cobro por alias esperando otro importe. Cancelalo antes de empezar uno nuevo.');
       return this.consultar(otro.id);
     }
   }
 
   /** El último intento de una estadía de esta playa, para recuperar la pantalla al volver. */
   async deEstadia(registrationId: string, tipo: string = 'HORA') {
-    if (tipo !== 'HORA' && tipo !== 'ABONO') throw new BadRequestException('Tipo de estadía inválido.');
+    if (tipo !== 'HORA' && tipo !== 'ABONO' && tipo !== 'INQUILINO') throw new BadRequestException('Tipo de cobro inválido.');
     const { playaId } = this.scope();
     const ultimo = await this.intentos.findOne({
       where: { registrationId, playaId, tipo },
@@ -575,7 +586,7 @@ export class VerificacionAliasService {
       const acreditar = intento.tipo === 'ABONO'
         ? this.tickets.acreditarTransferenciaAbonoEn.bind(this.tickets)
         : this.tickets.acreditarTransferenciaEn.bind(this.tickets);
-      const r = await acreditar(
+      const r = intento.tipo === 'INQUILINO' ? await this.acreditarInquilino(m, intento, usuarioId) : await acreditar(
         m,
         intento.registrationId,
         intento.importe,
@@ -613,7 +624,7 @@ export class VerificacionAliasService {
           saldoPendiente: r.saldoPendiente || null,
         },
       );
-      return intento.tipo === 'ABONO' ? null : r.registration as TicketRegistration;
+      return intento.tipo === 'HORA' ? r.registration as TicketRegistration : null;
     });
     if (registro) this.tickets.emitirRegistro(registro);
     this.logger.log(
@@ -645,7 +656,19 @@ export class VerificacionAliasService {
     return { saldoACobrar: registro.paid ? 0 : registro.price };
   }
 
-  private async cobradaPorOtroMedio(registrationId: string, tipo: 'HORA' | 'ABONO' = 'HORA') {
+  private async acreditarInquilino(m: import('typeorm').EntityManager, intento: CobroTransferencia, usuarioId: string) {
+    await this.cuentasCorriente.registrarTransferenciaAliasEn(m, intento.registrationId, {
+      importe: intento.importe, receiptIds: intento.detalle?.receiptIds, nota: intento.detalle?.nota, cobroId: intento.id,
+    }, usuarioId);
+    return { yaCerrada: false as const, cerrada: false, saldoPendiente: 0, registration: null };
+  }
+
+  private async cobradaPorOtroMedio(registrationId: string, tipo: 'HORA' | 'ABONO' | 'INQUILINO' = 'HORA') {
+    if (tipo === 'INQUILINO') {
+      const cliente = await this.dataSource.getRepository(Customer).findOne({ where: { id: registrationId }, withDeleted: true });
+      // Pagar otro cargo del mismo inquilino no cancela este cobro: puede dejar saldo a favor.
+      return !cliente || cliente.playaId !== this.scope().playaId || cliente.customerType !== 'RENTER';
+    }
     if (tipo === 'ABONO') {
       const registro = await this.dataSource.getRepository(TicketRegistrationForDay).findOneBy({ id: registrationId });
       return !registro || !!registro.retired || !!registro.paid;
@@ -904,6 +927,9 @@ export class VerificacionAliasService {
       consulta: extra.consulta ?? null,
       motivoRevision: extra.motivoRevision ?? null,
       opciones: extra.opciones ?? [],
+      ...(intento.tipo === 'INQUILINO' && intento.estado === 'CONFIRMADO'
+        ? { recibo: await this.cuentasCorriente.reciboDeCobro(intento.id) }
+        : {}),
     };
   }
 }

@@ -38,7 +38,7 @@ export class VerificacionAliasController {
   @Post('cobros')
   iniciarCobro(@Req() req: any, @Body() dto: IniciarCobroAliasDto) {
     usuario(req);
-    return this.alias.iniciar(dto.registrationId, dto.tipo);
+    return this.alias.iniciar(dto.registrationId, dto.tipo, dto);
   }
 
   @Get('cobros/estadia/:registrationId')
