@@ -513,8 +513,11 @@ export class CajasQrService {
   }
 
   // Una búsqueda fallida no prueba que la sucursal o caja no exista.
+  // MercadoPago contesta 404 cuando la búsqueda no encuentra nada (una cuenta sin sucursales ni
+  // cajas): eso es «no hay», no un error. Cualquier otro rechazo sí corta, para no tomar una
+  // búsqueda fallida por una sucursal inexistente y duplicarla.
   private async buscar(token: string, url: string) {
-    return this.llamar(token, url);
+    return this.llamar(token, url, {}, undefined, true);
   }
 
   // De un error de MercadoPago se devuelve solo su mensaje, recortado: sirve para corregir la
@@ -524,6 +527,7 @@ export class CajasQrService {
     url: string,
     init: RequestInit = {},
     idempotencia?: string,
+    vacioSiNoEncuentra = false,
   ) {
     let respuesta: Response;
     try {
@@ -549,6 +553,7 @@ export class CajasQrService {
       datos = null;
     }
     if (respuesta.ok) return datos;
+    if (respuesta.status === 404 && vacioSiNoEncuentra) return null;
     this.logger.warn(
       `MercadoPago respondió ${respuesta.status} a ${url.split('?')[0]}`,
     );

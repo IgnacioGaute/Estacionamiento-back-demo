@@ -428,6 +428,20 @@ describe('Sucursal y caja de una playa', () => {
     });
   });
 
+  test('una cuenta sin sucursales (la búsqueda da 404) crea la sucursal y la caja igual', async () => {
+    const { servicio, guardadas } = cajas();
+    const llamadas = falso([
+      json({ error: 'not_found', message: 'stores not found' }, 404),
+      json({ id: 555 }),
+      json({ error: 'not_found' }, 404),
+      json({ id: 777 }),
+    ]);
+    await en(() => servicio.crear('p1', direccion, 'u1'));
+    expect(llamadas[1][0]).toBe('https://api.mercadopago.com/users/111/stores');
+    expect(llamadas[3][0]).toBe('https://api.mercadopago.com/v2/pos');
+    expect(guardadas[0]).toMatchObject({ storeId: '555', posId: '777' });
+  });
+
   test('si la sucursal y la caja ya existían (intento cortado), las reusa', async () => {
     const { servicio, guardadas } = cajas();
     const llamadas = falso([
