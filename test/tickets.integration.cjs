@@ -18,6 +18,7 @@ const Registration = load('tickets/entities/ticket-registration.entity', 'Ticket
 const RegistrationDay = load('tickets/entities/ticket-registration-for-day.entity', 'TicketRegistrationForDay');
 const Schedule = load('tickets/entities/ticket-schedule-settings.entity', 'TicketScheduleSettings');
 const Movimiento = load('movimientos/entities/movimiento.entity', 'Movimiento');
+const CashEntry = load('turnos/entities/cash-entry.entity', 'CashEntry');
 const Turno = load('turnos/entities/turno.entity', 'Turno');
 const Box = load('box-lists/entities/box-list.entity', 'BoxList');
 const Other = load('box-lists/entities/other-payment.entity', 'OtherPayment');
@@ -281,10 +282,10 @@ async function closeCurrent(carry = 0, operator = user.id) {
   return shifts.close(ctx.active.id, operator, { efectivoContado: ctx.efectivoDisponible, efectivoEsperado: ctx.efectivoDisponible, efectivoParaSiguiente: carry });
 }
 
-test('turno por usuario: un turno de 24 h admite varias fechas y sólo suma efectivo', async () => {
+test('turno por usuario: medianoche crea una continuación y conserva el efectivo de la caja', async () => {
   const prior = await closeCurrent();
   const shift = await shifts.open(user.id, { fondoInicial: 100, cambioAgregado: 100, turnoAnteriorId: prior.id, nombre: 'Diario', duracionPrevistaHoras: 24 });
-  await ds.getRepository(Turno).update(shift.id, { fechaApertura: dayjs().subtract(23, 'hour').toDate() });
+  await ds.getRepository(Turno).update(shift.id, { fechaApertura: dayjs().tz('America/Argentina/Buenos_Aires').startOf('day').subtract(4, 'hour').toDate(), fechaOperativa: dayjs().tz('America/Argentina/Buenos_Aires').subtract(1, 'day').format('YYYY-MM-DD') });
   const cash = await openPlate();
   const transfer = await openPlate();
   const before = await totalBox();
@@ -294,7 +295,10 @@ test('turno por usuario: un turno de 24 h admite varias fechas y sólo suma efec
   await boxes.createOtherPayment({ description: 'Banco', type: 'INGRESOS', paymentMethod: 'TRANSFER', price: 900 });
   assert.equal(await totalBox(), before + 800);
   const ctx = await shifts.getCashContext();
-  assert.equal(ctx.active.id, shift.id);
+  assert.notEqual(ctx.active.id, shift.id);
+  assert.equal(ctx.active.continuacionDeId, shift.id);
+  assert.equal(ctx.active.cashSessionId, shift.cashSessionId);
+  assert.equal((await ds.getRepository(Turno).findOneBy({ id: shift.id })).cierreAutomatico, true);
   assert.equal(ctx.efectivoDisponible, 900);
 });
 
@@ -414,29 +418,29 @@ test('un admin cierra el turno de otro operador y queda registrado el motivo', a
   assert.equal(normal.motivoCierreForzado, null);
 });
 
-test('un turno de varios días figura en la planilla de cada día con su parte del efectivo', async () => {
-  const hoy = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
-  const manana = dayjs().tz('America/Argentina/Buenos_Aires').add(1, 'day').format('YYYY-MM-DD');
+test('los tramos diarios figuran en su planilla y comparten el mismo saldo físico', async () => {
+  const today = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day');
+  const ayer = today.subtract(1, 'day').format('YYYY-MM-DD');
+  const hoy = today.format('YYYY-MM-DD');
   const previo = await shifts.getCashContext();
-  const turno = await shifts.open(user.id, { fondoInicial: 0, turnoAnteriorId: previo.pending ? previo.pending.id : undefined, nombre: 'Diario', duracionPrevistaHoras: 24 });
-
-  // El mismo turno mueve efectivo en dos fechas distintas: dos planillas, un solo turno.
-  await ds.transaction(m => boxes.createBox({ date: hoy, totalPrice: 500 }, m));
-  await ds.transaction(m => boxes.createBox({ date: manana, totalPrice: 900 }, m));
-
-  const filaDe = (box) => box.turnosDelDia.find(t => t.turnoId === turno.id);
+  const turno = await shifts.open(user.id, { fondoInicial: 0, turnoAnteriorId: previo.pending?.id });
+  await ds.transaction(m => boxes.createBox({ date: ayer, totalPrice: 500 }, m));
+  await ds.getRepository(CashEntry).update({ turnoId: turno.id }, { createdAt: today.subtract(1, 'hour').toDate() });
+  await ds.getRepository(Turno).update(turno.id, { fechaApertura: today.subtract(4, 'hour').toDate(), fechaOperativa: ayer });
+  const siguiente = (await shifts.getCashContext()).active;
+  await ds.transaction(m => boxes.createBox({ date: hoy, totalPrice: 900 }, m));
+  const boxAyer = await boxes.findBoxByDate(ayer);
   const boxHoy = await boxes.findBoxByDate(hoy);
-  const boxManana = await boxes.findBoxByDate(manana);
-
-  assert.ok(filaDe(boxHoy), 'el turno debe figurar en la planilla de hoy');
-  assert.ok(filaDe(boxManana), 'el mismo turno debe figurar en la planilla del día siguiente');
-  // Cada planilla ve sólo el efectivo que cayó en su día, no el arqueo entero del turno.
-  assert.equal(filaDe(boxManana).efectivoDelDia, 900);
-  assert.equal(filaDe(boxManana).turno.id, turno.id);
-  assert.equal(filaDe(boxManana).movimientos, 1);
-  // Sigue abierto, así que su arqueo todavía no pertenece a ningún día cerrado.
-  assert.equal(filaDe(boxManana).abarcaOtrosDias, true);
-  // El efectivo previo a la caja por turnos queda en su propia fila, sin turno.
+  const oldRow = boxAyer.turnosDelDia.find(t => t.turnoId === turno.id);
+  const newRow = boxHoy.turnosDelDia.find(t => t.turnoId === siguiente.id);
+  assert.ok(oldRow);
+  assert.ok(newRow);
+  assert.equal(oldRow.efectivoDelDia, 500);
+  assert.equal(newRow.efectivoDelDia, 900);
+  assert.equal(oldRow.turno.cierreAutomatico, true);
+  assert.equal(newRow.turno.continuacionDeId, turno.id);
+  assert.equal(newRow.abarcaOtrosDias, false);
+  assert.equal((await shifts.getCashContext()).efectivoDisponible, 1400);
   assert.ok(boxHoy.turnosDelDia.every(t => t.turnoId !== undefined));
 });
 
@@ -595,4 +599,142 @@ test('escaneo: encuentra abonos activos con formatos históricos sin incluir ret
   const found = await tickets.getPlateStatus('XX123YY');
   assert.deepEqual(found.daily.map(r => r.id), [daily.id]);
   assert.deepEqual(found.hourly, []);
+});
+
+
+test('descuento parcial: reduce el saldo, cobra solo el resto y conserva autores separados en la planilla', async () => {
+  const registration = await openPlate();
+  const actor = await ds.getRepository(User).save({ username: 'discount-exit', firstName: 'Ana', lastName: 'Salida', email: 'discount-exit@example.test', role: 'ADMIN' });
+  let ctx = await shifts.getCashContext(user.id);
+  const cash = ctx.cajas.find(c => c.id === ctx.active?.cajaId) || ctx.cajas.find(c => c.principal);
+  if (!ctx.active) await shifts.open(user.id, { cajaId: cash.id, fondoInicial: cash.session ? 0 : cash.efectivoDisponible, sesionActivaId: cash.session?.id, sesionAnteriorId: cash.pending?.id, turnoAnteriorId: cash.legacyPending?.id });
+  ctx = await shifts.getCashContext(user.id);
+  const activeCash = ctx.cajas.find(c => c.id === ctx.active.cajaId);
+  await shifts.open(actor.id, { cajaId: activeCash.id, fondoInicial: 0, sesionActivaId: activeCash.session.id });
+  const before = await totalBox();
+  const summary = await tickets.discountRegistration(registration.id, { monto: 300, motivo: 'Promoción acordada', expectedPrice: 1000, expectedCollected: 0 }, user.id);
+  assert.equal(summary.previewBracket.price, 700);
+  assert.equal(summary.saldoACobrar, 700);
+  assert.equal(summary.totalCollectedSoFar, 0);
+  assert.equal(await totalBox(), before);
+  assert.equal(await movements.sumByRegistration(registration.id), 0);
+  await tickets.closeRegistrationByPlate(registration.id, await payload(registration.id), actor.id);
+  assert.equal(await totalBox(), before + 700);
+  assert.equal(await movements.sumByRegistration(registration.id), 700);
+  const saved = await ds.getRepository(Registration).findOneBy({ id: registration.id });
+  assert.equal(saved.price, 700);
+  assert.equal(saved.exitOperatorName, 'Ana Salida');
+  const box = await boxes.findBoxByDate(saved.departureDay);
+  const discount = box.ticketMovements.find(m => m.tipo === 'DESCUENTO' && m.ticketRegistration.id === registration.id);
+  assert.equal(discount.monto, 300);
+  assert.equal(discount.motivo, 'Promoción acordada');
+  assert.equal(discount.operador, 'Test Operator');
+  assert.equal(discount.usuario, undefined);
+  assert.equal(box.ticketMovements.find(m => m.tipo === 'SALDO' && m.ticketRegistration.id === registration.id).operador, 'Ana Salida');
+  assert.equal(box.salidasDelDia.find(s => s.id === registration.id).operador, 'Ana Salida');
+});
+
+test('descuento de todo el saldo: respeta el anticipo y permite una salida sin otro cobro', async () => {
+  const registration = await openPlate();
+  const before = await totalBox();
+  await tickets.addAdvancePayment(registration.id, { advancePaidAmount: 400, metodo: 'CASH' }, user.id);
+  const summary = await tickets.discountRegistration(registration.id, { monto: 600, motivo: 'Descuento total del saldo', expectedPrice: 1000, expectedCollected: 400 }, user.id);
+  assert.equal(summary.previewBracket.price, 400);
+  assert.equal(summary.saldoACobrar, 0);
+  assert.equal(summary.cambioARetornar, 0);
+  await tickets.closeRegistrationByPlate(registration.id, await payload(registration.id, { closeType: 'NO_CHARGE', metodo: undefined }), user.id);
+  assert.equal(await movements.sumByRegistration(registration.id), 400);
+  assert.equal(await totalBox(), before + 400);
+  assert.ok((await ds.getRepository(Registration).findOneBy({ id: registration.id })).departureTime);
+});
+
+test('descuento sin pagos: salida gratuita y acreditación digital usan el importe descontado', async () => {
+  const free = await openPlate();
+  const before = await totalBox();
+  await tickets.discountRegistration(free.id, { monto: 1000, motivo: 'Bonificación', expectedPrice: 1000, expectedCollected: 0 }, user.id);
+  await tickets.closeRegistrationByPlate(free.id, await payload(free.id, { closeType: 'NO_CHARGE', metodo: undefined }), user.id);
+  assert.equal(await totalBox(), before);
+  assert.equal(await movements.sumByRegistration(free.id), 0);
+  const digital = await openPlate();
+  await tickets.discountRegistration(digital.id, { monto: 250, motivo: 'Promoción', expectedPrice: 1000, expectedCollected: 0 }, user.id);
+  await ds.transaction(m => tickets.acreditarTransferenciaEn(m, digital.id, 750, 'alias-descuento-test', user.id));
+  assert.ok((await ds.getRepository(Registration).findOneBy({ id: digital.id })).departureTime);
+  assert.equal(await movements.sumByRegistration(digital.id), 750);
+  assert.equal(await totalBox(), before);
+});
+
+test('descuento: valida límites, motivo y presupuesto, y dos solicitudes simultáneas no duplican el descuento', async () => {
+  const r = await openPlate();
+  const dto = { monto: 300, motivo: 'Promoción', expectedPrice: 1000, expectedCollected: 0 };
+  for (const bad of [{ monto: 0 }, { monto: -1 }, { monto: 1001 }, { monto: 0.5 }, { motivo: '  ' }, { expectedPrice: 900 }, { expectedCollected: 10 }]) {
+    await assert.rejects(tickets.discountRegistration(r.id, { ...dto, ...bad }, user.id));
+  }
+  assert.equal(await ds.getRepository(Movimiento).count({ where: { ticketRegistration: { id: r.id } } }), 0);
+  const results = await Promise.allSettled([1, 2].map(() => tickets.discountRegistration(r.id, dto, user.id)));
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal((await tickets.getCloseSummary(r.id)).previewBracket.price, 700);
+  assert.equal(await ds.getRepository(Movimiento).count({ where: { ticketRegistration: { id: r.id } } }), 1);
+  await tickets.closeRegistrationByPlate(r.id, await payload(r.id), user.id);
+  await assert.rejects(tickets.discountRegistration(r.id, dto, user.id), /cerrado/);
+});
+
+test('descuento: bloquea un cobro digital pendiente y guarda el autor de gastos y recibos nuevos', async () => {
+  const r = await openPlate();
+  const QR = load('mercadopago/entities/cobro-mercadopago.entity', 'CobroMercadoPago');
+  const qr = await ds.getRepository(QR).save({ registrationId: r.id, tipo: 'HORA', monto: 1000, preferenceId: 'test', initPoint: 'https://example.test', expiraEl: new Date(Date.now() + 60000) });
+  await assert.rejects(tickets.discountRegistration(r.id, { monto: 100, motivo: 'Promoción', expectedPrice: 1000, expectedCollected: 0 }, user.id), /pendiente/);
+  assert.equal(await ds.getRepository(Movimiento).count({ where: { ticketRegistration: { id: r.id } } }), 0);
+  await ds.getRepository(QR).update(qr.id, { estado: 'CANCELADO' });
+  await tickets.discountRegistration(r.id, { monto: 100, motivo: 'Promoción', expectedPrice: 1000, expectedCollected: 0 }, user.id);
+  const expense = await boxes.createOtherPayment({ description: 'Compra de insumos', price: 50, type: 'EGRESOS', paymentMethod: 'CASH' });
+  assert.equal(expense.operatorName, 'Test Operator');
+  const ReceiptPayment = load('receipts/entities/receipt-payment.entity', 'ReceiptPayment');
+  const payments = await ds.getRepository(ReceiptPayment).find();
+  assert.ok(payments.length > 0);
+  assert.ok(payments.every(p => p.operatorName === 'Test Operator'));
+});
+
+
+test('operador aplica descuentos parciales y totales y queda identificado en la planilla', async () => {
+  const operator = await ds.getRepository(User).save({ username: 'operator-discount', firstName: 'Operador', lastName: 'Descuento', email: 'operator-discount@example.test', role: 'USER' });
+  const registration = await openPlate();
+  const before = await totalBox();
+  await tenantContext.run({ userId: operator.id, role: 'USER' }, async () => {
+    const partial = await tickets.discountRegistration(registration.id, { monto: 300, motivo: 'Cliente frecuente', expectedPrice: 1000, expectedCollected: 0 }, operator.id);
+    assert.equal(partial.saldoACobrar, 700);
+    const total = await tickets.discountRegistration(registration.id, { monto: 700, motivo: 'Descuento del saldo restante', expectedPrice: 700, expectedCollected: 0 }, operator.id);
+    assert.equal(total.saldoACobrar, 0);
+    await tickets.closeRegistrationByPlate(registration.id, await payload(registration.id, { closeType: 'NO_CHARGE', metodo: undefined }), operator.id);
+    const saved = await ds.getRepository(Registration).findOneBy({ id: registration.id });
+    assert.equal(saved.exitOperatorName, 'Operador Descuento');
+    const box = await boxes.findBoxByDate(saved.departureDay);
+    const rows = box.ticketMovements.filter(m => m.ticketRegistration.id === registration.id);
+    assert.equal(rows.length, 2);
+    assert.ok(rows.every(m => m.tipo === 'DESCUENTO' && m.operador === 'Operador Descuento'));
+    assert.equal(box.salidasDelDia.find(s => s.id === registration.id).operador, 'Operador Descuento');
+  });
+  assert.equal(await totalBox(), before);
+});
+
+
+test('avisos de operador: descuento y entrada duplicada conservan autor, patente y motivo', async () => {
+  const Note = load('notes/entities/note.entity', 'Note');
+  const operator = await ds.getRepository(User).save({ username: 'avisos-operator', firstName: 'Eva', lastName: 'Operadora', email: 'avisos-operator@example.test', role: 'USER' });
+  await tenantContext.run({ userId: operator.id, role: 'USER' }, async () => {
+    const original = await openPlate();
+    const duplicate = await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: original.licensePlateOriginal, duplicateOverride: true, duplicateOverrideReason: 'Entró con un segundo vehículo' }, operator.id);
+    const entrance = await ds.getRepository(Note).findOne({ where: { sourceKey: `entrada:${duplicate.id}` }, relations: ['user'] });
+    assert.equal(entrance.user.id, operator.id);
+    assert.equal(entrance.context, original.licensePlateOriginal);
+    assert.equal(entrance.description, duplicate.duplicatePlateOverrideReason);
+    const request = { monto: 200, motivo: 'Promoción del día', expectedPrice: 1000, expectedCollected: 0 };
+    await tickets.discountRegistration(original.id, request, operator.id);
+    const movement = await ds.getRepository(Movimiento).findOneBy({ ticketRegistration: { id: original.id }, tipo: 'DESCUENTO' });
+    const discount = await ds.getRepository(Note).findOne({ where: { sourceKey: `movimiento:${movement.id}` }, relations: ['user'] });
+    assert.equal(discount.description, request.motivo);
+    assert.equal(discount.user.id, operator.id);
+    assert.ok(discount.context.includes(original.licensePlateOriginal));
+    await assert.rejects(tickets.discountRegistration(original.id, request, operator.id), /cambi/);
+    assert.equal(await ds.getRepository(Note).count({ where: { sourceType: 'TICKET', sourceId: original.id } }), 1);
+  });
 });

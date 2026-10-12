@@ -18,6 +18,7 @@ import { PricingSnapshot, PricingDayType, PricingLine } from '../pricing/pricing
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
 @Entity({ name: 'ticket_registrations' })
 export class TicketRegistration {
+  @Column('uuid', { nullable: true }) exitTurnoId: string | null;
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

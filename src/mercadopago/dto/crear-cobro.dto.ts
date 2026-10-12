@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 
 // Para estadías y abonos el importe no viaja en el pedido a propósito: lo calcula el servidor
 // desde el resumen de cierre o desde el precio del abono. Si lo mandara el mostrador, un pedido
@@ -17,6 +17,12 @@ export class CrearCobroDto {
   @IsIn(['HORA', 'ABONO', 'INQUILINO'])
   @IsOptional()
   tipo?: 'HORA' | 'ABONO' | 'INQUILINO';
+
+  // Solo abono: se cobra al registrarlo. Al acreditarse queda pagado y sigue en la playa; sin esto
+  // es el cobro de la salida, que además lo retira.
+  @IsOptional()
+  @IsBoolean()
+  alIngresar?: boolean;
 
   @ValidateIf((dto: CrearCobroDto) => dto.tipo === 'INQUILINO')
   @Type(() => Number)

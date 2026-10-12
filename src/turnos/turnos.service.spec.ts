@@ -1,3 +1,4 @@
+jest.mock('./turno-book', () => ({ ...jest.requireActual('./turno-book'), rolloverShifts: jest.fn(async () => undefined) }));
 import { TurnosService } from './turnos.service';
 import { Turno } from './entities/turno.entity';
 import { TicketScheduleSettings } from '../tickets/entities/ticket-schedule-settings.entity';

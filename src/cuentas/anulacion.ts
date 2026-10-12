@@ -40,7 +40,8 @@ export async function contextoAnulacion(
   for (const f of [...filas].sort((a, b) => Number(a.sequence) - Number(b.sequence)))
     if (f.receiptId && !origenes.has(f.receiptId)) origenes.set(f.receiptId, f.id);
 
-  const turnos: { id: string }[] = await m.query(`SELECT id FROM turnos WHERE estado = 'ABIERTO'`);
+  const turnos: { id: string }[] = await m.query(`SELECT t.id FROM turnos t WHERE t.estado = 'ABIERTO' OR (t."cierreAutomatico" AND EXISTS (
+    SELECT 1 FROM turnos a WHERE a.estado='ABIERTO' AND COALESCE(a."jornadaId", a.id)=COALESCE(t."jornadaId",t.id)))`);
   // Una imputación de saldo a favor (CREDIT) no es un pago: se deshace sola al anular.
   const conPagos: { receiptId: string }[] = await m.query(
     `SELECT DISTINCT rp."receiptId"

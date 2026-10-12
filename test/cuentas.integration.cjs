@@ -559,6 +559,9 @@ test('cobro con QR de MercadoPago: se asienta una sola vez, no pasa por la caja 
   await enPlaya(() => cobrosMp.consultar(cobro.id));
   const pagos = await ds.getRepository(CuentaMovimiento).find({ where: { customerId: c.id, tipo: 'PAGO' } });
   assert.equal(pagos.length, 1, 'consultar de nuevo no vuelve a asentar');
+  const qrNotes = await ds.getRepository(load('notes/entities/note.entity', 'Note')).find({ where: { sourceType: 'CUENTA', sourceId: c.id } });
+  assert.equal(qrNotes.length, 1);
+  assert.equal(qrNotes[0].description, pagos[0].motivo);
   assert.equal(await totalCaja(), cajaAntes, 'MercadoPago no entra a la caja física');
 
   const estado = await enPlaya(() => cuentas.estado(c.id));
@@ -638,6 +641,7 @@ test('alias de inquilinos: parcial, prioridad, duplicados, recibo y caja sin efe
     await assert.rejects(iniciar(c.id, {}), /importe/);
     const inicio = await iniciar(c.id, { monto: 300, receiptIds: [elegido.id], nota: 'Pago parcial por alias' });
     assert.equal(inicio.estado, 'ESPERANDO');
+    assert.equal(await ds.getRepository(load('notes/entities/note.entity', 'Note')).count({ where: { sourceType: 'CUENTA', sourceId: c.id } }), 0, 'una nota de alias pendiente todavía no se publica');
     await assert.rejects(iniciar(c.id, { monto: 301 }), /otro importe/);
     assert.equal((await iniciar(c.id, { monto: 300 })).id, inicio.id);
     const cajaAntes = await totalCaja();
@@ -648,6 +652,9 @@ test('alias de inquilinos: parcial, prioridad, duplicados, recibo y caja sin efe
     assert.equal(confirmado.recibo.total, 300);
     assert.equal(confirmado.recibo.medios[0].metodo, 'TRANSFER');
     assert.equal(confirmado.recibo.nota, 'Pago parcial por alias');
+    const aliasNotes = await repo(load('notes/entities/note.entity', 'Note')).find({ where: { sourceType: 'CUENTA', sourceId: c.id } });
+    assert.equal(aliasNotes.length, 1);
+    assert.equal(aliasNotes[0].description, confirmado.recibo.nota);
     assert.equal(confirmado.recibo.imputaciones[0].receiptId, elegido.id);
     assert.equal(confirmado.recibo.saldo, 700);
     assert.equal((await consultar(inicio.id)).recibo.id, confirmado.recibo.id);
@@ -690,4 +697,40 @@ test('alias de inquilinos: parcial, prioridad, duplicados, recibo y caja sin efe
     assert.equal((await consultar(pendiente.id)).estado, 'CONFIRMADO');
     assert.equal(await repo(CuentaMovimiento).countBy({ solicitud: pendiente.id, tipo: 'PAGO' }), 1);
   } finally { global.fetch = original; olvidarLecturas(); }
+});
+
+
+test('avisos de cuenta: saldo inicial por mes, cobro mixto, ajustes y devolución sin duplicados', async () => {
+  const Note = load('notes/entities/note.entity', 'Note');
+  const c = await inquilino('Avisos');
+  await enPlaya(() => cuentas.registrarSaldoInicial(c.id, { tipo: 'DEUDA', modo: 'POR_MES', meses: [{ mes: mes(-2), importe: 500 }, { mes: mes(-1), importe: 500 }], nota: 'Deuda acordada al ingresar' }, user.id));
+  const pedido = { pagos: [{ metodo: 'CASH', importe: 400 }, { metodo: 'TRANSFER', importe: 600 }], nota: 'Pagó una parte por cada medio', solicitudId: require('node:crypto').randomUUID() };
+  const pago = await enPlaya(() => cuentas.registrarPago(c.id, pedido, user.id));
+  await enPlaya(() => cuentas.registrarPago(c.id, pedido, user.id));
+  await enPlaya(() => cuentas.anular(pago.id, { motivo: 'Se cargó en el inquilino equivocado', confirmacion: 1000 }, user.id));
+  await enPlaya(() => cuentas.registrarAjuste(c.id, { tipo: 'RECARGO', importe: 100, motivo: 'Servicio adicional acordado' }, user.id));
+  await enPlaya(() => cuentas.registrarAjuste(c.id, { tipo: 'BONIFICACION', importe: 1200, motivo: 'Compensación acordada' }, user.id));
+  await enPlaya(() => cuentas.registrarDevolucion(c.id, { importe: 100, metodo: 'CASH', motivo: 'Se devuelve el saldo a favor', solicitudId: require('node:crypto').randomUUID() }, user.id));
+  const notes = await ds.getRepository(Note).find({ where: { sourceType: 'CUENTA', sourceId: c.id }, relations: ['user'] });
+  assert.equal(notes.length, 6);
+  assert.deepEqual(notes.map(n => n.origin).sort(), ['Saldo inicial de inquilino', 'Cobro a inquilino', 'Anulación de cuenta', 'Recargo de cuenta', 'Bonificación de cuenta', 'Devolución a inquilino'].sort());
+  assert.ok(notes.every(n => n.user.id === user.id && n.playaId === playa.id));
+});
+
+test('avisos de clientes: alta, edición y lectura conservan un aviso por comentario', async () => {
+  const Note = load('notes/entities/note.entity', 'Note');
+  const clientes = new CustomersService(ds.getRepository(Customer), ds.getRepository(Receipt), ds.getRepository(InterestSettings), receipts, null, ds, null, serviciosDeCocheras(), cuentas);
+  const c = await enPlaya(() => clientes.create({ firstName: 'Cliente', lastName: 'Avisos', customerType: 'PRIVATE', phone: '', numberOfVehicles: 1, comments: 'Llamar antes de mover su vehículo' }));
+  const key = `cliente:${c.id}:comentario`;
+  const initial = await ds.getRepository(Note).findOneBy({ sourceKey: key });
+  assert.equal(initial.description, c.comments);
+  await ds.query('UPDATE notes SET "readBy" = ARRAY[$1::uuid] WHERE id = $2', [user.id, initial.id]);
+  await enPlaya(() => clientes.update(c.id, { comments: c.comments }));
+  assert.equal((await ds.getRepository(Note).findOne({ where: { id: initial.id }, select: ['id', 'readBy'] })).readBy.length, 1);
+  await enPlaya(() => clientes.update(c.id, { comments: 'Avisar al hermano para retirarlo' }));
+  const updated = await ds.getRepository(Note).findOne({ where: { sourceKey: key }, select: ['id', 'description', 'readBy'] });
+  assert.equal(updated.id, initial.id);
+  assert.equal(updated.description, 'Avisar al hermano para retirarlo');
+  assert.deepEqual(updated.readBy, []);
+  assert.equal(await ds.getRepository(Note).count({ where: { sourceKey: key } }), 1);
 });

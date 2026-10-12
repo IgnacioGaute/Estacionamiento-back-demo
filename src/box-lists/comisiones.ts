@@ -72,7 +72,7 @@ export function resumenConComisiones(box: DatosCaja, config: ComisionesCaja, evi
       else grupo.comision += centavos(detalle.comision!);
     }
   };
-  for (const m of box.ticketMovements ?? []) if (m.tipo !== 'CORTESIA') sumar(m.metodo, m.monto, evidencia.movimientos.get(m.id ?? ''));
+  for (const m of box.ticketMovements ?? []) if (m.tipo !== 'CORTESIA' && m.tipo !== 'DESCUENTO') sumar(m.metodo, m.monto, evidencia.movimientos.get(m.id ?? ''));
   for (const t of box.ticketRegistrationForDays ?? []) if (t.paid) sumar(t.paymentMetodo, t.price, evidencia.abonos.get(t.id ?? ''));
   for (const c of box.cobrosInquilinos ?? []) sumar(c.metodo, c.monto, evidencia.inquilinos.get(c.id ?? ''));
   for (const p of box.receiptPayments ?? []) if (!p.cuentaMovimientoId) sumar(p.paymentType, p.price);

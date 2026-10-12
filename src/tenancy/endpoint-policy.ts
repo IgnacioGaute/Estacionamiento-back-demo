@@ -24,6 +24,7 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     'searchActiveRegistrations',
     'getPlateStatus',
     'getCloseSummary',
+    'discountRegistration',
     'closeRegistrationByPlate',
     'getFrequentCustomers',
     'getPlateHistory',

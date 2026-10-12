@@ -1,3 +1,4 @@
+jest.mock('../turnos/turno-book', () => ({ ...jest.requireActual('../turnos/turno-book'), rolloverShifts: jest.fn(async () => undefined) }));
 import { BoxListsService } from '../box-lists/box-lists.service';
 import { MovimientosService } from '../movimientos/movimientos.service';
 import { BoxList } from '../box-lists/entities/box-list.entity';

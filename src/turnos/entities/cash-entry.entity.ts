@@ -4,6 +4,7 @@ import { Playa } from 'src/tenancy/entities/playa.entity';
 // Libro de efectivo físico. Los relevos no son ingresos de venta.
 @Entity({ name: 'cash_entries' })
 export class CashEntry {
+  @Column('varchar', { default: 'COBRO' }) categoria: string;
   @PrimaryGeneratedColumn('uuid') id: string;
 
   @Index()

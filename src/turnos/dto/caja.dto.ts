@@ -1,5 +1,6 @@
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 export class CajaDto {
+  @IsOptional() @IsInt() @Min(0) @Max(100000000) fondoObjetivo?: number;
   @IsString() @MinLength(1) @MaxLength(80) nombre: string;
   @IsBoolean() @IsOptional() activa?: boolean;
 }

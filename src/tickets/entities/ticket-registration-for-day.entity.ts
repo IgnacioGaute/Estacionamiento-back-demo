@@ -13,6 +13,7 @@ import { TICKET_TIME_TYPE, TicketTimeType } from './ticket.constants';
 
 @Entity({ name: 'ticket_registration_for_days' })
 export class TicketRegistrationForDay {
+  @Column('uuid', { nullable: true }) exitTurnoId: string | null;
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -71,6 +72,8 @@ export class TicketRegistrationForDay {
 
   @Column('varchar', { length: 255, nullable: true })
   exitOperatorName: string | null;
+
+  @Column('varchar', { length: 255, nullable: true }) paymentOperatorName: string | null;
 
   // Con qué se cobró el abono por día/semana/mes. Se completa al marcarlo pagado (o al crearlo
   // ya pagado); queda en null mientras siga pendiente de cobro.

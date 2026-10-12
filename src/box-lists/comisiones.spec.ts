@@ -82,13 +82,13 @@ describe('Configuración por empresa y cuenta vinculada', () => {
   const getRepository = (entity: any) => entity === CuentaMercadoPago ? { existsBy: async () => conectada } : repo;
   const service = new BoxListsService({} as any, {} as any, { getRepository, manager: { getRepository } } as any);
   const scope = (empresaId: string, role = 'ADMIN') => ({ empresaId, role, playaId: 'playa', userId: 'usuario' });
-  it('comparte configuración sólo dentro de la empresa y usa valores de referencia', async () => {
+  it('comparte configuración sólo dentro de la empresa, arranca en cero y ofrece la referencia', async () => {
     await tenantContext.run(scope('a'), async () => {
-      expect((await service.getComisiones()).tasas).toEqual(COMISIONES_REFERENCIA);
-      expect((await service.configurarComisiones(COMISIONES_CERO)).tasas).toEqual(COMISIONES_CERO);
+      expect(await service.getComisiones()).toMatchObject({ tasas: COMISIONES_CERO, referencia: COMISIONES_REFERENCIA });
+      expect((await service.configurarComisiones(COMISIONES_REFERENCIA)).tasas).toEqual(COMISIONES_REFERENCIA);
     });
-    expect((await tenantContext.run(scope('b'), () => service.getComisiones())).tasas).toEqual(COMISIONES_REFERENCIA);
-    expect(repo.update).toHaveBeenCalledWith({ id: 'a' }, { comisionesMp: COMISIONES_CERO });
+    expect((await tenantContext.run(scope('b'), () => service.getComisiones())).tasas).toEqual(COMISIONES_CERO);
+    expect(repo.update).toHaveBeenCalledWith({ id: 'a' }, { comisionesMp: COMISIONES_REFERENCIA });
   });
   it('bloquea edición sin cuenta activa, de operadores y sin empresa', async () => {
     conectada = false;

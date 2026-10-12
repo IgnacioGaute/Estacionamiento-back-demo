@@ -308,6 +308,32 @@ test('si la tarifa subió mientras se esperaba, se registra el pago y queda el s
   assert.equal((await repo(Registration).findOneBy({ id: r.id })).departureTime, null);
 });
 
+test('abono por alias: cobrado al registrarlo queda pagado en la playa; cobrado al salir, además se retira', async () => {
+  const ctx = await empresaDePrueba();
+  const abono = (patente) => ctx.en(ctx.playaA, () => repo(RegistrationDay).save({ description: 'Semana', price: 18000, weeks: 1, ticketTimeType: 'SEMANA', vehiclePlateCustomer: patente, vehicleType: 'AUTO', paid: false, retired: false }));
+  const alIngresar = await abono('AB' + n + 'ING');
+  const alSalir = await abono('AB' + n + 'SAL');
+
+  pagosMp = [];
+  olvidarLecturas();
+  const i = await ctx.en(ctx.playaA, () => alias.iniciar(alIngresar.id, 'ABONO', { alIngresar: true }));
+  assert.equal(i.importe, 18000);
+  pagosMp = [transferencia(ctx, 18000)];
+  const v = await consultar(ctx, ctx.playaA, i.id);
+  assert.equal(v.estado, 'CONFIRMADO');
+  assert.equal(v.salidaRegistrada, false, 'al registrarlo no hay salida');
+  const pagado = await repo(RegistrationDay).findOneBy({ id: alIngresar.id });
+  assert.equal(pagado.paid, true);
+  assert.equal(pagado.paymentMetodo, 'TRANSFER');
+  assert.equal(pagado.retired, false, 'sigue en la playa');
+
+  olvidarLecturas();
+  const s = await ctx.en(ctx.playaA, () => alias.iniciar(alSalir.id, 'ABONO'));
+  pagosMp = [transferencia(ctx, 18000)];
+  assert.equal((await consultar(ctx, ctx.playaA, s.id)).salidaRegistrada, true);
+  assert.equal((await repo(RegistrationDay).findOneBy({ id: alSalir.id })).retired, true);
+});
+
 test('reabrir la pantalla recupera el mismo intento y no duplica', async () => {
   const ctx = await empresaDePrueba();
   const r = await estadia(ctx, ctx.playaA);

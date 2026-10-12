@@ -1,7 +1,11 @@
+import { operatorName } from 'src/utils/operator-name';
+import { TicketRegistration } from 'src/tickets/entities/ticket-registration.entity';
+import { TicketRegistrationForDay } from 'src/tickets/entities/ticket-registration-for-day.entity';
+import { recordDigital, rolloverShifts, shiftSummary } from 'src/turnos/turno-book';
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Empresa } from 'src/tenancy/entities/empresa.entity';
 import { ComisionesCajaDto } from './dto/comisiones-caja.dto';
-import { claveComision, COMISIONES_REFERENCIA, detalleComisionPago, etiquetaMedioMp, EvidenciaComisiones, resumenConComisiones } from './comisiones';
+import { claveComision, COMISIONES_CERO, COMISIONES_REFERENCIA, detalleComisionPago, etiquetaMedioMp, EvidenciaComisiones, resumenConComisiones } from './comisiones';
 import { CuentaMercadoPago } from 'src/mercadopago/entities/cuenta-mercadopago.entity';
 import { CobroMercadoPago } from 'src/mercadopago/entities/cobro-mercadopago.entity';
 import { TransferenciaRecibida } from 'src/mercadopago/entities/transferencia-recibida.entity';
@@ -55,7 +59,9 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     const empresa = await manager.getRepository(Empresa).findOneBy({ id: empresaId });
     if (!empresa) throw new NotFoundException('Empresa no encontrada.');
     const conectada = await manager.getRepository(CuentaMercadoPago).existsBy({ empresaId, estado: 'ACTIVA' });
-    return { conectada, tasas: { ...COMISIONES_REFERENCIA, ...empresa.comisionesMp }, referencia: COMISIONES_REFERENCIA };
+    // Sin configuración guardada todo arranca en 0: la tasa real depende del plazo de acreditación
+    // y de las condiciones de cada cuenta, así que la referencia de Mercado Pago se carga a pedido.
+    return { conectada, tasas: { ...COMISIONES_CERO, ...empresa.comisionesMp }, referencia: COMISIONES_REFERENCIA };
   }
 
   async configurarComisiones(dto: ComisionesCajaDto) {
@@ -128,34 +134,39 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     return Object.assign(box, { resumenCaja: resumenConComisiones(box as BoxList, config.tasas, evidencia) });
   }
 
-  private async recordCash(boxId: string, amount: number, manager: EntityManager, description = 'Movimiento de efectivo', turnoIdOverride?: string | null, usuarioId = tenantContext.getStore()?.userId) {
+  private async recordCash(boxId: string, amount: number, manager: EntityManager, description = 'Movimiento de efectivo', turnoIdOverride?: string | null, usuarioId = tenantContext.getStore()?.userId, categoria = 'COBRO', occurredAt?: Date) {
     if (!amount) return;
-    const turno = turnoIdOverride === null || (!turnoIdOverride && !usuarioId) ? null : await manager.getRepository(Turno).findOne({ where: { ...(turnoIdOverride ? { id: turnoIdOverride } : { usuarioApertura: { id: usuarioId } }), estado: 'ABIERTO', cashVersion: 2 } });
+    let turno = turnoIdOverride === null || (!turnoIdOverride && !usuarioId) ? null : await manager.getRepository(Turno).findOne({ where: { ...(turnoIdOverride ? { id: turnoIdOverride } : { usuarioApertura: { id: usuarioId } }), estado: 'ABIERTO', cashVersion: 2 } });
+    if (turnoIdOverride && !turno) {
+      const captured = await manager.getRepository(Turno).findOne({ where: { id: turnoIdOverride, cierreAutomatico: true }, relations: ['cashSession'] });
+      if (captured?.cashSession?.estado === 'ABIERTO') turno = captured;
+    }
     if (turnoIdOverride && !turno) throw new BadRequestException('El turno del cobro ya no está abierto.');
     const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
     if (turnoIdOverride !== null && settings?.shiftsEnabled === true && !turno && await manager.getRepository(Turno).exists({ where: { cashVersion: 2 } })) {
       throw new BadRequestException('Abrí tu turno antes de registrar efectivo en caja.');
     }
-    await manager.getRepository(CashEntry).save({ boxId, amount, description, turnoId: turno?.id ?? null });
+    await manager.getRepository(CashEntry).save({ boxId, amount, description, categoria, ...(occurredAt ? { createdAt: occurredAt } : {}), turnoId: turno?.id ?? null });
   }
 
 
-  async applyTicketPayment(date: string, amount: number, manager: EntityManager, turnoIdOverride?: string | null, usuarioId?: string) {
+  async applyTicketPayment(date: string, amount: number, manager: EntityManager, turnoIdOverride?: string | null, usuarioId?: string, categoria = 'COBRO', occurredAt?: Date) {
     // También protege el caso de la primera caja: bloquear una fila inexistente no alcanza.
     await manager.query('SELECT pg_advisory_xact_lock(718904)');
+    await rolloverShifts(manager);
     const repository = manager.getRepository(BoxList);
     let box = await repository.findOne({ where: { date }, lock: { mode: 'pessimistic_write' } });
     if (!box) {
       const last = await repository.findOne({ where: {}, order: { boxNumber: 'DESC' } });
       box = repository.create({ date, boxNumber: (last?.boxNumber ?? 0) + 1, totalPrice: amount });
       box = await repository.save(box);
-      await this.recordCash(box.id, amount, manager, 'Movimiento de efectivo', turnoIdOverride, usuarioId);
+      await this.recordCash(box.id, amount, manager, 'Movimiento de efectivo', turnoIdOverride, usuarioId, categoria, occurredAt);
       return box;
     }
     if (amount !== 0) {
       await repository.increment({ id: box.id }, 'totalPrice', amount);
       box.totalPrice += amount;
-      await this.recordCash(box.id, amount, manager, 'Movimiento de efectivo', turnoIdOverride, usuarioId);
+      await this.recordCash(box.id, amount, manager, 'Movimiento de efectivo', turnoIdOverride, usuarioId, categoria, occurredAt);
     }
     return box;
   }
@@ -275,17 +286,29 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     const ticketMovements = await (manager ?? this.dataSource.manager).getRepository(Movimiento)
       .createQueryBuilder('m')
       .innerJoinAndSelect('m.ticketRegistration', 'registration')
+      .withDeleted().leftJoinAndSelect('m.usuario', 'operador')
       .where('m.fechaHora >= :start AND m.fechaHora < :end', { start: start.toDate(), end: start.add(1, 'day').toDate() })
       .orderBy('m.sequence', 'ASC')
       .getMany();
-    return Object.assign(box, { ticketMovements });
+    const hourly = await (manager ?? this.dataSource.manager).getRepository(TicketRegistration).find({ where: { departureDay: box.date } });
+    const daily = await (manager ?? this.dataSource.manager).getRepository(TicketRegistrationForDay).createQueryBuilder('r')
+      .where('r.retired = true AND r.retiredAt >= :start AND r.retiredAt < :end', { start: start.toDate(), end: start.add(1, 'day').toDate() }).getMany();
+    const salidasDelDia = [...hourly.map(r => ({ id: r.id, identificacion: r.licensePlateOriginal || r.codeBarTicket || 'Sin patente',
+      hora: `${r.departureDay}T${r.departureTime}-03:00`, operador: r.exitOperatorName })),
+      ...daily.map(r => ({ id: r.id, identificacion: r.vehiclePlateCustomer || r.description || 'Abono', hora: r.retiredAt, operador: r.exitOperatorName }))];
+    return Object.assign(box, { salidasDelDia, ticketMovements: ticketMovements.map(({ usuario, ...m }) => ({ ...m,
+      operador: usuario ? [usuario.firstName, usuario.lastName].filter(Boolean).join(' ').trim() || usuario.username : null })) });
   }
 
-  // Un turno no entra en un día: uno de 24 h cruza la medianoche y aparece en dos planillas, y
-  // un día puede tener varios turnos. La relación es de muchos a muchos y ya la expresa
-  // cash_entries, que lleva boxId y turnoId en cada fila. Lo que pertenece a este día es la
-  // porción de efectivo que cayó en él — el arqueo (contado, diferencia, retiro) es del turno
-  // entero y se mira en su historial, no acá, o quedaría mal repartido entre dos días.
+  // Cada tramo pertenece a su fecha operativa. Los turnos anteriores al corte diario
+  // se ubican en su fecha de apertura, sin repetirlos en las planillas siguientes.
+  private turnosDeFecha(date: string, manager: EntityManager) {
+    const start = dayjs.tz(`${date} 00:00:00`, 'America/Argentina/Buenos_Aires');
+    return manager.getRepository(Turno).createQueryBuilder('t')
+      .where('t.fechaOperativa = :date OR (t.fechaOperativa IS NULL AND t.fechaApertura >= :start AND t.fechaApertura < :end)',
+        { date, start: start.toDate(), end: start.add(1, 'day').toDate() });
+  }
+
   private async withTurnos(box: BoxList, manager?: EntityManager) {
     const repository = manager ?? this.dataSource.manager;
     const start = dayjs.tz(`${box.date} 00:00:00`, 'America/Argentina/Buenos_Aires');
@@ -302,41 +325,20 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
       .groupBy('c.turnoId')
       .getRawMany<{ turnoId: string | null; efectivoDelDia: string; movimientos: string; desde: Date; hasta: Date }>();
 
-    const ids = rows.map((r) => r.turnoId).filter((id): id is string => !!id);
-    const turnos = ids.length
-      ? await repository.getRepository(Turno).find({ where: { id: In(ids) }, relations: ['usuarioApertura', 'usuarioCierre'] })
-      : [];
-    const porId = new Map(turnos.map((t) => [t.id, t]));
-
-    const turnosDelDia = rows
-      .map((row) => {
-        // turno null = efectivo registrado antes de adoptar la caja por turnos. Se muestra
-        // aparte para que la suma de los turnos siga cuadrando con el total del día.
-        const turno = row.turnoId ? porId.get(row.turnoId) ?? null : null;
-        const abrioAntes = !!turno && dayjs(turno.fechaApertura).isBefore(start);
-        const cierraDespues = !!turno && (!turno.fechaCierre || dayjs(turno.fechaCierre).isAfter(end));
-        return {
-          turnoId: row.turnoId,
-          turno: turno && tenantContext.getStore()?.role === 'USER' ? {
-            id: turno.id, nombre: turno.nombre, estado: turno.estado,
-            fechaApertura: turno.fechaApertura, fechaCierre: turno.fechaCierre,
-            usuarioApertura: turno.usuarioApertura ? {
-              firstName: turno.usuarioApertura.firstName, lastName: turno.usuarioApertura.lastName,
-            } : null,
-          } : turno,
-          efectivoDelDia: Number(row.efectivoDelDia),
-          movimientos: Number(row.movimientos),
-          desde: row.desde,
-          hasta: row.hasta,
-          // Avisa a la interfaz que el arqueo de ese turno no le corresponde sólo a este día.
-          abarcaOtrosDias: abrioAntes || cierraDespues,
-        };
-      })
-      .sort((a, b) => {
-        if (!a.turnoId) return 1;
-        if (!b.turnoId) return -1;
-        return new Date(a.desde).getTime() - new Date(b.desde).getTime();
-      });
+    const turnos = await this.turnosDeFecha(box.date, repository)
+      .leftJoinAndSelect('t.usuarioApertura', 'u').leftJoinAndSelect('t.caja', 'caja').leftJoinAndSelect('t.cashSession', 'session')
+      .orderBy("CASE WHEN t.estado = 'ABIERTO' THEN 0 ELSE 1 END", 'ASC')
+      .addOrderBy('t.fechaCierre', 'DESC', 'NULLS LAST')
+      .addOrderBy('t.fechaApertura', 'DESC').addOrderBy('t.id', 'DESC').getMany();
+    const turnosDelDia = await Promise.all(turnos.map(async turno => {
+      const row = rows.find(r => r.turnoId === turno.id);
+      return { turnoId: turno.id, turno: { ...turno, usuarioApertura: turno.usuarioApertura ? { id: turno.usuarioApertura.id, firstName: turno.usuarioApertura.firstName, lastName: turno.usuarioApertura.lastName } : null, resumen: await shiftSummary(repository, turno) },
+        efectivoDelDia: Number(row?.efectivoDelDia ?? 0), movimientos: Number(row?.movimientos ?? 0),
+        desde: turno.fechaApertura, hasta: turno.fechaCierre ?? new Date(),
+        abarcaOtrosDias: !turno.fechaOperativa && (dayjs(turno.fechaApertura).isBefore(start) || !turno.fechaCierre || dayjs(turno.fechaCierre).isAfter(end)) };
+    }));
+    const unassigned = rows.find(r => !r.turnoId);
+    if (unassigned) turnosDelDia.push({ turnoId: null, turno: null, efectivoDelDia: Number(unassigned.efectivoDelDia), movimientos: Number(unassigned.movimientos), desde: unassigned.desde, hasta: unassigned.hasta, abarcaOtrosDias: false });
 
     return Object.assign(box, { turnosDelDia });
   }
@@ -357,10 +359,11 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     const dia = String(box.date).slice(0, 10);
     const filas: any[] = await repository.query(
       `SELECT m.id, m.tipo, m.metodo, m.importe, m.numero, m.detalle, m.solicitud, m."createdAt", m."anulaId",
-              c."firstName", c."lastName",
+              c."firstName", c."lastName", trim(concat(u."firstName", ' ', u."lastName")) AS operador,
               o.tipo AS "tipoOriginal", to_char(o.fecha, 'YYYY-MM-DD') AS "fechaOriginal"
        FROM cuenta_movimientos m
        JOIN customers c ON c.id = m."customerId"
+       LEFT JOIN users u ON u.id = m."usuarioId"
        LEFT JOIN cuenta_movimientos o ON o.id = m."anulaId"
        WHERE m.fecha = $1 AND m.tipo IN ('PAGO', 'DEVOLUCION', 'ANULACION')
        ORDER BY m.sequence`,
@@ -379,6 +382,7 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
       .map((f) => ({
         id: f.id as string,
         solicitud: f.solicitud as string | null,
+        operador: f.operador || null,
         tipo: f.tipo as 'PAGO' | 'DEVOLUCION' | 'ANULACION',
         tipoOriginal: (f.tipoOriginal ?? null) as 'PAGO' | 'DEVOLUCION' | null,
         metodo: f.metodo as 'CASH' | 'TRANSFER' | 'CHECK' | 'MERCADOPAGO',
@@ -393,10 +397,11 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
 
   async findBoxByDate(date: string, manager?: EntityManager): Promise<BoxList | null> {
     try {
-      if (manager) await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      if (!manager) return this.dataSource.transaction(m => this.findBoxByDate(date, m));
+      await rolloverShifts(manager);
       const repo = manager ? manager.getRepository(BoxList) : this.boxListRepository;
 
-      const boxList = await repo.findOne({
+      let boxList = await repo.findOne({
         where: { date: date},
         relations: [
           'ticketRegistrations',
@@ -425,6 +430,9 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
         ],
       });
       
+      if (!boxList && await this.turnosDeFecha(date, manager).getExists()) {
+        boxList = manager ? await this.applyTicketPayment(date, 0, manager) : await this.dataSource.transaction(m => this.applyTicketPayment(date, 0, m));
+      }
       if (!boxList) {
         console.warn(`No se encontró un BoxList para la fecha: ${date}`);
         return null;
@@ -481,8 +489,10 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     return this.dataSource.transaction(async manager => {
       const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
       const amount = dto.paymentMethod === 'TRANSFER' ? 0 : this.computeBoxDelta(dto.type, dto.price);
-      const box = await this.applyTicketPayment(date, amount, manager);
-      return manager.getRepository(OtherPayment).save(manager.getRepository(OtherPayment).create({ ...dto, dateNow: date, boxList: { id: box.id } }));
+      const box = await this.applyTicketPayment(date, amount, manager, undefined, undefined, dto.type === 'EGRESOS' ? 'GASTO' : 'INGRESO');
+      const saved = await manager.getRepository(OtherPayment).save(manager.getRepository(OtherPayment).create({ ...dto, operatorName: await operatorName(manager), dateNow: date, boxList: { id: box.id } }));
+      if (dto.paymentMethod === 'TRANSFER' && dto.type !== 'EGRESOS') await recordDigital(manager, dto.price, 'TRANSFER', 'Varios ' + saved.id);
+      return saved;
     });
   }
 
@@ -493,11 +503,16 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
       const old = await repo.findOne({ where: { id }, relations: ['boxList'] });
       if (!old) throw new NotFoundException('Movimiento no encontrado.');
       const before = old.paymentMethod === 'TRANSFER' ? 0 : this.computeBoxDelta(old.type, old.price);
+      const oldType = old.type;
+      const digitalBefore = old.paymentMethod === 'TRANSFER' && old.type !== 'EGRESOS' ? old.price : 0;
       const updated = repo.merge(old, dto);
       const after = updated.paymentMethod === 'TRANSFER' ? 0 : this.computeBoxDelta(updated.type, updated.price);
       const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
       if (old.dateNow !== date) throw new BadRequestException('Los movimientos de días anteriores se corrigen con un movimiento nuevo.');
-      const box = await this.applyTicketPayment(date, after - before, manager);
+      await this.applyTicketPayment(date, -before, manager, undefined, undefined, oldType === 'EGRESOS' ? 'GASTO' : 'INGRESO');
+      const box = await this.applyTicketPayment(date, after, manager, undefined, undefined, updated.type === 'EGRESOS' ? 'GASTO' : 'INGRESO');
+      const digitalAfter = updated.paymentMethod === 'TRANSFER' && updated.type !== 'EGRESOS' ? updated.price : 0;
+      if (digitalAfter !== digitalBefore) await recordDigital(manager, digitalAfter - digitalBefore, 'TRANSFER', 'Corrección varios ' + id);
       updated.boxList = { id: box.id } as BoxList;
       return repo.save(updated);
     });
@@ -523,7 +538,8 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
       if (!payment) throw new NotFoundException('Movimiento no encontrado.');
       const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
       if (payment.dateNow !== date) throw new BadRequestException('Los movimientos de días anteriores se corrigen con un movimiento nuevo.');
-      if (payment.paymentMethod !== 'TRANSFER') await this.applyTicketPayment(date, -this.computeBoxDelta(payment.type, payment.price), manager);
+      if (payment.paymentMethod !== 'TRANSFER') await this.applyTicketPayment(date, -this.computeBoxDelta(payment.type, payment.price), manager, undefined, undefined, payment.type === 'EGRESOS' ? 'GASTO' : 'INGRESO');
+      else if (payment.type !== 'EGRESOS') await recordDigital(manager, -payment.price, 'TRANSFER', 'Eliminación varios ' + id);
       await repo.remove(payment);
       return { message: 'Movimiento eliminado.' };
     });

@@ -2,6 +2,7 @@ import { CreateVehicleTypeDto, UpdateVehicleTypeDto } from './dto/vehicle-type.d
 import { Controller, Get, Post, Body, Patch, Param, Query, Delete, UseGuards, Req, UnauthorizedException, ParseIntPipe } from '@nestjs/common';
 import { AuthenticatedRequest } from 'src/types/request';
 import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate.dto';
+import { DiscountRegistrationDto } from './dto/discount-registration.dto';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
 import { PreviewPriceDto, SimulatePriceDto } from './dto/preview-price.dto';
 import { TicketsService } from './tickets.service';
@@ -233,6 +234,12 @@ export class TicketsController {
   @Get('registrations/:id/close-summary')
   getCloseSummary(@Param('id') id: string) {
     return this.ticketsService.getCloseSummary(id);
+  }
+
+  @Post('registrations/:id/discount')
+  discountRegistration(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: DiscountRegistrationDto) {
+    if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    return this.ticketsService.discountRegistration(id, dto, req.user.userId);
   }
 
   @Patch('registrations/:id/close')

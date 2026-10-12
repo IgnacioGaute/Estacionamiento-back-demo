@@ -20,6 +20,7 @@ async function bundle() {
   fs.mkdirSync(output, { recursive: true });
   write('loader.cjs', `const ts = require(${JSON.stringify(require.resolve('typescript'))}); module.exports = function(source) { return ts.transpileModule(source, { fileName: this.resourcePath, compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020, esModuleInterop: true } }).outputText; };`);
   write('navigation.tsx', `import React from 'react'; export const useRouter = () => ({refresh() {}}); export const useSearchParams = () => new URLSearchParams(window.location.search); export const usePathname = () => '/admin/tarifas'; export default function Link({children,...props}) {return <a {...props}>{children}</a>;}`);
+  write('css-loader.cjs', `module.exports = function() { return 'export {};'; };`);
   write('vehicles.ts', `export const useVehicleTypes = () => ({types: window.__vehicles, loading: false, error: ''});`);
   write('toast.ts', `export const toast = {success(message) { window.__toast = message; }, error(message) { window.__toast = message; }};`);
   // Los pases conservan sus componentes anteriores; esta prueba cubre el nuevo editor Por tiempo.
@@ -54,17 +55,19 @@ async function bundle() {
       '@/lib/toast$': path.join(output, 'toast.ts'),
       '@': path.join(front, 'src'),
     } },
-    module: { rules: [{ test: /\.tsx?$/, exclude: /node_modules/, use: path.join(output, 'loader.cjs') }] },
+    // El Stepper de React Bits es .jsx e importa su CSS: la hoja se agrega a la página aparte.
+    module: { rules: [{ test: /\.[jt]sx?$/, exclude: /node_modules/, use: path.join(output, 'loader.cjs') }, { test: /\.css$/, use: path.join(output, 'css-loader.cjs') }] },
     plugins: [new webpack.NormalModuleReplacementPlugin(/ticket-price\/(tickets-price-table|ticket-price-columns|create-ticket-price-dialog|update-ticket-price-dialog|delete-ticket-price-dialog)$/, path.join(output, 'passes.tsx'))],
   });
   await new Promise((resolve, reject) => compiler.run((error, stats) => compiler.close(() => error || stats.hasErrors() ? reject(error || new Error(stats.toString({ all: false, errors: true }))) : resolve())));
   const configModule = { exports: {} };
-  const configSource = ts.transpileModule(fs.readFileSync(path.join(front, 'tailwind.config.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+  const configSource = ts.transpileModule(fs.readFileSync(path.join(front, 'tailwind.config.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText;
   new Function('require', 'module', 'exports', configSource)(frontRequire, configModule, configModule.exports);
   const config = configModule.exports.default;
   config.content = [path.join(front, 'src/**/*.{tsx,ts}').replaceAll('\\', '/')];
   const css = await frontRequire('postcss')([frontRequire('tailwindcss')(config)]).process(fs.readFileSync(path.join(front, 'src/app/globals.css'), 'utf8'), { from: undefined });
-  return css.css;
+  const stepperCss = ['src/components/ui/stepper/Stepper.css', 'src/components/setup-stepper/setup-stepper.css'].map(file => fs.readFileSync(path.join(front, file), 'utf8')).join('\n');
+  return css.css + '\n' + stepperCss;
 }
 
 const vehicles = [{ code: 'AUTO', name: 'Auto', enabled: true }];
@@ -94,36 +97,55 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
       await page.evaluate((p, v, prices) => window.mount(p, v, prices), data, types, prices);
       await page.waitForSelector('button[role="tab"]');
     };
+    // El pie del Stepper queda fijo abajo: se centra cada control para que el clic no caiga en él.
+    const center = selector => page.$eval(selector, e => e.scrollIntoView({ block: 'center' }));
     const click = async label => {
+      // Mientras se edita, el simulador queda plegado debajo de los pasos.
+      if (label === 'Comparar ejemplo') await page.evaluate(() => document.querySelectorAll('details[data-tariff-try]').forEach(d => { d.open = true; }));
       const button = await page.waitForFunction(text => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === text && b.getBoundingClientRect().height > 0), {}, label);
+      await button.asElement().evaluate(e => e.scrollIntoView({ block: 'center' }));
       await button.asElement().click();
     };
     const select = async (name, label) => {
+      await center('[role="combobox"][aria-label="' + name + '"]');
       await page.click('[role="combobox"][aria-label="' + name + '"]');
       const option = await page.waitForFunction(text => [...document.querySelectorAll('[role="option"]')].find(o => o.textContent.startsWith(text)), {}, label);
       await option.asElement().click();
       await page.waitForSelector('[role="listbox"]', { hidden: true });
     };
     const fill = async (selector, value) => {
+      await center(selector);
       await page.click(selector, { clickCount: 3 });
       await page.keyboard.press('Backspace');
       await page.type(selector, value);
     };
     const overflow = async () => {
-      const dimensions = await page.evaluate(() => ({ width: innerWidth, scroll: document.documentElement.scrollWidth }));
+      const dimensions = await page.evaluate(() => ({ width: innerWidth, scroll: document.documentElement.scrollWidth,
+        wide: [...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).slice(-3).map(e => e.className.toString().slice(0, 60)) }));
       assert.ok(dimensions.scroll <= dimensions.width + 1, JSON.stringify(dimensions));
     };
+    // El borrador se edita en 3 pasos (Cobro, Precios, Horarios/Tolerancia): sólo el paso actual
+    // tiene sus campos montados, así que cada flujo va al paso antes de tocarlos.
+    const paso = async n => {
+      await page.waitForSelector('.tariff-stepper [aria-current="step"]');
+      const actual = await page.$eval('.tariff-stepper [aria-current="step"]', e => e.getAttribute('aria-label'));
+      if (!actual.startsWith('Paso ' + n + ':')) await page.click('.tariff-stepper button[aria-label^="Paso ' + n + ':"]');
+      await page.waitForFunction(n => document.querySelector('.tariff-stepper [aria-current="step"]')?.getAttribute('aria-label').startsWith('Paso ' + n + ':') && !document.querySelector('.stepper__pane--leaving')
+        && ![...document.querySelectorAll('.stepper__viewport, .stepper__pane')].some(e => e.getAnimations().some(a => a.playState === 'running')), {}, n);
+    };
+    const aplicar = async () => { await paso(3); await click('Aplicar tarifas'); };
+    // Con lista de precios el paso 2 tiene dos partes: 1 = Duraciones, 2 = Si se queda más tiempo.
+    const parte = async n => { const sel = '[aria-label="Partes del paso 2"] button:nth-child(' + n + ')'; await center(sel); await page.click(sel); await page.waitForSelector(sel + '[aria-pressed="true"]'); };
     await mount();
     await click('Editar tarifas');
+    await paso(2);
     assert.equal(await page.evaluate(() => window.__saves.length), 0);
     await fill('input[aria-label="Auto: precio todo el día"]', '2500');
     await click('Comparar ejemplo');
-    await page.waitForSelector('[aria-live="polite"]');
-    let comparison = await page.$eval('[aria-live="polite"]', e => e.textContent);
+    await page.waitForSelector('[aria-live="polite"]:not(.stepper__viewport)');
+    let comparison = await page.$eval('[aria-live="polite"]:not(.stepper__viewport)', e => e.textContent);
     assert.match(comparison, /4\.000/);
     assert.match(comparison, /5\.000/);
-    await click('Día / semana / mes');
-    await click('Por tiempo· Borrador');
     assert.equal(await page.$eval('input[aria-label="Auto: precio todo el día"]', e => e.value), '2500');
     await overflow();
     for (const width of [320, 390, 768]) {
@@ -134,19 +156,21 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     await page.screenshot({ path: path.join(output, 'tarifas-mobile.png'), fullPage: true });
     await page.setViewport({ width: 1280, height: 900 });
     await page.screenshot({ path: path.join(output, 'tarifas-desktop.png'), fullPage: true });
-    await click('Aplicar a los próximos ingresos');
+    await aplicar();
     await page.waitForFunction(() => window.__saves.length === 1 && !document.getElementById('tariff-draft-heading'));
     assert.equal(await page.evaluate(() => window.__saves[0].draft.schedule.pricingOptions.charging.rates[0].nightPrice), 2500);
 
     // Un conflicto conserva valores editados y obliga a revisar antes de reintentar.
     await click('Editar tarifas');
+    await paso(2);
     await fill('input[aria-label="Auto: precio todo el día"]', '2800');
     await page.evaluate(() => { window.__conflict = true; });
-    await click('Aplicar a los próximos ingresos');
+    await aplicar();
     await page.waitForFunction(() => document.body.textContent.includes('cambiaron mientras editabas'));
+    await paso(2);
     assert.equal(await page.$eval('input[aria-label="Auto: precio todo el día"]', e => e.value), '2800');
     await click('Revisé la versión vigente: conservar mi borrador');
-    await click('Aplicar a los próximos ingresos');
+    await aplicar();
     await page.waitForFunction(() => !document.getElementById('tariff-draft-heading'));
 
     // Playa nueva: sin precios reales hasta aplicar; cambiar de modalidad no pierde la lista.
@@ -155,10 +179,11 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     await click('Configurar mis tarifas');
     assert.equal(await page.$eval('input[value="CUSTOM"]', e => e.checked), true);
     await page.click('input[value="STARTED"]');
+    await paso(2);
     await fill('input[aria-label="Auto: precio todo el día"]', '2000');
     await click('Comparar ejemplo');
-    await page.waitForSelector('[aria-live="polite"]');
-    assert.match(await page.$eval('[aria-live="polite"]', e => e.textContent), /4\.000/);
+    await page.waitForSelector('[aria-live="polite"]:not(.stepper__viewport)');
+    assert.match(await page.$eval('[aria-live="polite"]:not(.stepper__viewport)', e => e.textContent), /4\.000/);
     assert.equal(await page.evaluate(() => window.__saves.length), 0);
     await click('Descartar cambios');
     await page.waitForSelector('[role="dialog"]');
@@ -169,6 +194,7 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     const legacy = plan(); legacy.schedule.pricingOptions.crossing = { enabled: true, mode: 'SPLIT' };
     await mount(legacy);
     await click('Editar tarifas');
+    await paso(3);
     assert.match(await page.$eval('[role="combobox"][aria-label="Precio al cambiar de horario"]', e => e.textContent), /Separar el tiempo/);
     await click('Cancelar');
     assert.deepEqual(await page.evaluate(() => window.__plan), legacy);
@@ -182,6 +208,7 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
       assert.equal(await page.$('input[aria-label="Auto: precio todo el día"]'), null);
       assert.ok(await page.evaluate(() => document.body.textContent.includes('Elegí una de las dos opciones')));
       await page.click('input[value="STARTED"]');
+      await paso(2);
       await page.waitForSelector('input[aria-label="Auto: precio todo el día"]');
       assert.deepEqual(await page.evaluate(() => window.__plan), old);
       await click('Descartar cambios'); await click('Descartar borrador');
@@ -195,6 +222,7 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     await mount(list);
     await click('Editar tarifas');
     assert.equal(await page.$eval('input[value="CUSTOM"]', e => e.checked), true);
+    await paso(2);
     assert.equal(await page.$eval('input[aria-label="Auto: duración 2"]', e => e.value), '1');
     await select('Auto: duración 2: unidad', 'minutos');
     assert.equal(await page.$eval('input[aria-label="Auto: duración 2"]', e => e.value), '60');
@@ -250,12 +278,13 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     assert.deepEqual(await page.evaluate(() => window.__plan), list);
     await click('Agregar duración');
     await fill('input[aria-label="Auto: precio 3"]', '4200');
+    await parte(2);
     await click('Definir cobro posterior');
     await fill('input[aria-label="Auto: precio posterior 1"]', '1800');
     await select('Auto: período adicional 1: unidad', 'minutos');
     await fill('input[aria-label="Auto: período adicional 1"]', '30');
     await click('Comparar ejemplo');
-    await page.waitForSelector('[aria-live="polite"]');
+    await page.waitForSelector('[aria-live="polite"]:not(.stepper__viewport)');
     await page.setViewport({ width: 1280, height: 1000 });
     await page.screenshot({ path: path.join(output, 'tarifas-lista-desktop.png'), fullPage: true });
     await (await page.$('[data-tariff-price-list]')).screenshot({ path: path.join(output, 'tarifas-lista-detalle.png') });
@@ -267,7 +296,7 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     await page.setViewport({ width: 390, height: 850 });
     await page.screenshot({ path: path.join(output, 'tarifas-lista-mobile.png'), fullPage: true });
     await (await page.$('[data-tariff-price-list]')).screenshot({ path: path.join(output, 'tarifas-lista-detalle-mobile.png') });
-    await click('Aplicar a los próximos ingresos');
+    await aplicar();
     await page.waitForFunction(() => window.__saves.length === 1 && !document.getElementById('tariff-draft-heading'));
     const saved = await page.evaluate(() => window.__saves[0].draft);
     assert.equal(saved.schedule.pricingOptions.charging.enabled, false);
@@ -278,7 +307,7 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     // El orden no depende del alta; una copia queda pegada a su origen y no reutiliza su id.
     const unordered = plan(); unordered.schedule.pricingOptions.charging.enabled = false; unordered.schedule.pricingOptions.charging.rates = [];
     unordered.brackets = [row('two-days',2880,28000), row('two-hours',120,4000,'DAY'), row('thirty',30,1000), row('one-day',1440,15000), row('one-hour',60,2000)];
-    await mount(unordered); await click('Editar tarifas');
+    await mount(unordered); await click('Editar tarifas'); await paso(2);
     const durationsInView = () => page.$$eval('[data-tariff-duration]', rows => rows.map(row => {
       const input = row.querySelector('input');
       const unit = row.querySelector('[role="combobox"][aria-label$=": unidad"]').title;
@@ -304,7 +333,7 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     assert.deepEqual(await durationsInView(), [30,60,120,120,1440,2880]);
     for (const width of [320,768,1280]) { await page.setViewport({ width, height: 900 }); await overflow(); }
     await (await page.$('[data-tariff-price-list]')).screenshot({ path: path.join(output, 'tarifas-copiar-orden.png') });
-    await click('Aplicar a los próximos ingresos');
+    await aplicar();
     await page.waitForFunction(() => window.__saves.length === 1 && !document.getElementById('tariff-draft-heading'));
     const copiedPlan = await page.evaluate(() => window.__saves[0].draft);
     const source = copiedPlan.brackets.find(r => r.id === 'two-hours');
@@ -314,6 +343,7 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     assert.equal(copied.id, undefined);
     assert.equal(copiedPlan.brackets.length, 6);
     await click('Editar tarifas');
+    await paso(2);
     assert.deepEqual(await durationsInView(), [30,60,120,120,1440,2880]);
     await click('Cancelar');
 
@@ -322,6 +352,7 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     splitEndings.brackets = [row('auto-base',60,2000), { ...row('moto-base',60,1000), vehicleType: 'MOTO' }];
     await mount(splitEndings, [...vehicles, { code: 'MOTO', name: 'Moto', enabled: true }]);
     await click('Editar tarifas');
+    await paso(2);
     const clickForVehicle = async (vehicle, label) => {
       const button = await page.waitForFunction((vehicle, label) => {
         const section = [...document.querySelectorAll('[data-tariff-price-list]')].find(e => e.querySelector('h4').textContent === vehicle);
@@ -329,6 +360,7 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
       }, {}, vehicle, label);
       await button.asElement().click();
     };
+    await parte(2);
     await clickForVehicle('Auto', 'Agregar cobro de día');
     assert.equal(await page.$eval('#tariff-night', e => e.getAttribute('aria-checked')), 'true');
     await fill('input[aria-label="Auto: precio posterior 1"]', '500');
@@ -351,7 +383,7 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     await page.keyboard.press('Escape'); await page.waitForSelector('[role="listbox"]', { hidden: true });
     for (const width of [320,768,1280]) { await page.setViewport({ width, height: 900 }); await overflow(); }
     await page.screenshot({ path: path.join(output, 'tarifas-cobro-dia-noche.png'), fullPage: true });
-    await click('Aplicar a los próximos ingresos');
+    await aplicar();
     await page.waitForFunction(() => window.__saves.length === 1 && !document.getElementById('tariff-draft-heading'));
     const endingsPlan = await page.evaluate(() => window.__saves[0].draft);
     assert.equal(endingsPlan.brackets.filter(r => r.uptoMinutes === null).length, 4);
@@ -364,6 +396,8 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     assert.equal(charge('MOTO', '10'), 1250);
     assert.equal(charge('MOTO', '22'), 3000);
     await click('Editar tarifas');
+    await paso(2);
+    await parte(2);
     assert.equal(await page.$$eval('[data-tariff-ending]', rows => rows.length), 4);
     await click('Cancelar');
 

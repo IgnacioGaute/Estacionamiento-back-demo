@@ -1,3 +1,4 @@
+import { externalPayment } from 'src/turnos/turno-book';
 import {
   BadRequestException,
   Injectable,
@@ -59,7 +60,7 @@ export class CobrosMercadoPagoService {
     registrationId: string,
     tipo: 'HORA' | 'ABONO' | 'INQUILINO',
     usuarioId: string,
-    inquilino?: { monto?: number; receiptIds?: string[]; nota?: string },
+    inquilino?: { monto?: number; receiptIds?: string[]; nota?: string; alIngresar?: boolean },
   ) {
     const { empresaId, playaId } = this.scope();
     const { monto, patente } =
@@ -99,7 +100,9 @@ export class CobrosMercadoPagoService {
                 receiptIds: inquilino?.receiptIds ?? [],
                 nota: inquilino?.nota?.trim() || null,
               }
-            : null,
+            : tipo === 'ABONO' && inquilino?.alIngresar
+              ? { alIngresar: true }
+              : null,
         estado: 'PENDIENTE',
         preferenceId: '',
         initPoint: '',
@@ -273,6 +276,7 @@ export class CobrosMercadoPagoService {
       return this.aVista(await this.cobros.findOneBy({ id: cobro.id }));
 
     try {
+      await externalPayment.run({ userId: cobro.creadoPor, at: cobro.createdAt, medio: 'QR' }, async () => {
       if (cobro.tipo === 'INQUILINO') {
         // Un pago más de la cuenta corriente, con MercadoPago como medio y el id del cobro como
         // solicitud: aunque este paso se repitiera, el pago se asienta una sola vez.
@@ -287,11 +291,14 @@ export class CobrosMercadoPagoService {
           cobro.creadoPor,
         );
       } else if (cobro.tipo === 'ABONO') {
-        // El abono no pasa por el libro de movimientos: se marca pagado y retirado, igual que
-        // cuando se cobra en efectivo al salir, y con el medio puesto no suma a la caja física.
+        // El abono no pasa por el libro de movimientos: se marca pagado, igual que cuando se
+        // cobra en efectivo, y con el medio puesto no suma a la caja física. Cobrado al salir
+        // además se retira; cobrado al registrarlo, el vehículo recién entra.
         await this.tickets.updateTicketStatus(
           cobro.registrationId,
-          { paid: true, paymentMetodo: 'MERCADOPAGO', retired: true },
+          cobro.detalle?.alIngresar
+            ? { paid: true, paymentMetodo: 'MERCADOPAGO' }
+            : { paid: true, paymentMetodo: 'MERCADOPAGO', retired: true },
           cobro.creadoPor ?? undefined,
         );
       } else {
@@ -305,6 +312,7 @@ export class CobrosMercadoPagoService {
           cobro.creadoPor ?? '',
         );
       }
+      });
     } catch (error) {
       // Se devuelve el cobro a pendiente para que el próximo intento pueda registrarlo: quedaría
       // cobrado en MercadoPago y sin asentar en el libro, que es lo peor que puede pasar acá.

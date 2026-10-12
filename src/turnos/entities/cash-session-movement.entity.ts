@@ -5,6 +5,7 @@ import { User } from 'src/users/entities/user.entity';
 
 @Entity({ name: 'cash_session_movements' })
 export class CashSessionMovement {
+  @Column('uuid', { nullable: true }) turnoId: string | null;
   @PrimaryGeneratedColumn('uuid') id: string;
   @Index() @Column('uuid', { nullable: true }) playaId: string | null;
   @ManyToOne(() => Playa, { nullable: true }) @JoinColumn({ name: 'playaId' }) playa: Playa | null;
@@ -13,7 +14,7 @@ export class CashSessionMovement {
   @Column('uuid') usuarioId: string;
   @ManyToOne(() => User) @JoinColumn({ name: 'usuarioId' }) usuario: User;
   @Column('int') amount: number;
-  @Column('varchar') tipo: 'APORTE' | 'RETIRO';
+  @Column('varchar') tipo: 'APORTE' | 'RETIRO' | 'SUELDO';
   @Column('varchar', { length: 255 }) motivo: string;
   @CreateDateColumn({ type: 'timestamptz' }) createdAt: Date;
 }

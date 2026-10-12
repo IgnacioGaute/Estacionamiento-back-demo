@@ -212,3 +212,341 @@ test('migración: agrega tablas y modo sin recalcular cierres, y puede repetirse
   const after = await ds.getRepository(Turno).find({ where: { estado: 'CERRADO' } });
   assert.deepEqual(after, before);
 });
+
+const book = () => require('../dist/turnos/turno-book');
+const SessionMovement = load('turnos/entities/cash-session-movement.entity', 'CashSessionMovement');
+
+test('sueldo: protege el fondo, resta una sola vez y separa gastos del retiro final', async () => {
+  await tickets.updateSchedule({ shiftsEnabled: true, sueldoAutomatico: true, sueldoPorTurno: 25000 });
+  const register = await principal();
+  await shifts.saveCaja({ nombre: register.nombre, fondoObjetivo: 15000 }, register.id);
+  const t = await openCash(user.id, 15000);
+  await cash(user.id, 100000);
+  const expense = await boxes.createOtherPayment({ description: 'Gasto', price: 10000, type: 'EGRESOS', paymentMethod: 'CASH' });
+  assert.equal((await context()).efectivoDisponible, 105000);
+  const closed = await shifts.close(t.id, user.id, { efectivoContado: 105000, efectivoEsperado: 105000, efectivoParaSiguiente: 15000, sueldoEsperado: 25000 });
+  assert.equal(closed.sueldoRetirado, 25000);
+  assert.equal(closed.diferencia, 0);
+  assert.equal(closed.efectivoRetirado, 90000);
+  const summary = await book().shiftSummary(ds.manager, closed);
+  assert.equal(summary.gastosEfectivo, 10000);
+  assert.equal(summary.retirosRecaudacion, 65000);
+  assert.equal(summary.totalRetirado, 100000);
+  // El fondo recibido se conserva: no se resta dos veces ni cuenta como retiro.
+  assert.equal(t.fondoInicial + summary.efectivoCobrado, summary.totalRetirado + closed.efectivoParaSiguiente);
+  assert.equal(await ds.getRepository(SessionMovement).count({ where: { turnoId: t.id, tipo: 'SUELDO' } }), 1);
+  await assert.rejects(shifts.close(t.id, user.id, { efectivoContado: 105000, sueldoEsperado: 25000 }), /cerrado/);
+  assert.equal((await principal()).efectivoDisponible, 15000);
+});
+
+test('sueldo insuficiente: no descuenta ni paga parcialmente y persiste la alerta', async () => {
+  const t = await openCash(user.id, 15000);
+  await cash(user.id, 8000);
+  await assert.rejects(shifts.close(t.id, user.id, { efectivoContado: 23000, efectivoEsperado: 23000, efectivoParaSiguiente: 15000, sueldoEsperado: 25000 }), /sueldo actualizado/);
+  const closed = await shifts.close(t.id, user.id, { efectivoContado: 23000, efectivoEsperado: 23000, efectivoParaSiguiente: 15000, sueldoEsperado: 0 });
+  assert.equal(closed.sueldoRetirado, 0);
+  assert.match(closed.alertaSueldo, /no alcanza/);
+  assert.equal(await ds.getRepository(SessionMovement).count({ where: { turnoId: t.id } }), 0);
+});
+
+test('medianoche: corta una vez, conserva caja y jornada y no retira sueldo', async () => {
+  const t = await openCash(user.id, 15000);
+  const today = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day');
+  const yesterday = today.subtract(1, 'day');
+  const opened = yesterday.add(20, 'hour').toDate();
+  await ds.getRepository(Turno).update(t.id, { fechaApertura: opened, fechaOperativa: yesterday.format('YYYY-MM-DD') });
+  await ds.getRepository(Session).update(t.cashSessionId, { fechaApertura: opened });
+  await Promise.all([ds.transaction(m => book().rolloverShifts(m)), ds.transaction(m => book().rolloverShifts(m))]);
+  const old = await ds.getRepository(Turno).findOneBy({ id: t.id });
+  const next = (await context()).active;
+  assert.equal(old.fechaCierre.toISOString(), today.toDate().toISOString());
+  assert.equal(old.cierreAutomatico, true);
+  assert.equal(old.efectivoContado, null);
+  assert.equal(old.sueldoRetirado, 0);
+  assert.equal(next.continuacionDeId, t.id);
+  assert.equal(next.jornadaId, t.id);
+  assert.equal(next.cashSessionId, t.cashSessionId);
+  assert.equal(next.fondoInicial, 0);
+  assert.equal(next.efectivoDisponible, 15000);
+  assert.equal(await ds.getRepository(Turno).count({ where: { continuacionDeId: t.id } }), 1);
+  // El historial ubica el corte en el día que terminó, no en la planilla nueva.
+  const history = await shifts.findAll({ desde: yesterday.format('YYYY-MM-DD'), hasta: yesterday.format('YYYY-MM-DD'), fechaPor: 'CIERRE', estado: 'CERRADO' });
+  assert.ok(history.data.some(r => r.id === t.id));
+  const previousSegment = await ds.transaction(m => book().offlineShift(m, t.id, user.id, yesterday.add(23, 'hour').toDate()));
+  assert.equal(previousSegment.id, t.id);
+  const currentSegment = await ds.transaction(m => book().offlineShift(m, t.id, user.id, new Date()));
+  assert.equal(currentSegment.id, next.id);
+  await cash(user.id, 40000);
+  const closed = await shifts.close(next.id, user.id, { efectivoContado: 55000, efectivoEsperado: 55000, efectivoParaSiguiente: 15000, sueldoEsperado: 25000 });
+  assert.equal(closed.sueldoRetirado, 25000);
+  await assert.rejects(ds.transaction(m => book().offlineShift(m, t.id, user.id, opened)), /jornada ya terminó/);
+});
+
+test('resumen: digitales sin efectivo, salida sin cobro y ocupación al cerrar', async () => {
+  await tickets.updateSchedule({ sueldoAutomatico: false });
+  const t = await openCash(user.id, 15000);
+  const a = await openPlate();
+  const b = await openPlate();
+  await movements.create({ ticketRegistrationId: a.id, monto: 1000, metodo: 'TRANSFER', tipo: 'ANTICIPO', referencia: 'Transferencia MercadoPago prueba', usuarioId: user.id });
+  await tickets.closeRegistrationByPlate(a.id, { closeType: 'NO_CHARGE', expectedPrice: 1000, expectedCollected: 1000 }, user.id);
+  await ds.transaction(m => book().recordDigital(m, 2000, 'MERCADOPAGO', 'QR abono', user.id));
+  await ds.transaction(m => book().recordDigital(m, 3000, 'TRANSFER', 'Transferencia', user.id));
+  const closed = await shifts.close(t.id, user.id, { efectivoContado: 15000, efectivoEsperado: 15000, efectivoParaSiguiente: 15000 });
+  const r = await book().shiftSummary(ds.manager, closed);
+  assert.equal(r.efectivoCobrado, 0);
+  assert.equal(r.mercadoPagoAlias, 1000);
+  assert.equal(r.mercadoPagoQr, 2000);
+  assert.equal(r.transferencias, 3000);
+  assert.equal(r.salidas, 1);
+  assert.equal(r.vehiculosFin, 1);
+  const handover = (await principal()).traspaso;
+  assert.equal(handover.operador, 'Test Operator');
+  assert.equal(handover.vehiculosDejados, 1);
+  assert.equal(handover.vehiculosActivos, 1);
+  assert.equal(new Date(handover.fechaCierre).getTime(), closed.fechaCierre.getTime());
+  const box = await boxes.findBoxByDate(dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD'));
+  assert.ok(box.turnosDelDia.some(row => row.turnoId === t.id && row.turno.resumen.transferencias === 3000));
+});
+
+test('migración diaria: repetible y conserva cierres existentes', async () => {
+  const migration = new (load('database/migrations/1790000036000-turnos-diarios', 'TurnosDiarios1790000036000'))();
+  const before = await ds.getRepository(Turno).find({ order: { id: 'ASC' } });
+  const runner = ds.createQueryRunner();
+  try { await migration.up(runner); await migration.up(runner); } finally { await runner.release(); }
+  assert.deepEqual(await ds.getRepository(Turno).find({ order: { id: 'ASC' } }), before);
+});
+
+
+test('caja compartida: el primer sueldo reduce el saldo y el segundo no consume el fondo', async () => {
+  await tickets.updateSchedule({ multipleShiftsEnabled: true, sueldoAutomatico: true, sueldoPorTurno: 25000 });
+  const a = await openCash(user.id, 15000);
+  const b = await openCash(second.id, 0);
+  await cash(user.id, 25000);
+  await shifts.close(a.id, user.id, { cerrarCaja: false, efectivoEsperado: 40000, sueldoEsperado: 25000 });
+  assert.equal((await context(second.id)).efectivoDisponible, 15000);
+  const closed = await shifts.close(b.id, second.id, { cerrarCaja: true, efectivoContado: 15000, efectivoEsperado: 15000, efectivoParaSiguiente: 15000, sueldoEsperado: 0 });
+  assert.equal(closed.sueldoRetirado, 0);
+  assert.match(closed.alertaSueldo, /no alcanza/);
+  assert.equal(closed.diferencia, 0);
+  await tickets.updateSchedule({ sueldoAutomatico: false });
+});
+
+test('corrección de varios conserva el gasto neto y no fabrica ingresos', async () => {
+  const t = await openCash(user.id, 15000);
+  const expense = await boxes.createOtherPayment({ description: 'Gasto corregido', price: 1000, type: 'EGRESOS', paymentMethod: 'CASH' });
+  await boxes.updateOtherPayment(expense.id, { price: 400 });
+  const r = await book().shiftSummary(ds.manager, t);
+  assert.equal(r.gastosEfectivo, 400);
+  assert.equal(r.ingresosVarios, 0);
+  assert.equal((await context()).efectivoDisponible, 14600);
+  await closeCash(user.id, 14600);
+});
+
+test('acreditación tardía: conserva el turno que inició el pago aunque haya otro abierto', async () => {
+  const previous = await openCash(user.id, 15000);
+  // Una fecha dentro de este turno, sin superponer artificialmente los anteriores.
+  const paymentTime = new Date();
+  await closeCash(user.id, 15000);
+  const current = await openCash(user.id, 15000);
+  await book().externalPayment.run({ userId: user.id, at: paymentTime, medio: 'ALIAS' }, () => ds.transaction(m => book().recordDigital(m, 3000, 'TRANSFER', 'Alias confirmado tarde', user.id)));
+  assert.equal((await book().shiftSummary(ds.manager, previous)).mercadoPagoAlias, 3000);
+  assert.equal((await book().shiftSummary(ds.manager, current)).mercadoPagoAlias, 0);
+  await closeCash(user.id, 15000);
+});
+
+
+test('sin conexión: completa el corte con la fecha real y conserva el arqueo posterior', async () => {
+  const t = await openCash(user.id, 15000);
+  const today = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day');
+  const yesterday = today.subtract(1, 'day');
+  await ds.getRepository(Turno).update(t.id, { fechaApertura: yesterday.add(20, 'hour').toDate(), fechaOperativa: yesterday.format('YYYY-MM-DD') });
+  const r = await ds.getRepository(Registration).save({ description: 'Offline previo al corte', vehicleType: 'AUTO', price: 0,
+    entryDay: yesterday.format('YYYY-MM-DD'), entryTime: '21:00:00' });
+  const next = (await context()).active;
+  const before = await ds.getRepository(Turno).findOneBy({ id: t.id });
+  const at = yesterday.add(23, 'hour').toDate();
+  await ds.transaction(async m => {
+    const segment = await book().offlineShift(m, t.id, user.id, at);
+    await boxes.applyTicketPayment(yesterday.format('YYYY-MM-DD'), 1000, m, segment.id, user.id, 'COBRO', at);
+    await movements.create({ ticketRegistrationId: r.id, usuarioId: user.id, monto: 1000, metodo: 'CASH', tipo: 'SALDO' }, m, segment.id, at);
+    await m.getRepository(Registration).update(r.id, { departureDay: yesterday.format('YYYY-MM-DD'), departureTime: '23:00:00', exitTurnoId: segment.id });
+    await book().refreshAutomaticCuts(m, at);
+  });
+  const old = await ds.getRepository(Turno).findOneBy({ id: t.id });
+  assert.equal(old.saldoAlCorte, 16000);
+  assert.equal(old.vehiculosFin, before.vehiculosFin - 1);
+  assert.equal(old.salidasRegistradas, 1);
+  const successor = await ds.getRepository(Turno).findOneBy({ id: next.id });
+  assert.equal(successor.vehiculosInicio, old.vehiculosFin);
+  assert.equal(successor.saldoAlCorte, 16000);
+  assert.equal((await book().shiftSummary(ds.manager, old)).salidas, 1);
+  const closed = await closeCash(user.id, 15000);
+  const frozen = await ds.getRepository(Turno).findOneBy({ id: closed.id });
+  await ds.transaction(m => book().refreshAutomaticCuts(m, at));
+  assert.deepEqual(await ds.getRepository(Turno).findOneBy({ id: closed.id }), frozen);
+});
+
+test('abono digital: al eliminarlo registra la reversión en el turno', async () => {
+  const t = await openCash(user.id, 15000);
+  await ds.getRepository(TicketPrice).save({ ticketTimeType: 'DIA', vehicleType: 'AUTO', ticketTimePrice: 2000 });
+  const pass = await tickets.createRegistrationForDay({ ticketTimeType: 'DIA', vehicleType: 'AUTO', days: 1, paid: true, paymentMetodo: 'TRANSFER' }, user.id);
+  assert.equal((await book().shiftSummary(ds.manager, t)).transferencias, 2000);
+  await tickets.removeRegistrationForDay(pass.id);
+  assert.equal((await book().shiftSummary(ds.manager, t)).transferencias, 0);
+  await closeCash(user.id, 15000);
+});
+
+
+test('varios: elimina gastos sin inventar cobros y conserva las transferencias netas', async () => {
+  const t = await openCash(user.id, 15000);
+  const expense = await boxes.createOtherPayment({ description: 'Gasto eliminado', price: 1000, type: 'EGRESOS', paymentMethod: 'CASH' });
+  await boxes.removeOtherPayment(expense.id);
+  let r = await book().shiftSummary(ds.manager, t);
+  assert.equal(r.gastosEfectivo, 0);
+  assert.equal(r.efectivoCobrado, 0);
+  const income = await boxes.createOtherPayment({ description: 'Ingreso digital', price: 3000, type: 'INGRESOS', paymentMethod: 'TRANSFER' });
+  assert.equal((await book().shiftSummary(ds.manager, t)).transferencias, 3000);
+  await boxes.updateOtherPayment(income.id, { price: 2000 });
+  assert.equal((await book().shiftSummary(ds.manager, t)).transferencias, 2000);
+  await boxes.removeOtherPayment(income.id);
+  assert.equal((await book().shiftSummary(ds.manager, t)).transferencias, 0);
+  assert.equal((await context()).efectivoDisponible, 15000);
+  const pass = await tickets.createRegistrationForDay({ ticketTimeType: 'DIA', vehicleType: 'AUTO', days: 1, paid: false }, user.id);
+  await ds.transaction(m => tickets.acreditarTransferenciaAbonoEn(m, pass.id, pass.price, 'Alias original', user.id, false));
+  assert.equal((await book().shiftSummary(ds.manager, t)).mercadoPagoAlias, pass.price);
+  await tickets.removeRegistrationForDay(pass.id);
+  r = await book().shiftSummary(ds.manager, t);
+  assert.equal(r.mercadoPagoAlias, 0);
+  assert.equal(r.transferencias, 0);
+  await closeCash(user.id, 15000);
+});
+
+
+test('migración correctiva: completa una versión diaria registrada sin perder turnos', async () => {
+  const before = await ds.getRepository(Turno).find({ order: { id: 'ASC' } });
+  const runner = ds.createQueryRunner();
+  await runner.connect();
+  await runner.startTransaction();
+  try {
+    // Simula la versión inicial ya registrada: no tenía este campo ni las referencias.
+    await runner.query('ALTER TABLE turnos DROP COLUMN "salidasRegistradas"');
+    await runner.query('ALTER TABLE turno_payments DROP CONSTRAINT "daily_turno_payments_turnoId"');
+    const migration = new (load('database/migrations/1790000037000-completar-turnos-diarios', 'CompletarTurnosDiarios1790000037000'))();
+    await migration.up(runner);
+    await migration.up(runner);
+    const after = await runner.manager.getRepository(Turno).find({ order: { id: 'ASC' } });
+    assert.deepEqual(after.map(t => ({ ...t, salidasRegistradas: null })), before.map(t => ({ ...t, salidasRegistradas: null })));
+    const [reference] = await runner.query("SELECT COUNT(*)::int AS total FROM pg_constraint WHERE conname='daily_turno_payments_turnoId'");
+    assert.equal(reference.total, 1);
+  } finally { await runner.rollbackTransaction(); await runner.release(); }
+});
+
+test('planilla: filtra por día argentino y ordena abiertos y últimos cierres primero', async () => {
+  const runner = ds.createQueryRunner();
+  await runner.connect();
+  await runner.startTransaction();
+  try {
+    const repo = runner.manager.getRepository(Turno);
+    const save = (nombre, apertura, cierre, fechaOperativa = null) => repo.save(repo.create({
+      nombre, fondoInicial: 0, cashVersion: 1, fechaOperativa,
+      fechaApertura: new Date(apertura), fechaCierre: cierre ? new Date(cierre) : null,
+      estado: cierre ? 'CERRADO' : 'ABIERTO',
+    }));
+    const previous = await save('Anterior', '2021-07-18T02:59:59Z', '2021-07-18T12:00:00Z');
+    const midnight = await save('Inicio del día', '2021-07-18T03:00:00Z', '2021-07-18T10:00:00Z');
+    const lastManual = await save('Último cierre manual', '2021-07-18T11:00:00Z', '2021-07-18T14:00:00Z', '2021-07-18');
+    const laterOpening = await save('Abrió después, cerró antes', '2021-07-18T12:00:00Z', '2021-07-18T13:00:00Z', '2021-07-18');
+    const cut = await save('Corte de medianoche', '2021-07-19T02:00:00Z', '2021-07-19T03:00:00Z', '2021-07-18');
+    const open = await save('Abierto del día', '2021-07-18T15:00:00Z', null, '2021-07-18');
+    const next = await save('Día siguiente', '2021-07-19T03:00:00Z', '2021-07-19T04:00:00Z', '2021-07-19');
+    const oldOpen = await save('Abierto de otra fecha', '2021-07-17T15:00:00Z', null);
+    // La fecha operativa es la referencia del tramo, incluso si su apertura es distinta.
+    const otherDay = await save('Otra fecha operativa', '2021-07-18T16:00:00Z', '2021-07-18T17:00:00Z', '2021-07-17');
+    const selected = await boxes.findBoxByDate('2021-07-18', runner.manager);
+    assert.deepEqual(selected.turnosDelDia.map(t => t.turnoId), [open.id, cut.id, lastManual.id, laterOpening.id, midnight.id]);
+    assert.ok(!selected.turnosDelDia.some(t => [previous.id, next.id, oldOpen.id, otherDay.id].includes(t.turnoId)));
+    const following = await boxes.findBoxByDate('2021-07-19', runner.manager);
+    assert.deepEqual(following.turnosDelDia.map(t => t.turnoId), [next.id]);
+    const onlyLegacy = await save('Histórico sin movimientos', '2021-07-15T15:00:00Z', '2021-07-15T16:00:00Z');
+    const legacyDay = await boxes.findBoxByDate('2021-07-15', runner.manager);
+    assert.equal(legacyDay.totalPrice, 0);
+    assert.deepEqual(legacyDay.turnosDelDia.map(t => t.turnoId), [onlyLegacy.id]);
+  } finally { await runner.rollbackTransaction(); await runner.release(); }
+});
+
+
+test('avisos: cierre coincidente admite una nota y la migración recupera notas anteriores una sola vez', async () => {
+  const Note = load('notes/entities/note.entity', 'Note');
+  await tickets.updateSchedule({ sueldoAutomatico: false });
+  const t = await openCash(user.id, (await principal()).efectivoDisponible);
+  const ctx = await context();
+  const closed = await shifts.close(t.id, user.id, { efectivoContado: ctx.efectivoDisponible, efectivoEsperado: ctx.efectivoDisponible, efectivoParaSiguiente: ctx.efectivoDisponible, observaciones: 'Revisar el vehículo azul en el próximo turno' });
+  const note = await ds.getRepository(Note).findOne({ where: { sourceKey: `cierre:${closed.id}` }, relations: ['user'] });
+  assert.equal(note.description, closed.observaciones);
+  assert.equal(note.user.id, user.id);
+  assert.equal(note.origin, 'Cierre de turno');
+  const historical = await ds.getRepository(Turno).save({ nombre: 'Histórico', usuarioApertura: user, usuarioCierre: user, fondoInicial: 0, estado: 'CERRADO', fechaCierre: new Date('2026-10-01T10:00:00Z'), observaciones: 'Se perdió plata' });
+  const Structural = load('database/migrations/1790000039000-avisos-automaticos', 'AvisosAutomaticos1790000039000');
+  const Backfill = load('database/migrations/1790000040000-avisos-notas-existentes', 'AvisosNotasExistentes1790000040000');
+  const runner = ds.createQueryRunner();
+  try {
+    await new Structural().up(runner); await new Backfill().up(runner); await new Backfill().up(runner);
+  } finally { await runner.release(); }
+  assert.equal(await ds.getRepository(Note).count({ where: { sourceKey: `cierre:${historical.id}` } }), 1);
+  const recovered = await ds.getRepository(Note).findOneBy({ sourceKey: `cierre:${historical.id}` });
+  assert.equal(recovered.description, 'Se perdió plata');
+  assert.equal(recovered.date, '2026-10-01');
+  assert.equal(await ds.getRepository(Note).count({ where: { sourceKey: `cierre:${closed.id}` } }), 1);
+});
+
+test('avisos: rollback, savepoint e idempotencia anuncian solamente notas confirmadas', async () => {
+  const Note = load('notes/entities/note.entity', 'Note');
+  const { publishAutomaticNote, installAutomaticNoteNotifications } = require('../dist/notes/automatic-note');
+  const events = [];
+  installAutomaticNoteNotifications(ds, async e => { events.push(e); });
+  const id = require('node:crypto').randomUUID();
+  const input = { sourceKey: `prueba:${id}`, origin: 'Cierre de turno', sourceType: 'TURNO', sourceId: id, usuarioId: user.id, description: 'No debe publicarse antes de confirmar' };
+  await assert.rejects(ds.transaction(async m => { await publishAutomaticNote(m, input); assert.equal(events.length, 0); throw new Error('cancelado'); }), /cancelado/);
+  assert.equal(await ds.getRepository(Note).count({ where: { sourceKey: input.sourceKey } }), 0);
+  assert.equal(events.length, 0);
+  await ds.transaction(async m => {
+    await publishAutomaticNote(m, input);
+    await assert.rejects(m.transaction(async nested => { await publishAutomaticNote(nested, { ...input, sourceKey: input.sourceKey + ':fallido' }); throw new Error('savepoint'); }), /savepoint/);
+    assert.equal(events.length, 0);
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(events.length, 1);
+  await ds.transaction(m => publishAutomaticNote(m, input));
+  assert.equal(events.length, 1);
+  assert.equal(await ds.getRepository(Note).count({ where: { sourceKey: input.sourceKey } }), 1);
+  const NotesService = load('notes/notes.service', 'NotesService');
+  const service = new NotesService(ds.getRepository(Note), ds.getRepository(User), { sendNotification: async () => {} });
+  await assert.rejects(service.update(events[0].noteId, { description: 'Modificación separada' }), /operación original/);
+  await assert.rejects(service.remove(events[0].noteId), /operación original/);
+  await service.markRead(events[0].noteId, user.id);
+  assert.ok(!(await service.unread(user.id)).includes(events[0].noteId));
+});
+
+
+test('avisos: pendientes primero en toda la paginación, luego recientes, y leer actualiza el orden', async () => {
+  const Note = load('notes/entities/note.entity', 'Note');
+  const NotesService = load('notes/notes.service', 'NotesService');
+  const service = new NotesService(ds.getRepository(Note), ds.getRepository(User), { sendNotification: async () => {} });
+  const repo = ds.getRepository(Note);
+  const marker = 'OrdenAvisosTask';
+  const author = await ds.getRepository(User).save({ username: 'avisos-order', email: 'avisos-order@example.test', firstName: 'Otra', lastName: 'Persona', role: 'USER' });
+  const older = await repo.save({ description: marker + ' pendiente anterior', user: author, createdAt: new Date('2026-01-01T10:00:00Z') });
+  const newer = await repo.save({ description: marker + ' pendiente más reciente', user: author, createdAt: new Date('2026-01-02T10:00:00Z') });
+  const read = await repo.save({ description: marker + ' ya leído más reciente', user: author, readBy: [user.id], createdAt: new Date('2026-10-05T10:00:00Z') });
+  const own = await repo.save({ description: marker + ' propio reciente', user, createdAt: new Date('2026-10-04T10:00:00Z') });
+  const query = { page: 1, limit: 2, search: marker, path: 'http://example.test/notes' };
+  const first = await service.findAll(query, user.id);
+  assert.deepEqual(first.data.map(n => n.id), [newer.id, older.id]);
+  assert.equal(first.meta.totalItems, 4);
+  assert.ok(first.data.every(n => !Object.hasOwn(n, 'readBy') && !Object.hasOwn(n, 'unread_order')));
+  assert.deepEqual((await service.findAll({ ...query, page: 2 }, user.id)).data.map(n => n.id), [read.id, own.id]);
+  await service.markRead(newer.id, user.id);
+  assert.deepEqual((await service.findAll(query, user.id)).data.map(n => n.id), [older.id, read.id]);
+  await service.markRead(older.id, user.id);
+  assert.deepEqual((await service.findAll(query, user.id)).data.map(n => n.id), [read.id, own.id]);
+});

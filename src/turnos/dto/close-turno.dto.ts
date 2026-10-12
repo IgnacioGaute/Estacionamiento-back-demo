@@ -1,6 +1,7 @@
 import { IsBoolean, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 export class CloseTurnoDto {
+  @IsOptional() @IsInt() @Min(0) sueldoEsperado?: number;
   @IsBoolean() @IsOptional() cerrarCaja?: boolean;
   @IsInt()
   @Min(0)

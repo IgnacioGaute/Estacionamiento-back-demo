@@ -23,7 +23,7 @@ export type MovimientoMetodo = (typeof MOVIMIENTO_METODO)[number];
 export const MOVIMIENTO_METODO_MANUAL = ['CASH', 'TRANSFER'] as const;
 export type MovimientoMetodoManual = (typeof MOVIMIENTO_METODO_MANUAL)[number];
 
-export const MOVIMIENTO_TIPO = ['ANTICIPO', 'SALDO', 'AJUSTE', 'CORTESIA'] as const;
+export const MOVIMIENTO_TIPO = ['ANTICIPO', 'SALDO', 'AJUSTE', 'CORTESIA', 'DESCUENTO'] as const;
 export type MovimientoTipo = (typeof MOVIMIENTO_TIPO)[number];
 
 // Append-only: nunca se expone un endpoint de editar/borrar. Toda corrección es una fila

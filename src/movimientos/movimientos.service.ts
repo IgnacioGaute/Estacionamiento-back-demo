@@ -1,3 +1,5 @@
+import { publishAutomaticNote } from 'src/notes/automatic-note';
+import { externalPayment, paymentShift } from 'src/turnos/turno-book';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
@@ -23,17 +25,21 @@ export class MovimientosService {
   // uno abierto se lo asocia igual, si no, el movimiento se crea sin turno (turno: null) en
   // vez de bloquear el cobro. Para retomar la exigencia, volver a llamar
   // turnosService.getOpenTurno (que tira NO_OPEN_TURNO) en vez de findOpenTurnoOrNull.
-  async create(dto: CreateMovimientoDto & { usuarioId: string }, manager?: EntityManager, turnoIdOverride?: string | null): Promise<Movimiento> {
-    if ((dto.tipo === 'AJUSTE' || dto.tipo === 'CORTESIA') && !dto.motivo?.trim()) {
-      throw new BadRequestException('El motivo es obligatorio para un ajuste o una cortesía.');
+  async create(dto: CreateMovimientoDto & { usuarioId: string }, manager?: EntityManager, turnoIdOverride?: string | null, occurredAt?: Date): Promise<Movimiento> {
+    if ((dto.tipo === 'AJUSTE' || dto.tipo === 'CORTESIA' || dto.tipo === 'DESCUENTO') && !dto.motivo?.trim()) {
+      throw new BadRequestException('El motivo es obligatorio para un ajuste o un descuento.');
     }
 
-    const turno = turnoIdOverride === undefined ? await this.turnosService.findOpenTurnoOrNull(dto.usuarioId, manager) : null;
+    if (dto.motivo?.trim() && !manager) {
+      return this.movimientoRepository.manager.transaction(m => this.create(dto, m, turnoIdOverride, occurredAt));
+    }
+    const turno = turnoIdOverride === undefined ? (manager && externalPayment.getStore() ? await paymentShift(manager, dto.usuarioId) : await this.turnosService.findOpenTurnoOrNull(dto.usuarioId, manager)) : null;
     const repository = manager ? manager.getRepository(Movimiento) : this.movimientoRepository;
 
     const movimiento = repository.create({
       ticketRegistration: dto.ticketRegistrationId ? ({ id: dto.ticketRegistrationId } as any) : null,
       monto: dto.monto,
+      ...(occurredAt ? { fechaHora: occurredAt } : {}),
       metodo: dto.metodo,
       tipo: dto.tipo,
       usuario: { id: dto.usuarioId } as any,
@@ -44,7 +50,12 @@ export class MovimientosService {
       motivo: dto.motivo ?? null,
     });
 
-    return repository.save(movimiento);
+    const saved = await repository.save(movimiento);
+    if (dto.motivo?.trim()) {
+      const registration = dto.ticketRegistrationId ? await manager!.query('SELECT "licensePlateOriginal", "codeBarTicket" FROM ticket_registrations WHERE id = $1', [dto.ticketRegistrationId]) : [];
+      await publishAutomaticNote(manager!, { sourceKey: `movimiento:${saved.id}`, origin: dto.tipo === 'DESCUENTO' || dto.tipo === 'CORTESIA' ? 'Descuento de vehículo' : 'Corrección de cobro', sourceType: 'TICKET', sourceId: dto.ticketRegistrationId ?? saved.id, usuarioId: dto.usuarioId, description: dto.motivo, context: `${registration[0]?.licensePlateOriginal || registration[0]?.codeBarTicket || 'Vehículo'} · $ ${Math.abs(dto.monto).toLocaleString('es-AR')}` });
+    }
+    return saved;
   }
 
   async findByRegistration(ticketRegistrationId: string): Promise<Movimiento[]> {
@@ -58,6 +69,6 @@ export class MovimientosService {
   async sumByRegistration(ticketRegistrationId: string, manager?: EntityManager): Promise<number> {
     const repository = manager ? manager.getRepository(Movimiento) : this.movimientoRepository;
     const movimientos = await repository.find({ where: { ticketRegistration: { id: ticketRegistrationId } } });
-    return movimientos.reduce((total, m) => total + (m.tipo === 'CORTESIA' ? 0 : m.monto), 0);
+    return movimientos.reduce((total, m) => total + ((m.tipo === 'CORTESIA' || m.tipo === 'DESCUENTO') ? 0 : m.monto), 0);
   }
 }

@@ -10,6 +10,8 @@ export class PaymentHistoryOnAccount {
   @Column('uuid', { nullable: true })
   playaId: string | null;
 
+  @Column('varchar', { length: 255, nullable: true }) operatorName: string | null;
+
   @PrimaryGeneratedColumn('uuid')
   id: string;
   

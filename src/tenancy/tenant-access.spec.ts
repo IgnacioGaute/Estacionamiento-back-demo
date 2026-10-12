@@ -94,6 +94,11 @@ describe('TenantGuard: quién puede llamar a qué', () => {
       await deja('CuentasController', 'registrarPago', { sesion: operador });
     });
 
+    test('puede aplicar descuentos al registrar una salida con su sesión de operador', async () => {
+      await deja('TicketsController', 'discountRegistration', { sesion: operador });
+      await rechaza('TicketsController', 'discountRegistration', {}, UnauthorizedException);
+    });
+
     test('lo que no está en su lista es de administración, aunque el controlador sí esté', async () => {
       await rechaza('TicketsController', 'updateSchedule', { sesion: operador }, 'requiere un administrador');
       await rechaza('TicketsController', 'createPriceBracket', { sesion: operador }, 'requiere un administrador');

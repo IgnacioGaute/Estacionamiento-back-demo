@@ -1,3 +1,4 @@
+import { offlineShift, rolloverShifts, refreshAutomaticCuts } from 'src/turnos/turno-book';
 import { Injectable, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { DataSource, In, IsNull, MoreThanOrEqual } from 'typeorm';
 import { createHash } from 'crypto';
@@ -30,6 +31,7 @@ export class OfflineService {
     return this.ds.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      await rolloverShifts(manager);
       const schedule = await this.tickets.getSchedule(manager);
       const shift = schedule.shiftsEnabled
         ? await manager.getRepository(Turno).findOne({ where: { usuarioApertura: { id: scope.userId }, estado: 'ABIERTO', cashVersion: 2 } })
@@ -106,11 +108,11 @@ export class OfflineService {
       const time = Date.parse(dto.occurredAt);
       if (time < session.createdAt.getTime() - 120000 || time > session.expiresAt.getTime() || time > Date.now() + 120000) throw new ConflictException('La fecha de la operación está fuera del período autorizado.');
       const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
-      const shiftId = session.snapshot.shiftsEnabled === true ? session.snapshot.shift?.id as string | undefined : undefined;
+      let shiftId = session.snapshot.shiftsEnabled === true ? session.snapshot.shift?.id as string | undefined : undefined;
       if (dto.kind === 'EXIT' && shiftId) {
         if (!settings?.shiftsEnabled) throw new ConflictException('Cambió la configuración de turnos. Conservá la operación pendiente para revisión.');
-        const shift = await manager.getRepository(Turno).findOne({ where: { id: shiftId, usuarioApertura: { id: scope.userId }, estado: 'ABIERTO', cashVersion: 2 }, lock: { mode: 'pessimistic_write' } });
-        if (!shift) throw new ConflictException('El turno del corte ya está cerrado. La operación sigue pendiente; revisá el arqueo antes de sincronizarla.');
+        const shift = await offlineShift(manager, shiftId, scope.userId, new Date(time));
+        shiftId = shift.id;
       } else if (dto.kind === 'EXIT' && session.snapshot.shiftsEnabled !== true && settings?.shiftsEnabled === true) {
         throw new ConflictException('Los turnos se activaron durante esta contingencia. La operación sigue pendiente para revisión.');
       }
@@ -140,18 +142,21 @@ export class OfflineService {
         if (time < entry.getTime()) throw new BadRequestException('La salida no puede ser anterior a la entrada.');
         const vehicle = registration.vehicleType || registration.ticket?.vehicleType;
         const preview = calculateStayPrice(registration.pricingSnapshot, vehicle, entry, new Date(time));
+        const [discount] = await manager.query("SELECT EXISTS(SELECT 1 FROM movimientos WHERE \"ticketRegistrationId\"=$1 AND tipo='DESCUENTO') AS present", [registration.id]);
+        if (discount.present) throw new ConflictException('Esta estadía tiene un descuento registrado. Revisá el cierre con conexión.');
         const collected = await this.tickets.collectedAmount(registration, manager);
         if (preview.price !== dto.expectedPrice || collected !== dto.expectedCollected) throw new ConflictException('Cambió el importe o los anticipos. Conservá el cobro pendiente para revisión.');
         if (collected > preview.price) throw new ConflictException('La devolución de anticipos requiere revisión online.');
         if (!dto.method) throw new BadRequestException('Falta el medio de pago.');
         const amount = preview.price - collected;
         const capturedShiftId = session.snapshot.shiftsEnabled === true ? shiftId ?? null : undefined;
-        if (amount > 0) await this.movements.create({ ticketRegistrationId: registration.id, usuarioId: scope.userId, monto: amount, metodo: dto.method, tipo: 'SALDO', referencia: `Offline ${dto.id}; fecha ${dto.occurredAt}` }, manager, capturedShiftId);
+        if (amount > 0) await this.movements.create({ ticketRegistrationId: registration.id, usuarioId: scope.userId, monto: amount, metodo: dto.method, tipo: 'SALDO', referencia: `Offline ${dto.id}; fecha ${dto.occurredAt}` }, manager, capturedShiftId, new Date(time));
         const date = dayjs(time).tz(TZ);
-        const box = await this.boxes.applyTicketPayment(date.format('YYYY-MM-DD'), dto.method === 'CASH' ? amount : 0, manager, capturedShiftId);
-        Object.assign(registration, { departureDay: date.format('YYYY-MM-DD'), departureTime: date.format('HH:mm:ss'), dateNow: date.format('YYYY-MM-DD'), price: preview.price, pricingBreakdown: preview.breakdown, priceBracketLabel: preview.label, priceBracketFallbackUsed: preview.usedFallback, boxList: { id: box.id }, codeBarTicket: registration.ticket?.codeBar ?? registration.codeBarTicket, vehicleType: vehicle, entryMode: registration.entryMode ?? (registration.ticket ? 'BARCODE' : 'PLATE'), ticket: null, description: `Salida offline ${dto.id}; ${dto.occurredAt}`, exitOperatorName: operatorName });
+        const box = await this.boxes.applyTicketPayment(date.format('YYYY-MM-DD'), dto.method === 'CASH' ? amount : 0, manager, capturedShiftId, scope.userId, 'COBRO', new Date(time));
+        Object.assign(registration, { exitTurnoId: capturedShiftId ?? null, departureDay: date.format('YYYY-MM-DD'), departureTime: date.format('HH:mm:ss'), dateNow: date.format('YYYY-MM-DD'), price: preview.price, pricingBreakdown: preview.breakdown, priceBracketLabel: preview.label, priceBracketFallbackUsed: preview.usedFallback, boxList: { id: box.id }, codeBarTicket: registration.ticket?.codeBar ?? registration.codeBarTicket, vehicleType: vehicle, entryMode: registration.entryMode ?? (registration.ticket ? 'BARCODE' : 'PLATE'), ticket: null, description: `Salida offline ${dto.id}; ${dto.occurredAt}`, exitOperatorName: operatorName });
         registration = await repo.save(registration);
       }
+      await refreshAutomaticCuts(manager, new Date(time));
       session.processed[dto.id] = { fingerprint, registrationId: registration.id };
       await sessions.save(session);
       return registration;

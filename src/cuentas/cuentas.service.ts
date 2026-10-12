@@ -1,3 +1,5 @@
+import { publishAutomaticNote } from 'src/notes/automatic-note';
+import { operatorShift, paymentShift } from 'src/turnos/turno-book';
 import {
   BadRequestException,
   ConflictException,
@@ -550,7 +552,7 @@ export class CuentasService {
 
     // El efectivo entra a la caja del día (y al turno abierto) en la misma transacción.
     const efectivo = pagos.filter((p) => p.metodo === 'CASH').reduce((s, p) => s + p.importe, 0);
-    const caja = await this.boxLists.applyTicketPayment(fecha, efectivo, m);
+    const caja = await this.boxLists.applyTicketPayment(fecha, efectivo, m, undefined, usuarioId ?? undefined);
 
     // Primero se reparte todo el cobro y recién después se asienta: cada fila guarda cómo
     // quedó cada recibo y la cuenta al terminar, porque el libro no se puede editar después y
@@ -573,7 +575,7 @@ export class CuentasService {
     const saldoDespues = saldoAnterior - total;
     // El turno de la caja compartida en que se cobra: el pago solo se puede anular mientras
     // siga abierto (ver anulacion.ts). Sin turnos en uso queda null y rige el día.
-    const [turno] = await m.query(`SELECT id FROM turnos WHERE estado = 'ABIERTO' AND "cashVersion" = 2 LIMIT 1`);
+    const turno = await paymentShift(m, usuarioId ?? undefined);
 
     const mediosDe = new Map<string, Set<string>>();
     const filas: CuentaMovimiento[] = [];
@@ -626,6 +628,7 @@ export class CuentasService {
     }
 
     await conciliar(m, customerId);
+    await publishAutomaticNote(m, { sourceKey: `cuenta-pago:${filas[0].id}`, origin: 'Cobro a inquilino', sourceType: 'CUENTA', sourceId: customerId, usuarioId, description: dto.nota, context: `${c.lastName ?? ''} ${c.firstName ?? ''}`.trim() + ` · Comprobante ${numero} · $ ${total.toLocaleString('es-AR')}` });
     return { ...(await this.reciboDePago(m, filas, c)), repetido: false };
   }
 
@@ -864,7 +867,16 @@ export class CuentasService {
       });
       return { saldo: await saldoDe(m, customerId) };
     };
-    return manager ? correr(manager) : this.ds.transaction(correr);
+    const guardar = async (m: EntityManager) => {
+      const result = await correr(m);
+      if (dto.tipo !== 'AL_DIA' && dto.nota?.trim()) {
+        const fila = await m.findOne(CuentaMovimiento, { where: { customerId, tipo: 'SALDO_INICIAL' }, order: { sequence: 'DESC' } });
+        const c = await this.inquilino(m, customerId);
+        if (fila) await publishAutomaticNote(m, { sourceKey: `saldo-inicial:${fila.id}`, origin: 'Saldo inicial de inquilino', sourceType: 'CUENTA', sourceId: customerId, usuarioId, description: dto.nota, context: `${c.lastName ?? ''} ${c.firstName ?? ''}`.trim() });
+      }
+      return result;
+    };
+    return manager ? guardar(manager) : this.ds.transaction(guardar);
   }
 
   // ------------------------------------------------------------------ ajustes
@@ -997,7 +1009,7 @@ export class CuentasService {
       } else if (fila.tipo === 'DEVOLUCION') {
         // La devolución no ocurrió: si el efectivo había salido de la caja, vuelve a entrar.
         const efectivo = filas.filter((f) => f.metodo === 'CASH').reduce((s, f) => s + f.importe, 0);
-        if (efectivo) await this.boxLists.applyTicketPayment(fecha, efectivo, m);
+        if (efectivo) await this.boxLists.applyTicketPayment(fecha, efectivo, m, undefined, usuarioId ?? undefined);
       } else if (fila.importe > 0 && fila.receiptId) {
         const recibo = await m.findOne(Receipt, { where: { id: fila.receiptId } });
         const origen = await m.findOne(CuentaMovimiento, {
@@ -1113,7 +1125,7 @@ export class CuentasService {
 
       const fecha = hoy();
       if (dto.metodo === 'CASH') await this.boxLists.applyTicketPayment(fecha, -dto.importe, m);
-      const [turno] = await m.query(`SELECT id FROM turnos WHERE estado = 'ABIERTO' AND "cashVersion" = 2 LIMIT 1`);
+      const turno = await operatorShift(m, usuarioId ?? undefined);
       await asentar(m, {
         customerId,
         tipo: 'DEVOLUCION',

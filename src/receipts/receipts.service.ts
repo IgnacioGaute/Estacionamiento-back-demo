@@ -1,3 +1,5 @@
+import { operatorName } from 'src/utils/operator-name';
+import { recordDigital } from 'src/turnos/turno-book';
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Raw, Repository } from 'typeorm';
@@ -358,6 +360,7 @@ async updateReceipt(
       });
 
       const ownerPayment = this.receiptPaymentRepository.create({
+          operatorName: await operatorName(queryRunner.manager),
         paymentType: paymentTypeForOwner as any,
         price: apply,
         paymentDate: now,
@@ -558,6 +561,7 @@ async updateReceipt(
           }
 
           const creditPayment = this.receiptPaymentRepository.create({
+          operatorName: await operatorName(queryRunner.manager),
             paymentType: "CREDIT" as any,
             price: creditToApply,
             paymentDate: now,
@@ -614,6 +618,7 @@ async updateReceipt(
         }
 
         const newPayment = this.receiptPaymentRepository.create({
+          operatorName: await operatorName(queryRunner.manager),
           paymentType: payment.paymentType,
           price: total,
           paymentDate: now,
@@ -623,6 +628,7 @@ async updateReceipt(
         });
 
         const saved = await queryRunner.manager.getRepository(ReceiptPayment).save(newPayment);
+        if (payment.paymentType === 'TRANSFER') await recordDigital(queryRunner.manager, total, 'TRANSFER', saved.id);
 
         if (payment.paymentType !== "FIX") {
           privatePaymentsCreatedForCompensation.push(saved);
@@ -753,6 +759,7 @@ async updateReceipt(
         }
 
         const paymentOnAccount = this.receiptPaymentRepository.create({
+          operatorName: await operatorName(queryRunner.manager),
           paymentType: payment.paymentType,
           price: total,
           paymentDate: now,
@@ -761,7 +768,8 @@ async updateReceipt(
           numberInBox: payment.paymentType === "FIX" ? null : total,
         });
 
-        await queryRunner.manager.getRepository(ReceiptPayment).save(paymentOnAccount);
+        const saved = await queryRunner.manager.getRepository(ReceiptPayment).save(paymentOnAccount);
+        if (payment.paymentType === 'TRANSFER') await recordDigital(queryRunner.manager, total, 'TRANSFER', saved.id);
       }
 
       if (totalOnAccount < receipt.price) {
@@ -1230,6 +1238,7 @@ async createReceiptMan(dateNowFront: string, customerType: CustomerType): Promis
             `(m."fechaHora" AT TIME ZONE 'America/Argentina/Buenos_Aires')::date BETWEEN :from AND :to`,
             { from: rangeFrom, to: rangeTo },
           )
+          .andWhere("m.tipo NOT IN ('CORTESIA', 'DESCUENTO')")
           .groupBy('m.metodo')
           .getRawMany();
 

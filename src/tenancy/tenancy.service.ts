@@ -448,7 +448,7 @@ export class TenancyService {
       // CORTESIA es una estadía bonificada: figura como movimiento pero no es plata cobrada.
       this.dataSource.query(
         `SELECT "playaId", COALESCE(SUM(monto), 0)::int AS cobrado, MAX("fechaHora") AS ultima
-         FROM movimientos WHERE tipo <> 'CORTESIA' AND "fechaHora" >= $1 AND "playaId" IS NOT NULL
+         FROM movimientos WHERE tipo NOT IN ('CORTESIA', 'DESCUENTO') AND "fechaHora" >= $1 AND "playaId" IS NOT NULL
          GROUP BY "playaId"`,
         [desde],
       ),
@@ -563,14 +563,14 @@ export class TenancyService {
         this.dataSource.query(
           `SELECT ("fechaHora" AT TIME ZONE $3)::date AS dia, COALESCE(SUM(monto), 0)::int AS total
          FROM movimientos
-         WHERE tipo <> 'CORTESIA' AND "playaId" = ANY($1) AND "fechaHora" >= $2
+         WHERE tipo NOT IN ('CORTESIA', 'DESCUENTO') AND "playaId" = ANY($1) AND "fechaHora" >= $2
          GROUP BY dia ORDER BY dia`,
           [ids, desdePrevio, zona],
         ),
         this.dataSource.query(
           `SELECT metodo, COALESCE(SUM(monto), 0)::int AS total
          FROM movimientos
-         WHERE tipo <> 'CORTESIA' AND "playaId" = ANY($1) AND "fechaHora" >= $2
+         WHERE tipo NOT IN ('CORTESIA', 'DESCUENTO') AND "playaId" = ANY($1) AND "fechaHora" >= $2
          GROUP BY metodo`,
           [ids, desde],
         ),
@@ -601,7 +601,7 @@ export class TenancyService {
          FROM movimientos m
          JOIN playas p ON p.id = m."playaId"
          JOIN empresas e ON e.id = p."empresaId"
-         WHERE m.tipo <> 'CORTESIA' AND m."playaId" = ANY($1) AND m."fechaHora" >= $3
+         WHERE m.tipo NOT IN ('CORTESIA', 'DESCUENTO') AND m."playaId" = ANY($1) AND m."fechaHora" >= $3
          GROUP BY p."empresaId", e.nombre
          ORDER BY cobrado DESC`,
           [ids, desde, desdePrevio],
@@ -620,7 +620,7 @@ export class TenancyService {
         this.dataSource.query(
           `SELECT metodo, COALESCE(SUM(monto), 0)::int AS total
          FROM movimientos
-         WHERE tipo <> 'CORTESIA' AND "playaId" = ANY($1) AND "fechaHora" >= $2 AND "fechaHora" < $3
+         WHERE tipo NOT IN ('CORTESIA', 'DESCUENTO') AND "playaId" = ANY($1) AND "fechaHora" >= $2 AND "fechaHora" < $3
          GROUP BY metodo`,
           [ids, desdePrevio, desde],
         ),
@@ -629,7 +629,7 @@ export class TenancyService {
         this.dataSource.query(
           `SELECT "playaId", ("fechaHora" AT TIME ZONE $3)::date AS dia, COALESCE(SUM(monto), 0)::int AS total
          FROM movimientos
-         WHERE tipo <> 'CORTESIA' AND "playaId" = ANY($1) AND "fechaHora" >= $2
+         WHERE tipo NOT IN ('CORTESIA', 'DESCUENTO') AND "playaId" = ANY($1) AND "fechaHora" >= $2
          GROUP BY "playaId", dia ORDER BY dia`,
           [ids, desde, zona],
         ),

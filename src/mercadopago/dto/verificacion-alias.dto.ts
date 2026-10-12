@@ -25,6 +25,11 @@ export class IniciarCobroAliasDto {
   @IsIn(['HORA', 'ABONO', 'INQUILINO'])
   tipo?: 'HORA' | 'ABONO' | 'INQUILINO';
 
+  // Solo abono: se cobra al registrarlo, así que al confirmarse queda pagado y no se retira.
+  @IsOptional()
+  @IsBoolean()
+  alIngresar?: boolean;
+
   // Un inquilino puede pagar una parte o dejar saldo a favor: el mostrador decide el importe.
   @ValidateIf((dto: IniciarCobroAliasDto) => dto.tipo === 'INQUILINO')
   @IsInt()

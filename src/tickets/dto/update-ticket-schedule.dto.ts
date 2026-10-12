@@ -5,6 +5,8 @@ import { ReceiptDeliveryDto } from './receipt-delivery.dto';
 import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, Max, Min } from 'class-validator';
 
 export class UpdateTicketScheduleDto {
+  @IsOptional() @IsBoolean() sueldoAutomatico?: boolean;
+  @IsOptional() @IsInt() @Min(0) @Max(100000000) sueldoPorTurno?: number;
   @IsOptional() @ValidateNested() @Type(() => ReceiptDeliveryDto)
   receiptDelivery?: ReceiptDeliveryDto;
   @IsOptional() @ValidateNested() @Type(() => PricingOptionsDto)

@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CreateNoteDto } from './dto/create-note.dto';
 import { UpdateNoteDto } from './dto/update-note.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -68,13 +68,20 @@ export class NotesService {
       }
     }
     
-  async findAll(query: PaginateQuery): Promise<Paginated<Note>> {
+  async findAll(query: PaginateQuery, userId?: string): Promise<Paginated<Note>> {
     try {
-      return await paginate(query, this.noteRepository, {
+      const builder = this.noteRepository.createQueryBuilder('__root');
+      if (userId) {
+        builder.addSelect(`CASE WHEN (__root."userId" IS NULL OR __root."userId" != :readerId)
+          AND NOT (:readerId::uuid = ANY(__root."readBy")) THEN 1 ELSE 0 END`, 'unread_order')
+          .setParameter('readerId', userId)
+          .orderBy('unread_order', 'DESC');
+      }
+      return await paginate(query, builder, {
         sortableColumns: ['id', 'date', 'createdAt'],
         nullSort: 'last',
-        defaultSortBy: [['createdAt', 'DESC']],
-        searchableColumns: ['date', 'description'],
+        defaultSortBy: [['createdAt', 'DESC'], ['id', 'DESC']],
+        searchableColumns: ['date', 'description', 'origin', 'context'],
         filterableColumns: {
           date: [FilterOperator.ILIKE, FilterOperator.EQ],
         },
@@ -82,6 +89,7 @@ export class NotesService {
       });
     } catch (error: any) {
       this.logger.error(error.message, error.stack);
+      throw error;
     }
   }
 
@@ -116,6 +124,7 @@ export class NotesService {
       if (!note) {
         throw new NotFoundException(`Note not found`);
       }
+      if (note.sourceKey) throw new BadRequestException('Esta nota se modifica desde su operación original.');
       const updateNote = await this.noteRepository.merge(note, updateNoteDto);
 
       const savedNote = await this.noteRepository.save(updateNote);
@@ -140,6 +149,7 @@ export class NotesService {
         throw new NotFoundException(`Note not found`);
       }
 
+      if (note.sourceKey) throw new BadRequestException('Este aviso conserva la nota de su operación original.');
       await this.noteRepository.remove(note);
 
       return {message: 'Note removed successfully'}

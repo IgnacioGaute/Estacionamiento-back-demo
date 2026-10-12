@@ -1,3 +1,4 @@
+import { publishAutomaticNote } from 'src/notes/automatic-note';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -44,6 +45,11 @@ export class CustomersService {
       private readonly parkingRentersService: ParkingRentersService,
       private readonly cuentasService: CuentasService,
     ) {}
+
+    private async publishComment(manager: import('typeorm').EntityManager, customer: Customer) {
+      const label = customer.customerType === 'RENTER' ? 'Inquilino' : customer.customerType === 'OWNER' ? 'Propietario' : 'Cliente particular';
+      await publishAutomaticNote(manager, { sourceKey: `cliente:${customer.id}:comentario`, origin: `Comentario de ${label.toLowerCase()}`, sourceType: customer.customerType, sourceId: customer.id, description: customer.comments, context: `${customer.lastName ?? ''} ${customer.firstName ?? ''}`.trim() });
+    }
 
     async create(createCustomerDto: CreateCustomerDto) {
       const queryRunner = this.dataSource.createQueryRunner();
@@ -158,6 +164,7 @@ export class CustomersService {
           }
 
 
+        await this.publishComment(queryRunner.manager, savedCustomer);
         await queryRunner.commitTransaction();
         return savedCustomer;
       } catch (error: any) {
@@ -398,6 +405,7 @@ async findAll(customerType: CustomerType, pagination?: { page: number; limit: nu
       }
 
 
+      await this.publishComment(queryRunner.manager, savedCustomer);
       await queryRunner.commitTransaction();
       return savedCustomer;
     } catch (error: any) {

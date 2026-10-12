@@ -1,3 +1,4 @@
+jest.mock('src/notes/automatic-note', () => ({ publishAutomaticNote: jest.fn() }));
 import { BadRequestException } from '@nestjs/common';
 import { MovimientosService } from './movimientos.service';
 import { Movimiento } from './entities/movimiento.entity';
@@ -5,12 +6,15 @@ import { Movimiento } from './entities/movimiento.entity';
 // Repositorio en memoria: create devuelve lo que recibe y save lo guarda en `guardados`.
 const repositorio = (filas: Partial<Movimiento>[] = []) => {
   const guardados: Partial<Movimiento>[] = [];
-  return {
+  const repo = {
     guardados,
     create: jest.fn((value) => value),
     save: jest.fn(async (value) => { guardados.push(value); return value; }),
     find: jest.fn(async () => filas),
+    manager: { transaction: jest.fn() },
   };
+  repo.manager.transaction.mockImplementation(fn => fn({ getRepository: () => repo, query: async () => [] }));
+  return repo;
 };
 
 const armar = (turnoAbierto: { id: string } | null = null) => {

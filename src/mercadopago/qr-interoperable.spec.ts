@@ -226,6 +226,29 @@ describe('Cobro con QR por caja de la playa', () => {
     expect(tickets.registrarPagoExterno).not.toHaveBeenCalled();
   });
 
+  test('un abono cobrado por QR al registrarlo queda pagado pero no retirado', async () => {
+    const { servicio, cajasQr, tickets } = cobrosConCaja({
+      externalPosId: 'CAJA1',
+    });
+    const cobro = await en(() =>
+      servicio.crear('ab-1', 'ABONO', 'u1', { alIngresar: true }),
+    );
+    cajasQr.consultarOrden.mockResolvedValue({
+      pagada: true,
+      pagoId: 'PAY3',
+      monto: 1500,
+    });
+    expect(await en(() => servicio.consultar(cobro.id))).toMatchObject({
+      estado: 'ACREDITADO',
+      salidaRegistrada: false,
+    });
+    expect(tickets.updateTicketStatus).toHaveBeenCalledWith(
+      'ab-1',
+      { paid: true, paymentMetodo: 'MERCADOPAGO' },
+      'u1',
+    );
+  });
+
   test('cancelar o generar otro QR cancela la orden en MercadoPago', async () => {
     const { servicio, cajasQr } = cobrosConCaja({ externalPosId: 'CAJA1' });
     const primero = await en(() => servicio.crear('reg-1', 'HORA', 'u1'));

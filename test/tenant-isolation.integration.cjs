@@ -153,6 +153,7 @@ before(async () => {
     await new (load('database/migrations/1790000033000-comisiones-medios-mp', 'ComisionesMediosMp1790000033000'))().up(migrationRunner);
     await new (load('database/migrations/1790000034000-alias-abonos', 'AliasAbonos1790000034000'))().up(migrationRunner);
     await new (load('database/migrations/1790000035000-alias-inquilinos', 'AliasInquilinos1790000035000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000036000-turnos-diarios', 'TurnosDiarios1790000036000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -1018,6 +1019,14 @@ test('cajas: aislamiento de sesiones, referencias y configuración administrativ
     await assert.rejects(ds.getRepository(Session).save({ cajaId: cajaA.id, fondoInicial: 0 }), /Referencia fuera/);
     assert.ok((await service.getConfiguration()).cajas.some(c => c.id === cajaB.id));
   });
+  const Payment = load('turnos/entities/turno-payment.entity', 'TurnoPayment');
+  const payment = await scoped(contextA, () => ds.getRepository(Payment).save({ turnoId: shift.id, medio: 'ALIAS', amount: 2000, referencia: 'Scoped shift' }));
+  assert.equal(payment.playaId, contextA.playaId);
+  await scoped({ ...b, role: 'ADMIN' }, async () => {
+    assert.equal(await ds.getRepository(Payment).findOneBy({ id: payment.id }), null);
+    await assert.rejects(ds.getRepository(Payment).save({ turnoId: shift.id, medio: 'QR', amount: 1000, referencia: 'Foreign shift' }), /Referencia fuera/);
+    await assert.rejects(ds.getRepository(Registration).save({ description: 'Ajena', entryDay: '2026-10-06', entryTime: '10:00:00', price: 0, exitTurnoId: shift.id }), /Referencia fuera/);
+  });
   await scoped(contextA, () => service.close(shift.id, cashAdmin.id, { cerrarCaja: true, efectivoContado: 1200, efectivoEsperado: 1200, efectivoParaSiguiente: 1200 }, 'ADMIN'));
   const operator = await ds.getRepository(User).save({ username: 'cash-policy', email: 'cash-policy@test.local', firstName: 'Cash', lastName: 'Policy', role: 'USER', empresaId: b.empresaId });
   for (const [method, route] of [['get', '/turnos/configuracion'], ['post', '/turnos/cajas'], ['patch', '/turnos/cajas/' + cajaB.id], ['post', '/turnos/sesiones/' + shift.cashSessionId + '/movimientos']]) {
@@ -1256,8 +1265,9 @@ test('comisiones de caja: configuración aislada, vinculación y medios verifica
   const adminA = await ds.getRepository(User).save({ username: 'fee-admin-a', email: 'fee-a@example.test', firstName: 'A', lastName: 'Admin', role: 'ADMIN', empresaId: a.empresaId });
   const adminB = await ds.getRepository(User).save({ username: 'fee-admin-b', email: 'fee-b@example.test', firstName: 'B', lastName: 'Admin', role: 'ADMIN', empresaId: b.empresaId });
   const api = (method, user, playaId) => request(app.getHttpServer())[method]('/box-lists/comisiones').set('Authorization', 'Bearer ' + token(user)).set('X-Playa-Id', playaId);
-  const defaults = { qrSaldo: 0.968, qrDebito: 1.6335, qrCredito: 7.2479, aliasSaldo: 0, aliasDebito: 0, aliasCredito: null };
-  const tasas = { ...defaults, qrCredito: 5.25, aliasCredito: 1 };
+  // Las referencias se ofrecen para cargar; no se aplican sin configuración.
+  const defaults = { qrSaldo: 0, qrDebito: 0, qrCredito: 0, aliasSaldo: 0, aliasDebito: 0, aliasCredito: 0 };
+  const tasas = { ...defaults, qrSaldo: 0.968, qrDebito: 1.6335, qrCredito: 5.25, aliasCredito: 1 };
   const CuentaMp = load('mercadopago/entities/cuenta-mercadopago.entity', 'CuentaMercadoPago');
   const CobroMp = load('mercadopago/entities/cobro-mercadopago.entity', 'CobroMercadoPago');
   const Transferencia = load('mercadopago/entities/transferencia-recibida.entity', 'TransferenciaRecibida');
@@ -1306,4 +1316,21 @@ test('comisiones de caja: configuración aislada, vinculación y medios verifica
   assert.equal((await scoped(scope, () => ds.getRepository(Registration).findOneBy({ id: registration.id }))).price, 10000);
   await ds.getRepository(CuentaMp).update(cuenta.id, { estado: 'DESCONECTADA' });
   assert.equal((await leer()).body.data.resumenCaja, undefined);
+});
+
+
+test('avisos automáticos: creación, búsqueda y lectura quedan aisladas por playa', async () => {
+  const Note = load('notes/entities/note.entity', 'Note');
+  const { publishAutomaticNote } = require('../dist/notes/automatic-note');
+  const { NotesService } = require('../dist/notes/notes.service');
+  const id = require('node:crypto').randomUUID();
+  await scoped(a, () => ds.transaction(m => publishAutomaticNote(m, { sourceKey: `aislamiento:${id}`, origin: 'Cierre de turno', sourceType: 'TURNO', sourceId: id, description: 'Nota exclusiva de esta playa' })));
+  const note = await scoped(a, () => ds.getRepository(Note).findOneBy({ sourceKey: `aislamiento:${id}` }));
+  assert.equal(note.playaId, a.playaId);
+  await scoped(b, async () => {
+    assert.equal(await ds.getRepository(Note).findOneBy({ id: note.id }), null);
+    const service = new NotesService(ds.getRepository(Note), ds.getRepository(User), { sendNotification: async () => {} });
+    await assert.rejects(service.markRead(note.id, b.userId), /not found/);
+    assert.ok(!(await service.unread(b.userId)).includes(note.id));
+  });
 });

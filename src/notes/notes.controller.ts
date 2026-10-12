@@ -19,8 +19,8 @@ export class NotesController {
   }
 
   @Get()
-  findAll(@Paginate() query: PaginateQuery): Promise<Paginated<Note>> {
-    return this.notesService.findAll(query);
+  findAll(@Paginate() query: PaginateQuery, @Req() req: any): Promise<Paginated<Note>> {
+    return this.notesService.findAll(query, req.user.userId);
   }
   @Get('unread')
   unread(@Req() req: any) {

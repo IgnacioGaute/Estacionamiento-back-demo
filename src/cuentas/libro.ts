@@ -1,3 +1,6 @@
+import { publishAutomaticNote } from 'src/notes/automatic-note';
+import { recordDigital } from 'src/turnos/turno-book';
+import { TurnoPayment } from 'src/turnos/entities/turno-payment.entity';
 import { EntityManager, FindOptionsWhere, IsNull, Not } from 'typeorm';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
@@ -87,7 +90,7 @@ export async function asentar(manager: EntityManager, a: Asiento): Promise<Cuent
   const importe = Math.round(a.importe);
   if (!importe) return null;
   const repo = manager.getRepository(CuentaMovimiento);
-  return repo.save(
+  const saved = await repo.save(
     repo.create({
       ...a,
       importe,
@@ -95,6 +98,25 @@ export async function asentar(manager: EntityManager, a: Asiento): Promise<Cuent
       motivo: a.motivo?.slice(0, 255) ?? null,
     }),
   );
+  if (!a.detalle?.migrado && (a.tipo === 'PAGO' || a.tipo === 'DEVOLUCION' || a.tipo === 'ANULACION')) {
+    let monetary = a.tipo !== 'ANULACION';
+    let method: string | null | undefined = a.metodo;
+    if (a.anulaId) {
+      const original = await repo.findOneBy({ id: a.anulaId });
+      monetary = original?.tipo === 'PAGO' || original?.tipo === 'DEVOLUCION';
+      if (monetary && method !== 'CASH') {
+        const payment = await manager.getRepository(TurnoPayment).findOneBy({ referencia: a.anulaId });
+        method = payment?.medio ?? method;
+      }
+    }
+    if (monetary) await recordDigital(manager, -importe, method, saved.id, a.usuarioId);
+  }
+  if (!a.detalle?.migrado && a.motivo?.trim() && !['PAGO', 'SALDO_INICIAL'].includes(a.tipo)) {
+    const customer = await manager.findOne(Customer, { where: { id: a.customerId }, withDeleted: true });
+    const origin = a.tipo === 'ANULACION' ? 'Anulación de cuenta' : a.tipo === 'DEVOLUCION' ? 'Devolución a inquilino' : a.importe > 0 ? 'Recargo de cuenta' : 'Bonificación de cuenta';
+    await publishAutomaticNote(manager, { sourceKey: a.tipo === 'ANULACION' && a.numero ? `cuenta-anulacion:${a.customerId}:${a.numero}` : `cuenta:${saved.id}`, origin, sourceType: 'CUENTA', sourceId: a.customerId, usuarioId: a.usuarioId, description: a.motivo, context: `${customer?.lastName ?? ''} ${customer?.firstName ?? ''}`.trim() + (a.numero ? ` · Comprobante ${a.numero}` : '') });
+  }
+  return saved;
 }
 
 export async function saldoDe(manager: EntityManager, customerId: string): Promise<number> {

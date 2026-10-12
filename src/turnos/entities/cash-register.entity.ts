@@ -3,6 +3,7 @@ import { Playa } from 'src/tenancy/entities/playa.entity';
 
 @Entity({ name: 'cash_registers' })
 export class CashRegister {
+  @Column('int', { default: 15000 }) fondoObjetivo: number;
   @PrimaryGeneratedColumn('uuid') id: string;
   @Index() @Column('uuid', { nullable: true }) playaId: string | null;
   @ManyToOne(() => Playa, { nullable: true }) @JoinColumn({ name: 'playaId' }) playa: Playa | null;

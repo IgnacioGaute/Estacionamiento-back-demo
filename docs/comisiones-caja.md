@@ -8,11 +8,18 @@ Hay seis tasas: QR saldo/transferencia, QR débito, QR crédito, alias transfere
 alias débito y alias crédito. Se admite 0–100, hasta cuatro decimales; null significa
 «a definir», mientras 0 significa expresamente sin descuento.
 
+Una empresa sin configuración guardada arranca con las seis tasas en 0%. La pantalla
+ofrece «Usar valores de Mercado Pago», que carga la referencia en el formulario sin
+guardarla; el administrador la revisa y guarda. No se aplica sola porque la tasa real
+cambia por cuenta (plazo de acreditación elegido, condiciones negociadas). Las empresas
+que ya tenían tasas guardadas (incluidas las que la migración 1790000033000 completó con
+la referencia) las conservan.
+
 Referencias consultadas el 08/10/2026 para acreditación inmediata, con IVA 21%:
 QR saldo 0,968%, débito 1,6335%, crédito en un pago 7,2479%.
 Fuente: https://www.mercadopago.com.ar/herramientas-para-vender/cobrar-con-qr
 Son estimaciones: provincia, cuotas y plazo pueden cambiar el costo real.
-Alias transferencia y alias débito parten de 0% editable; para alias crédito no se
+En la referencia, alias transferencia y alias débito son 0%; para alias crédito no se
 verificó una tarifa argentina para el receptor y se deja a definir.
 
 La clasificación requiere evidencia del cobro acreditado de Mercado Pago o de una

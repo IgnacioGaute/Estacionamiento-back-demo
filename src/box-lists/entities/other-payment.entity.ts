@@ -18,6 +18,8 @@ export type PaymentMethod = (typeof PAYMENT_METHOD)[number];
 
 @Entity({ name: 'other_payments' })
 export class OtherPayment {
+  @Column('varchar', { length: 255, nullable: true }) operatorName: string | null;
+
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

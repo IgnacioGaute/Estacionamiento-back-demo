@@ -38,6 +38,7 @@ export class CobrosMercadoPagoController {
       monto: dto.monto,
       receiptIds: dto.receiptIds,
       nota: dto.nota,
+      alIngresar: dto.alIngresar,
     });
   }
 

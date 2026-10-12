@@ -1,3 +1,5 @@
+import { publishAutomaticNote } from 'src/notes/automatic-note';
+import { operatorShift, recordDigital, reverseDigital } from 'src/turnos/turno-book';
 import { VehicleTypeEntity } from './entities/vehicle-type.entity';
 import { ListPagination, listResult } from 'src/utils/list-pagination';
 import { CreateVehicleTypeDto, UpdateVehicleTypeDto } from './dto/vehicle-type.dto';
@@ -33,6 +35,8 @@ import { UpdateTicketScheduleDto } from './dto/update-ticket-schedule.dto';
 import { MovimientosService } from 'src/movimientos/movimientos.service';
 import { MovimientoMetodo } from 'src/movimientos/entities/movimiento.entity';
 import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate.dto';
+import { DiscountRegistrationDto } from './dto/discount-registration.dto';
+import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
 import { normalizePlate, toSearchKey } from './utils/license-plate.util';
 import { Brackets } from 'typeorm';
@@ -230,6 +234,7 @@ async removeTicketPrice(id: string) {
       const [current] = await repository.find({ order: { updatedAt: 'DESC' }, take: 1 });
       const merged = { ...this.defaultTicketSchedule, ...current, ...dto };
       if (dto.shiftsEnabled === false) merged.multipleShiftsEnabled = false;
+      if (merged.sueldoAutomatico && !(merged.sueldoPorTurno > 0)) throw new BadRequestException('Indicá un importe de sueldo mayor que cero.');
       if (merged.multipleShiftsEnabled && !merged.shiftsEnabled) throw new BadRequestException('Activá Turnos de caja antes de permitir turnos múltiples.');
       if (merged.multipleShiftsEnabled !== (current?.multipleShiftsEnabled ?? false)) {
         await manager.query('SELECT pg_advisory_xact_lock(718904)');
@@ -267,7 +272,14 @@ async removeTicketPrice(id: string) {
     if (!vehicle) throw new BadRequestException('El registro no tiene tipo de vehículo.');
     const snapshot = registration.pricingSnapshot ?? await this.capturePricing(vehicle, manager, false);
     const entry = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', 'America/Argentina/Buenos_Aires');
-    return { ...calculateStayPrice(snapshot, vehicle, entry.toDate(), new Date()), tariffSnapshotUsed: !!registration.pricingSnapshot };
+    const calculated = calculateStayPrice(snapshot, vehicle, entry.toDate(), new Date());
+    const { total } = await (manager ?? this.dataSource.manager).getRepository(Movimiento).createQueryBuilder('m')
+      .select('COALESCE(SUM(m.monto), 0)', 'total')
+      .where("m.ticketRegistrationId = :id AND m.tipo = 'DESCUENTO'", { id: registration.id }).getRawOne();
+    const descuentoTotal = Math.min(calculated.price, Number(total));
+    return { ...calculated, price: calculated.price - descuentoTotal, descuentoTotal,
+      breakdown: [...calculated.breakdown, ...(descuentoTotal ? [{ label: 'Descuento aplicado', amount: -descuentoTotal }] : [])],
+      tariffSnapshotUsed: !!registration.pricingSnapshot };
   }
 
   async previewPrice(vehicleType: string, ticketDayType: 'DAY' | 'NIGHT', elapsedMinutes: number, entryAt?: string, options?: PricingOptions) {
@@ -498,11 +510,13 @@ async createRegistrationForDay(createTicketRegistrationForDayDto: CreateTicketRe
     // La caja solo se toca si el abono se cobra en el momento: si queda pendiente de pago, el
     // registro existe pero no suma nada a la planilla del día hasta que se marque pagado.
     const cash = createTicketRegistrationForDayDto.paid && this.esEfectivoDeAbono(createTicketRegistrationForDayDto.paymentMetodo) ? ticket.price : 0;
-    const boxList = await this.boxListsService.applyTicketPayment(now, cash, manager);
+    const boxList = await this.boxListsService.applyTicketPayment(now, cash, manager, undefined, userId);
 
     ticket.boxList = { id: boxList.id } as BoxList;
+    ticket.paymentOperatorName = ticket.paid && userId ? await this.operatorName(userId, manager) : null;
 
     const savedTicket = await manager.getRepository(TicketRegistrationForDay).save(ticket);
+    if (ticket.paid) await recordDigital(manager, ticket.price, ticket.paymentMetodo, 'Abono ' + savedTicket.id, userId);
     return savedTicket;
   } catch (error: any) {
     if (!(error instanceof NotFoundException)) {
@@ -547,14 +561,19 @@ async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMe
         const box = await this.boxListsService.applyTicketPayment(date, after - before, manager);
         ticket.boxList = { id: box.id } as BoxList;
       }
+      if (ticket.paid && (!paid || method !== ticket.paymentMetodo)) await reverseDigital(manager, ticket.price, ticket.paymentMetodo, 'Abono ' + id, 'Corrección abono ' + id, userId);
+      if (paid && (!ticket.paid || method !== ticket.paymentMetodo)) await recordDigital(manager, ticket.price, method, 'Abono ' + id, userId);
+      if (paid && (!ticket.paid || method !== ticket.paymentMetodo)) ticket.paymentOperatorName = userId ? await this.operatorName(userId, manager) : null;
       ticket.paid = paid;
       ticket.paymentMetodo = method;
       if (dto.retired !== undefined) {
         if (dto.retired && !ticket.retired) {
+          ticket.exitTurnoId = (await operatorShift(manager, userId))?.id ?? null;
           ticket.retiredAt = new Date();
           ticket.exitOperatorName = userId ? await this.operatorName(userId, manager) : null;
         }
         if (!dto.retired) {
+          ticket.exitTurnoId = null;
           ticket.retiredAt = null;
           ticket.exitOperatorName = null;
         }
@@ -570,14 +589,14 @@ async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMe
     if (!ids || ids.length === 0) {
       return { affected: 0 };
     }
-    const exitOperatorName = userId ? await this.operatorName(userId, this.dataSource.manager) : null;
-    const result = await this.ticketRegistrationForDayRepository.createQueryBuilder()
-      .update()
-      .set({ retired: true, retiredAt: new Date(), exitOperatorName })
-      .where('id IN (:...ids)', { ids })
-      .andWhere('(retired IS NULL OR retired = false)')
-      .execute();
-    return { affected: result.affected ?? 0 };
+    return this.dataSource.transaction(async manager => {
+      const shift = await operatorShift(manager, userId);
+      const exitOperatorName = userId ? await this.operatorName(userId, manager) : null;
+      const result = await manager.getRepository(TicketRegistrationForDay).createQueryBuilder().update()
+        .set({ retired: true, retiredAt: new Date(), exitOperatorName, exitTurnoId: shift?.id ?? null })
+        .where('id IN (:...ids)', { ids }).andWhere('(retired IS NULL OR retired = false)').execute();
+      return { affected: result.affected ?? 0 };
+    });
   }
 
     async findAllRegistrationForDay(pagination?: ListPagination, operation = false) {
@@ -644,6 +663,7 @@ async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMe
         const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
         await this.boxListsService.applyTicketPayment(date, -ticket.price, manager);
       }
+      if (ticket.paid && !this.esEfectivoDeAbono(ticket.paymentMetodo)) await reverseDigital(manager, ticket.price, ticket.paymentMetodo, 'Abono ' + id, 'Eliminación abono ' + id);
       await repo.remove(ticket);
       return { message: 'Abono eliminado.' };
     });
@@ -996,7 +1016,9 @@ async removePriceBracket(id: string) {
         duplicateOfRegistrationId,
       });
 
-      return repository.save(registration);
+      const created = await repository.save(registration);
+      await publishAutomaticNote(manager, { sourceKey: `entrada:${created.id}`, origin: 'Entrada con patente ya activa', sourceType: 'TICKET', sourceId: created.id, usuarioId: userId, description: created.duplicatePlateOverrideReason, context: created.licensePlateOriginal ?? created.id });
+      return created;
     });
     this.ticketGateway.emitNewRegistration(saved);
     return saved;
@@ -1055,12 +1077,12 @@ async removePriceBracket(id: string) {
     return amount + registration.legacyCollectedOffset;
   }
 
-  async getCloseSummary(id: string) {
-    const registration = await this.ticketRegistrationRepository.findOne({ where: { id }, relations: ['ticket'] });
+  async getCloseSummary(id: string, manager?: EntityManager) {
+    const registration = await (manager ? manager.getRepository(TicketRegistration) : this.ticketRegistrationRepository).findOne({ where: { id }, relations: ['ticket'] });
     if (!registration) throw new NotFoundException('Registro no encontrado.');
     if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
-    const preview = await this.priceRegistration(registration);
-    const totalCollectedSoFar = await this.collectedAmount(registration);
+    const preview = await this.priceRegistration(registration, manager);
+    const totalCollectedSoFar = await this.collectedAmount(registration, manager);
     return { registration, elapsedMinutes: preview.elapsedMinutes, previewBracket: preview,
       totalCollectedSoFar, saldoACobrar: Math.max(0, preview.price - totalCollectedSoFar),
       cambioARetornar: Math.max(0, totalCollectedSoFar - preview.price),
@@ -1072,6 +1094,36 @@ async removePriceBracket(id: string) {
     const box = await this.boxListsService.applyTicketPayment(date, amount, manager, undefined, usuarioId);
     registration.dateNow = date;
     registration.boxList = { id: box.id } as BoxList;
+  }
+
+  async discountRegistration(id: string, dto: DiscountRegistrationDto, usuarioId: string) {
+    const result = await this.dataSource.transaction(async manager => {
+      const repo = manager.getRepository(TicketRegistration);
+      const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+      if (!registration) throw new NotFoundException('Registro no encontrado.');
+      if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
+      const summary = await this.getCloseSummary(id, manager);
+      if (summary.previewBracket.price !== dto.expectedPrice || summary.totalCollectedSoFar !== dto.expectedCollected) {
+        throw new ConflictException('El importe cambió. Revisá el resumen antes de aplicar el descuento.');
+      }
+      if (!Number.isInteger(dto.monto) || dto.monto <= 0 || dto.monto > summary.saldoACobrar) {
+        throw new BadRequestException('El descuento debe ser mayor a cero y no superar el saldo pendiente.');
+      }
+      if (!dto.motivo?.trim() || dto.motivo.trim().length > 255) throw new BadRequestException('Ingresá el motivo del descuento.');
+      const [pending] = await manager.query(`SELECT EXISTS (
+        SELECT 1 FROM cobros_mercadopago WHERE "registrationId"=$1 AND tipo='HORA' AND estado='PENDIENTE'
+        UNION ALL SELECT 1 FROM cobros_transferencia WHERE "registrationId"=$1 AND tipo='HORA' AND estado IN ('ESPERANDO','REVISION')
+      ) AS present`, [id]);
+      if (pending.present) throw new ConflictException('Cancelá el cobro pendiente antes de aplicar un descuento.');
+      await this.movimientosService.create({ ticketRegistrationId: id, monto: dto.monto, metodo: 'CASH', tipo: 'DESCUENTO', motivo: dto.motivo.trim(), usuarioId }, manager);
+      // El descuento no es un cobro ni una devolución: se conserva en el libro sin mover efectivo.
+      await this.linkToTodaysBoxList(registration, 0, manager, usuarioId);
+      registration.price = summary.previewBracket.price - dto.monto;
+      await repo.save(registration);
+      return this.getCloseSummary(id, manager);
+    });
+    this.ticketGateway.emitNewRegistration(result.registration);
+    return result;
   }
 
   // Ambas identificaciones usan una operación atómica; reintentar un cierre no vuelve a cobrar.
@@ -1115,8 +1167,11 @@ async removePriceBracket(id: string) {
     return { yaCerrada: false as const, cerrada: true, saldoPendiente: 0, registration: saved };
   }
 
-  /** Cobra y retira el abono en la misma transacción que consume la transferencia. */
-  async acreditarTransferenciaAbonoEn(manager: EntityManager, id: string, monto: number, _referencia: string, usuarioId: string) {
+  /**
+   * Cobra el abono en la misma transacción que consume la transferencia y, cobrado al salir, lo
+   * retira. Cobrado al registrarlo (`retirar` en false) queda pagado y sigue en la playa.
+   */
+  async acreditarTransferenciaAbonoEn(manager: EntityManager, id: string, monto: number, _referencia: string, usuarioId: string, retirar = true) {
     await manager.query('SELECT pg_advisory_xact_lock(718904)');
     const repo = manager.getRepository(TicketRegistrationForDay);
     const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
@@ -1126,13 +1181,18 @@ async removePriceBracket(id: string) {
     const fecha = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
     const box = await this.boxListsService.applyTicketPayment(fecha, 0, manager, undefined, usuarioId);
     registration.boxList = { id: box.id } as BoxList;
+    await recordDigital(manager, monto, 'ALIAS', 'Abono ' + id, usuarioId);
+    registration.paymentOperatorName = await this.operatorName(usuarioId, manager);
     registration.paid = true;
     registration.paymentMetodo = 'TRANSFER';
-    registration.retired = true;
-    registration.retiredAt = new Date();
-    registration.exitOperatorName = await this.operatorName(usuarioId, manager);
+    if (retirar) {
+      registration.exitTurnoId = (await operatorShift(manager, usuarioId))?.id ?? null;
+      registration.retired = true;
+      registration.retiredAt = new Date();
+      registration.exitOperatorName = await this.operatorName(usuarioId, manager);
+    }
     await repo.save(registration);
-    return { yaCerrada: false as const, cerrada: true, saldoPendiente: 0, registration };
+    return { yaCerrada: false as const, cerrada: retirar, saldoPendiente: 0, registration };
   }
 
   /** Avisa a las pantallas que una estadía cambió (lo que hacen los cierres al terminar). */
@@ -1177,6 +1237,7 @@ async removePriceBracket(id: string) {
       registration.codeBarTicket = registration.ticket?.codeBar ?? registration.codeBarTicket;
       registration.departureDay = now.format('YYYY-MM-DD');
       registration.departureTime = now.format('HH:mm:ss');
+      registration.exitTurnoId = (await operatorShift(manager, usuarioId))?.id ?? null;
       registration.exitOperatorName = await this.operatorName(usuarioId, manager);
       registration.price = preview.price;
       registration.pricingBreakdown = preview.breakdown;

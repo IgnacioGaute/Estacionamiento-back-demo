@@ -31,10 +31,11 @@ export class CobroMercadoPago {
   @Column('varchar', { length: 10, default: 'HORA' })
   tipo: 'HORA' | 'ABONO' | 'INQUILINO';
 
-  // Solo inquilinos: qué cargos cubrir primero y la nota, para asentar el pago cuando se acredite
-  // igual que si se hubiera cobrado en el mostrador.
+  // Inquilinos: qué cargos cubrir primero y la nota, para asentar el pago cuando se acredite
+  // igual que si se hubiera cobrado en el mostrador. Abonos: `alIngresar` si se cobra al
+  // registrarlo, que lo deja pagado pero no retirado (al salir, sí se retira).
   @Column('jsonb', { nullable: true })
-  detalle: { receiptIds?: string[]; nota?: string | null } | null;
+  detalle: { receiptIds?: string[]; nota?: string | null; alIngresar?: boolean } | null;
 
   // Congelado al generar el QR. La tarifa sigue corriendo mientras el cliente paga, así que el
   // importe que se cobra es el que se le mostró, y la diferencia —si la hay— queda como saldo.

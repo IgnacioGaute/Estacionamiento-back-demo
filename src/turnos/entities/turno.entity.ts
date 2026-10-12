@@ -20,6 +20,18 @@ export type TurnoEstado = (typeof TURNO_ESTADO)[number];
 @Entity({ name: 'turnos' })
 @Index('turnos_usuario_abierto', ['playaId', 'usuarioApertura'], { unique: true, where: "estado = 'ABIERTO'" })
 export class Turno {
+  @Column('uuid', { nullable: true }) usuarioAperturaId: string | null;
+  @Column('boolean', { default: false }) cierreAutomatico: boolean;
+  @Column('uuid', { nullable: true }) continuacionDeId: string | null;
+  @Column('uuid', { nullable: true }) jornadaId: string | null;
+  @Column('date', { nullable: true }) fechaOperativa: string | null;
+  @Column('int', { default: 0 }) sueldoPrevisto: number;
+  @Column('int', { default: 0 }) sueldoRetirado: number;
+  @Column('text', { nullable: true }) alertaSueldo: string | null;
+  @Column('int', { nullable: true }) vehiculosInicio: number | null;
+  @Column('int', { nullable: true }) vehiculosFin: number | null;
+  @Column('int', { nullable: true }) salidasRegistradas: number | null;
+  @Column('int', { nullable: true }) saldoAlCorte: number | null;
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

@@ -1,3 +1,4 @@
+import { externalPayment } from 'src/turnos/turno-book';
 import {
   BadRequestException,
   ConflictException,
@@ -258,7 +259,7 @@ export class VerificacionAliasService {
    * Abre la espera de una transferencia para una estadía. No registra cobro ni salida. Si la
    * estadía ya tenía un intento abierto, devuelve ese (reabrir la pantalla no duplica nada).
    */
-  async iniciar(registrationId: string, tipo: 'HORA' | 'ABONO' | 'INQUILINO' = 'HORA', datos?: { monto?: number; receiptIds?: string[]; nota?: string }) {
+  async iniciar(registrationId: string, tipo: 'HORA' | 'ABONO' | 'INQUILINO' = 'HORA', datos?: { monto?: number; receiptIds?: string[]; nota?: string; alIngresar?: boolean }) {
     const { empresaId, playaId, userId } = this.scope();
     const cuenta = await this.exigirHabilitacion(empresaId);
     if (tipo === 'INQUILINO') {
@@ -290,7 +291,7 @@ export class VerificacionAliasService {
           playaId,
           registrationId,
           tipo,
-          detalle: tipo === 'INQUILINO' ? { receiptIds: datos?.receiptIds ?? [], nota: datos?.nota?.trim() || null } : null,
+          detalle: tipo === 'INQUILINO' ? { receiptIds: datos?.receiptIds ?? [], nota: datos?.nota?.trim() || null } : tipo === 'ABONO' && datos?.alIngresar ? { alIngresar: true } : null,
           mpUserId: cuenta.mpUserId,
           importe: resumen.saldoACobrar,
           moneda: 'ARS',
@@ -583,16 +584,18 @@ export class VerificacionAliasService {
           'Esa transferencia no corresponde a este cobro: el importe o la hora no coinciden.',
         );
 
+      // Un abono cobrado al registrarlo queda pagado sin retirarse: el vehículo recién entra.
       const acreditar = intento.tipo === 'ABONO'
-        ? this.tickets.acreditarTransferenciaAbonoEn.bind(this.tickets)
+        ? (mm: import('typeorm').EntityManager, id: string, importe: number, ref: string, usuario: string) =>
+            this.tickets.acreditarTransferenciaAbonoEn(mm, id, importe, ref, usuario, !intento.detalle?.alIngresar)
         : this.tickets.acreditarTransferenciaEn.bind(this.tickets);
-      const r = intento.tipo === 'INQUILINO' ? await this.acreditarInquilino(m, intento, usuarioId) : await acreditar(
+      const r = await externalPayment.run({ userId: intento.creadoPor, at: intento.createdAt, medio: 'ALIAS' }, async () => intento.tipo === 'INQUILINO' ? await this.acreditarInquilino(m, intento, usuarioId) : await acreditar(
         m,
         intento.registrationId,
         intento.importe,
         `Transferencia MercadoPago ${operacionId}`,
         usuarioId,
-      );
+      ));
       if (r.yaCerrada)
         throw new ConflictException({
           code: 'ESTADIA_YA_COBRADA',

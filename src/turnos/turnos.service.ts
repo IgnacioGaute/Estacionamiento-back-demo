@@ -1,3 +1,5 @@
+import { publishAutomaticNote } from 'src/notes/automatic-note';
+import { exitCount, operatorShift, rolloverShifts, occupancyAt, salaryWithdrawal, shiftSummary, SHIFT_TZ } from './turno-book';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull, Not, Repository } from 'typeorm';
@@ -29,6 +31,8 @@ export class TurnosService {
   ) {}
 
   async findOpenTurnoOrNull(usuarioId: string, manager?: EntityManager): Promise<Turno | null> {
+    if (!manager) return this.dataSource.transaction(m => this.findOpenTurnoOrNull(usuarioId, m));
+    await rolloverShifts(manager);
     // Mismo orden de locks que cobros y cierre: libro de caja, luego turno del operador.
     if (manager) await manager.query('SELECT pg_advisory_xact_lock(718904)');
     const repository = (manager ?? this.dataSource.manager).getRepository(Turno);
@@ -50,7 +54,7 @@ export class TurnosService {
     }
     const row = await manager.getRepository(Movimiento).createQueryBuilder('m')
       .select('COALESCE(SUM(m.monto), 0)', 'sum').where('m.turnoId = :id', { id: turno.id })
-      .andWhere("m.metodo = 'CASH' AND m.tipo != 'CORTESIA'").getRawOne();
+      .andWhere("m.metodo = 'CASH' AND m.tipo NOT IN ('CORTESIA', 'DESCUENTO')").getRawOne();
     return turno.fondoInicial + Number(row.sum);
   }
 
@@ -71,17 +75,22 @@ export class TurnosService {
     return session.fondoInicial + Number(cash.sum) + Number(changes.sum);
   }
 
-  private async cajaContext(caja: CashRegister, manager: EntityManager) {
+  private async cajaContext(caja: CashRegister, manager: EntityManager, vehiculosActivos?: number) {
     const repo = manager.getRepository(CashSession);
     const session = await repo.findOne({ where: { cajaId: caja.id, estado: 'ABIERTO' } });
     const last = await repo.findOne({ where: { cajaId: caja.id, estado: 'CERRADO' }, order: { fechaCierre: 'DESC', id: 'DESC' } });
     // Transición: sólo la primera apertura de Caja principal puede recibir el último fondo
     // del esquema anterior. Nunca se suman los fondos de cierres de distintos usuarios.
     const legacy = caja.principal && !session && !last
-      ? await manager.getRepository(Turno).findOne({ where: { cashSessionId: IsNull(), estado: 'CERRADO', efectivoParaSiguiente: Not(IsNull()), recibidoPorTurnoId: IsNull() }, order: { fechaCierre: 'DESC', id: 'DESC' } }) : null;
+      ? await manager.getRepository(Turno).findOne({ where: { cashSessionId: IsNull(), estado: 'CERRADO', efectivoParaSiguiente: Not(IsNull()), recibidoPorTurnoId: IsNull() }, relations: ['usuarioCierre'], withDeleted: true, order: { fechaCierre: 'DESC', id: 'DESC' } }) : null;
     const users = session ? await manager.getRepository(Turno).find({ where: { cashSessionId: session.id, estado: 'ABIERTO' }, relations: ['usuarioApertura'], order: { fechaApertura: 'ASC' } }) : [];
     const movements = session ? await manager.getRepository(CashSessionMovement).find({ where: { sesionId: session.id }, relations: ['usuario'], order: { createdAt: 'DESC' } }) : [];
+    const entregado = last ? await manager.getRepository(Turno).findOne({ where: { cashSessionId: last.id, cierreCaja: true }, relations: ['usuarioCierre'], withDeleted: true }) : legacy;
+    const responsable = entregado?.usuarioCierre;
+    const operador = responsable ? [responsable.firstName, responsable.lastName].filter(Boolean).join(' ').trim() || responsable.username : entregado?.nombre;
     return { ...caja, session, pending: last, legacyPending: legacy,
+      traspaso: { operador: operador && operador !== 'Turno' ? operador : null, fechaCierre: entregado?.fechaCierre ?? last?.fechaCierre ?? null,
+        vehiculosDejados: entregado?.vehiculosFin ?? null, vehiculosActivos: vehiculosActivos ?? await occupancyAt(manager, new Date()) },
       movimientos: movements.map(m => ({ id: m.id, amount: m.amount, tipo: m.tipo, motivo: m.motivo, operador: m.usuario ? [m.usuario.firstName, m.usuario.lastName].join(' ').trim() : 'Usuario no disponible' })),
       efectivoDisponible: session ? await this.sessionTotal(session.id, manager) : last?.efectivoParaSiguiente ?? legacy?.efectivoParaSiguiente ?? 0,
       operadores: users.map(t => ({ turnoId: t.id, id: t.usuarioApertura?.id, nombre: t.nombre })),
@@ -91,16 +100,20 @@ export class TurnosService {
   private async turnoContext(turno: Turno, manager: EntityManager) {
     const others = turno.cashSessionId ? await manager.getRepository(Turno).count({ where: { cashSessionId: turno.cashSessionId, estado: 'ABIERTO' } }) : 1;
     const net = await manager.getRepository(CashEntry).createQueryBuilder('c').where('c.turnoId = :id', { id: turno.id }).select('COALESCE(SUM(c.amount), 0)', 'sum').getRawOne();
-    return { ...turno, efectivoDisponible: await this.cashTotal(turno, manager), efectivoOperado: Number(net.sum), usuariosEnCaja: others, requiereArqueo: others === 1 };
+    const caja = turno.cajaId ? await manager.getRepository(CashRegister).findOneBy({ id: turno.cajaId }) : null;
+    const disponible = await this.cashTotal(turno, manager);
+    return { ...turno, resumen: await shiftSummary(manager, turno), fondoObjetivo: caja?.fondoObjetivo ?? 0, sueldoSugerido: salaryWithdrawal(disponible, caja?.fondoObjetivo ?? 0, turno.sueldoPrevisto), efectivoDisponible: await this.cashTotal(turno, manager), efectivoOperado: Number(net.sum), usuariosEnCaja: others, requiereArqueo: others === 1 };
   }
 
   async getCashContext(usuarioId = tenantContext.getStore()?.userId) {
     if (!usuarioId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      await rolloverShifts(manager);
       const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
       const registers = await this.ensureCajas(manager);
-      const cajas = await Promise.all(registers.filter(c => c.activa && (settings?.multipleShiftsEnabled || c.principal)).map(c => this.cajaContext(c, manager)));
+      const vehiculosActivos = await occupancyAt(manager, new Date());
+      const cajas = await Promise.all(registers.filter(c => c.activa && (settings?.multipleShiftsEnabled || c.principal)).map(c => this.cajaContext(c, manager, vehiculosActivos)));
       const repo = manager.getRepository(Turno);
       const own = await repo.findOne({ where: { usuarioApertura: { id: usuarioId }, estado: 'ABIERTO' }, relations: ['usuarioApertura', 'caja'] });
       const active = own ? await this.turnoContext(own, manager) : null;
@@ -138,7 +151,7 @@ export class TurnosService {
         const last = await manager.getRepository(CashSession).findOne({ where: { cajaId: id, estado: 'CERRADO' }, order: { fechaCierre: 'DESC' } });
         if ((last?.efectivoParaSiguiente ?? 0) > 0) throw new ConflictException('La caja tiene efectivo pendiente. Retiralo al cerrar antes de desactivarla.');
       }
-      Object.assign(caja, { nombre, activa: dto.activa ?? caja.activa });
+      Object.assign(caja, { nombre, activa: dto.activa ?? caja.activa, fondoObjetivo: dto.fondoObjetivo ?? caja.fondoObjetivo });
       return repo.save(caja);
     });
   }
@@ -153,7 +166,11 @@ export class TurnosService {
       if (dto.efectivoEsperado !== expected) throw new ConflictException('El efectivo cambió. Actualizá la caja antes de registrar el movimiento.');
       if (!dto.motivo.trim()) throw new BadRequestException('Indicá el motivo del movimiento.');
       if (dto.tipo === 'RETIRO' && dto.importe > expected) throw new BadRequestException('No podés retirar más efectivo del disponible.');
-      return manager.getRepository(CashSessionMovement).save({ sesionId, usuarioId, tipo: dto.tipo, amount: dto.tipo === 'RETIRO' ? -dto.importe : dto.importe, motivo: dto.motivo.trim() });
+      const own = await operatorShift(manager, usuarioId);
+      const movement = await manager.getRepository(CashSessionMovement).save({ sesionId, usuarioId, turnoId: own?.cashSessionId === sesionId ? own.id : null, tipo: dto.tipo, amount: dto.tipo === 'RETIRO' ? -dto.importe : dto.importe, motivo: dto.motivo.trim() });
+      const caja = await manager.getRepository(CashRegister).findOneBy({ id: session.cajaId });
+      await publishAutomaticNote(manager, { sourceKey: `caja-movimiento:${movement.id}`, origin: dto.tipo === 'RETIRO' ? 'Retiro de caja' : 'Aporte de caja', sourceType: 'CAJA', sourceId: session.id, usuarioId, description: dto.motivo, context: `${caja?.nombre ?? 'Caja'} · $ ${dto.importe.toLocaleString('es-AR')}` });
+      return movement;
     });
   }
 
@@ -162,6 +179,7 @@ export class TurnosService {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const repo = manager.getRepository(Turno);
       if (await repo.exists({ where: { usuarioApertura: { id: usuarioId }, estado: 'ABIERTO' } })) throw new ConflictException('Ya tenés un turno abierto. Cerralo antes de abrir otro.');
+      await rolloverShifts(manager);
       const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
       if (!settings?.shiftsEnabled) throw new BadRequestException('Los turnos están desactivados. El administrador puede activarlos en Configuración.');
       if (await repo.exists({ where: { cashSessionId: IsNull(), estado: 'ABIERTO' } })) throw new ConflictException('Cerrá los turnos del esquema anterior antes de abrir una caja nueva.');
@@ -193,11 +211,13 @@ export class TurnosService {
       const operator = await manager.getRepository(User).findOneBy({ id: usuarioId });
       if (!operator) throw new NotFoundException('Operador no encontrado.');
       const turno = await repo.save(repo.create({ usuarioApertura: { id: usuarioId }, cajaId: caja.id, cashSessionId: session.id,
+        fechaOperativa: dayjs().tz(SHIFT_TZ).format('YYYY-MM-DD'), sueldoPrevisto: settings.sueldoAutomatico ? settings.sueldoPorTurno : 0, vehiculosInicio: await occupancyAt(manager, new Date()),
         fondoInicial: ctx.session ? 0 : dto.fondoInicial, nombre: [operator.firstName, operator.lastName].join(' ').trim() || operator.username,
         duracionPrevistaHoras: null, cashVersion: 2, estado: 'ABIERTO', fondoRecibido: ctx.session ? 0 : dto.fondoInicial - (dto.cambioAgregado ?? 0),
         turnoAnteriorId: ctx.session ? null : dto.turnoAnteriorId ?? ctx.legacyPending?.id ?? null }));
       if (ctx.legacyPending) await repo.update(ctx.legacyPending.id, { recibidoPorTurnoId: turno.id });
       if (dto.turnoAnteriorId && ctx.pending) await repo.update(dto.turnoAnteriorId, { recibidoPorTurnoId: turno.id });
+      if (!ctx.session) await publishAutomaticNote(manager, { sourceKey: `apertura:${session.id}`, origin: 'Apertura de caja', sourceType: 'TURNO', sourceId: turno.id, usuarioId, description: dto.motivoApertura, context: `${caja.nombre} · ${turno.nombre}` });
       return turno;
     });
   }
@@ -206,6 +226,7 @@ export class TurnosService {
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const repo = manager.getRepository(Turno);
+      await rolloverShifts(manager);
       const turno = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!turno) throw new NotFoundException('Turno no encontrado.');
       const owner = await repo.findOne({ where: { id }, relations: ['usuarioApertura'] });
@@ -225,18 +246,29 @@ export class TurnosService {
         });
       }
       if (turno.estado === 'CERRADO') throw new BadRequestException('Este turno ya está cerrado.');
+      const caja = turno.cajaId ? await manager.getRepository(CashRegister).findOneBy({ id: turno.cajaId }) : null;
+      const available = dto.efectivoContado ?? await this.cashTotal(turno, manager);
+      const salary = salaryWithdrawal(available, caja?.fondoObjetivo ?? 0, turno.sueldoPrevisto);
+      if (turno.sueldoPrevisto > 0 && dto.sueldoEsperado !== salary) throw new ConflictException('Revisá el retiro de sueldo actualizado antes de confirmar.');
+      turno.sueldoRetirado = salary;
+      turno.alertaSueldo = turno.sueldoPrevisto > 0 && !salary ? `No se retiró el sueldo de $${turno.sueldoPrevisto}: el efectivo no alcanza para preservar el fondo de $${caja?.fondoObjetivo ?? 0}.` : null;
+      turno.vehiculosFin = await occupancyAt(manager, new Date());
+      turno.salidasRegistradas = await exitCount(manager, turno.id);
       if (turno.cashSessionId) {
         const count = await repo.count({ where: { cashSessionId: turno.cashSessionId, estado: 'ABIERTO' } });
         if (count > 1) {
           if (dto.cerrarCaja || dto.efectivoContado !== undefined || dto.efectivoParaSiguiente !== undefined) throw new ConflictException('Hay otros operadores en esta caja. Cerrá sólo tu turno; el último realiza el arqueo.');
+          if (dto.efectivoEsperado !== await this.cashTotal(turno, manager) && turno.sueldoPrevisto > 0) throw new ConflictException('Cambió el efectivo de la caja. Revisá el cierre.');
+          if (salary) await manager.getRepository(CashSessionMovement).save({ sesionId: turno.cashSessionId, turnoId: turno.id, usuarioId, tipo: 'SUELDO', amount: -salary, motivo: 'Sueldo al finalizar la jornada' });
           Object.assign(turno, { usuarioCierre: { id: usuarioId }, fechaCierre: new Date(), estado: 'CERRADO', cierreCaja: false,
             cierreForzado: forzado, motivoCierreForzado: forzado ? dto.motivoCierreForzado.trim() : null, observaciones: dto.observaciones ?? null });
+          await this.publishClosingNote(manager, turno, usuarioId, caja?.nombre);
           return repo.save(turno);
         }
       }
       if (dto.efectivoContado === undefined || dto.cerrarCaja === false) throw new ConflictException('Sos el último operador. Contá el efectivo para cerrar la caja.');
       const paraSiguiente = dto.efectivoParaSiguiente ?? 0;
-      if (paraSiguiente > dto.efectivoContado) throw new BadRequestException('No podés entregar más efectivo del que contaste.');
+      if (paraSiguiente + salary > dto.efectivoContado) throw new BadRequestException('No podés entregar más efectivo del que contaste.');
       const teorico = await this.cashTotal(turno, manager);
       if (turno.cashVersion === 2 && dto.efectivoEsperado !== teorico) throw new ConflictException('El efectivo esperado cambió. Actualizá el arqueo antes de confirmar.');
       if (teorico !== dto.efectivoContado && !dto.observaciones?.trim()) throw new BadRequestException('Explicá la diferencia entre el efectivo esperado y el contado.');
@@ -244,18 +276,26 @@ export class TurnosService {
         efectivoTeorico: teorico, diferencia: teorico - dto.efectivoContado, efectivoParaSiguiente: paraSiguiente,
         efectivoRetirado: dto.efectivoContado - paraSiguiente, observaciones: dto.observaciones ?? null, estado: 'CERRADO',
         cierreForzado: forzado, motivoCierreForzado: forzado ? dto.motivoCierreForzado.trim() : null });
+      if (salary && turno.cashSessionId) await manager.getRepository(CashSessionMovement).save({ sesionId: turno.cashSessionId, turnoId: turno.id, usuarioId, tipo: 'SUELDO', amount: -salary, motivo: 'Sueldo al finalizar la jornada' });
       if (turno.cashSessionId) {
         turno.cierreCaja = true;
         await manager.getRepository(CashSession).update(turno.cashSessionId, { estado: 'CERRADO', fechaCierre: turno.fechaCierre, usuarioCierreId: usuarioId,
           efectivoTeorico: teorico, efectivoContado: dto.efectivoContado, diferencia: teorico - dto.efectivoContado,
           efectivoParaSiguiente: paraSiguiente, efectivoRetirado: dto.efectivoContado - paraSiguiente, observaciones: dto.observaciones ?? null });
       }
+      await this.publishClosingNote(manager, turno, usuarioId, caja?.nombre);
       return repo.save(turno);
     });
   }
 
+  private async publishClosingNote(manager: EntityManager, turno: Turno, usuarioId: string, caja?: string) {
+    const description = [turno.observaciones?.trim(), turno.motivoCierreForzado ? `Cierre por administrador: ${turno.motivoCierreForzado}` : null].filter(Boolean).join('\n');
+    await publishAutomaticNote(manager, { sourceKey: `cierre:${turno.id}`, origin: 'Cierre de turno', sourceType: 'TURNO', sourceId: turno.id, usuarioId, description, context: `${caja ?? 'Caja'} · ${turno.nombre}` });
+  }
+
   // El historial permite buscar por cierre; apertura sigue siendo el valor predeterminado.
   async findAll(filtros: { estado?: 'ABIERTO' | 'CERRADO'; desde?: string; hasta?: string; usuarioId?: string; fechaPor?: 'APERTURA' | 'CIERRE'; soloDiferencias?: boolean } = {}, pagination = { page: 1, limit: 25 }) {
+    await this.dataSource.transaction(m => rolloverShifts(m));
     const campoFecha = filtros.fechaPor === 'CIERRE' ? 't.fechaCierre' : 't.fechaApertura';
     const query = this.turnoRepository.createQueryBuilder('t')
       .leftJoinAndSelect('t.usuarioApertura', 'usuarioApertura')
@@ -269,13 +309,14 @@ export class TurnosService {
 
     // Las fechas llegan como YYYY-MM-DD y se interpretan en hora de Argentina, no en UTC, o el
     // filtro «hoy» dejaría afuera los turnos abiertos después de las 21.
+    const fechaFiltro = filtros.fechaPor === 'CIERRE' ? `(CASE WHEN t."cierreAutomatico" THEN t."fechaCierre" - interval '1 millisecond' ELSE t."fechaCierre" END)` : campoFecha;
     if (filtros.desde) {
-      query.andWhere(`${campoFecha} >= :desde`, {
+      query.andWhere(`${fechaFiltro} >= :desde`, {
         desde: dayjs.tz(`${filtros.desde} 00:00:00`, 'America/Argentina/Buenos_Aires').toDate(),
       });
     }
     if (filtros.hasta) {
-      query.andWhere(`${campoFecha} < :hasta`, {
+      query.andWhere(`${fechaFiltro} < :hasta`, {
         hasta: dayjs.tz(`${filtros.hasta} 00:00:00`, 'America/Argentina/Buenos_Aires').add(1, 'day').toDate(),
       });
     }
@@ -283,7 +324,8 @@ export class TurnosService {
     const stats = await query.clone().select('COUNT(*)', 'total').addSelect('COUNT(*) FILTER (WHERE t.efectivoContado IS NOT NULL AND t.diferencia <> 0)', 'diferencias').addSelect('COUNT(*) FILTER (WHERE t.efectivoContado IS NULL AND t.cashSessionId IS NULL)', 'sinConteo').orderBy().getRawOne();
     if (filtros.soloDiferencias) query.andWhere('t.efectivoContado IS NOT NULL AND t.diferencia <> 0');
     const [data, total] = await query.addOrderBy('t.id', 'DESC').skip((pagination.page - 1) * pagination.limit).take(pagination.limit).getManyAndCount();
-    return { data, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) }, summary: { total: Number(stats.total), diferencias: Number(stats.diferencias), sinConteo: Number(stats.sinConteo) } };
+    const enriched = await Promise.all(data.map(async t => ({ ...t, resumen: await shiftSummary(this.dataSource.manager, t) })));
+    return { data: enriched, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) }, summary: { total: Number(stats.total), diferencias: Number(stats.diferencias), sinConteo: Number(stats.sinConteo) } };
   }
 
   // Quiénes abrieron turno alguna vez, para poblar el filtro sin traer todo el historial.

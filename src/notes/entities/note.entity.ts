@@ -26,8 +26,24 @@ export class Note {
   @JoinColumn({ name: 'playaId' })
   playa: Playa | null;
   
-  @Column('varchar', { length: 650 })
+  @Column('text')
   description: string;
+
+  @Index('IDX_notes_sourceKey', { unique: true })
+  @Column('varchar', { length: 255, nullable: true })
+  sourceKey: string | null;
+
+  @Column('varchar', { length: 120, nullable: true })
+  origin: string | null;
+
+  @Column('varchar', { length: 32, nullable: true })
+  sourceType: string | null;
+
+  @Column('uuid', { nullable: true })
+  sourceId: string | null;
+
+  @Column('text', { nullable: true })
+  context: string | null;
 
   @Column('date', { nullable: true })
   date: string | null;
