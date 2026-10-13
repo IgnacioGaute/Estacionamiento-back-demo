@@ -150,6 +150,25 @@ test('aplicar sin cambios no deja una fila en la Actividad', async () => scoped(
   assert.equal(await contar(), antes);
 }));
 
+test('una copia que queda con la duración vieja de la original no hereda su id', async () => scoped(a, async () => {
+  // Copiar «1 h» y pasar la original a «2 h»: la copia (sin id) tiene el alcance que la original
+  // tenía guardado, pero ese id sigue en el borrador y no se puede repetir.
+  const current = await plans.getPlan();
+  const original = current.brackets[0];
+  const draft = requestFor(current);
+  draft.brackets[0].uptoMinutes = 120;
+  draft.brackets[0].label = '2 horas';
+  draft.brackets.push(bracket(1500, { uptoMinutes: original.uptoMinutes, label: original.label }));
+  const saved = await plans.updatePlan(draft);
+  assert.equal(saved.brackets.length, 2);
+  assert.equal(new Set(saved.brackets.map(row => row.id)).size, 2);
+  assert.equal(saved.brackets.find(row => row.uptoMinutes === 120).id, original.id);
+  // Los casos siguientes esperan la única franja de antes.
+  const restore = requestFor(saved);
+  restore.brackets = [{ ...restore.brackets.find(row => row.id === original.id), uptoMinutes: original.uptoMinutes, label: original.label, price: original.price }];
+  await plans.updatePlan(restore);
+}));
+
 test('una revisión vieja o dos guardados simultáneos nunca pisan cambios', async () => scoped(a, async () => {
   const current = await plans.getPlan();
   const first = requestFor(current), second = requestFor(current);

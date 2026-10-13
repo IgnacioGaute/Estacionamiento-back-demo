@@ -77,10 +77,19 @@ export class TariffPlanService {
     validatePricingOptions(schedule.pricingOptions!);
     const vehicleCodes = new Set(vehicles.map(vehicle => vehicle.code));
     const ids = new Set<string>();
+    // Una fila nueva (sin id) hereda el id de la guardada con su mismo alcance, para conservar
+    // enlaces. Pero solo si esa guardada no sigue en el borrador con su propio id: copiar «3 h» y
+    // pasar la original a «4 h» deja la copia con el alcance viejo de la original, y heredar su id
+    // las dejaba a las dos con el mismo («Hay franjas con el mismo identificador»).
+    const reclamados = new Set(dto.brackets.map(row => row.id).filter(Boolean));
+    const heredados = new Set<string>();
     const brackets = dto.brackets.map((row, index) => {
       if (row.id && ids.has(row.id)) throw new BadRequestException('Hay franjas con el mismo identificador.');
       if (row.id) ids.add(row.id);
-      const previous = row.id ? current.find(saved => saved.id === row.id) : current.find(saved => bracketScope(saved) === bracketScope(row));
+      const previous = row.id
+        ? current.find(saved => saved.id === row.id)
+        : current.find(saved => !reclamados.has(saved.id) && !heredados.has(saved.id) && bracketScope(saved) === bracketScope(row));
+      if (!row.id && previous) heredados.add(previous.id);
       if (complete && row.id && !previous) throw new BadRequestException('Una de las franjas ya no existe en esta playa. Volvé a cargar las tarifas.');
       if (!row.label.trim()) throw new BadRequestException('Ingresá el nombre de cada duración.');
       return this.bracketFields({ ...row, id: previous?.id ?? row.id ?? `draft-${index}`, label: row.label.trim(), ticketDayType: row.ticketDayType ?? null, uptoMinutes: row.uptoMinutes ?? null, recurringUnitMinutes: row.recurringUnitMinutes ?? null, recurringPriceMode: row.recurringPriceMode ?? previous?.recurringPriceMode ?? 'FIXED' });
