@@ -276,7 +276,10 @@ legacy proportional calculation. Existing database rows default to DERIVED; new 
 `GET /tickets/priceBrackets/preview` uses this same calculator.
 
 Each new stay freezes brackets and schedule in `pricingSnapshot`. `pricingDayTypeBasis` chooses ENTRY or EXIT
-(existing configuration defaults to EXIT). Later changes only affect new stays. Old active rows without snapshots
+(existing configuration defaults to EXIT). Later changes only affect new stays, unless the admin ticks «Aplicar también a
+los N vehículos que están adentro» when applying (`aplicarAActivos`): `TicketsService.repriceActiveStays` then rewrites
+the snapshot of every active stay in the same transaction (whole stay from entry, `capturedAt` kept; a stay the new
+plan does not cover keeps its own). Old active rows without snapshots
 use current settings and are explicitly marked in close summaries. Missing applicable tariffs block entry. The
 established grace rule is retained: tolerance before moving up a bracket, except the final finite fallback.
 Shared/exclusive PostgreSQL transaction locks keep snapshot capture and tariff updates consistent. Entity enums

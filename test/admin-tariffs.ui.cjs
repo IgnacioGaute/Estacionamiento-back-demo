@@ -27,8 +27,8 @@ async function bundle() {
   write('passes.tsx', `import React from 'react'; export const TicketsPriceTable = ({data}) => <div data-pass-rows>{data.map(row => <p key={row.id}>{row.vehicleType ?? "Sin vehículo"}: {row.ticketTimeType} {row.ticketTimePrice}</p>)}</div>; export const UpdateTicketPriceDialog = () => <button>Editar</button>; export const DeleteTicketPriceDialog = () => <button>Eliminar</button>; export const ticketPriceColumns = []; export const CreateTicketPriceDialog = ({defaultVehicleType}) => <button data-create-vehicle={defaultVehicleType}>Nueva tarifa de pase</button>;`);
   write('actions.ts', `
     export async function getTariffPlanAction() { return {plan: structuredClone(window.__plan)}; }
-    export async function saveTariffPlanAction(revision, draft) {
-      window.__saves.push({revision, draft: structuredClone(draft)});
+    export async function saveTariffPlanAction(revision, draft, aplicarAActivos = false) {
+      window.__saves.push({revision, draft: structuredClone(draft), aplicarAActivos});
       if (window.__conflict) {
         window.__conflict = false;
         window.__plan = structuredClone(window.__plan);
@@ -400,6 +400,19 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     await parte(2);
     assert.equal(await page.$$eval('[data-tariff-ending]', rows => rows.length), 4);
     await click('Cancelar');
+
+    // Con vehículos adentro, aplicar ofrece pasarlos a la tarifa nueva; sin marcarlo, siguen como entraron.
+    const inside = plan(); inside.activeStays = 3;
+    await mount(inside);
+    await click('Editar tarifas'); await paso(2);
+    await fill('input[aria-label="Auto: precio todo el día"]', '2600');
+    await paso(3);
+    await page.waitForFunction(() => document.body.textContent.includes('Aplicar también a los 3 vehículos que están adentro'));
+    await center('button[role="checkbox"][aria-describedby="aplicar-activos-ayuda"]');
+    await page.click('button[role="checkbox"][aria-describedby="aplicar-activos-ayuda"]');
+    await click('Aplicar tarifas');
+    await page.waitForFunction(() => window.__saves.length === 1 && !document.getElementById('tariff-draft-heading'));
+    assert.equal(await page.evaluate(() => window.__saves[0].aplicarAActivos), true);
 
     // Resumen: tabs de vehículo y sol/luna muestran sólo los precios efectivos de ese horario.
     const summaryPlan = plan(); summaryPlan.schedule.pricingOptions.charging.enabled = false; summaryPlan.schedule.pricingOptions.charging.rates = [];

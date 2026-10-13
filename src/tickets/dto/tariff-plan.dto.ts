@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsDefined, IsIn, IsInt, IsISO8601, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsDefined, IsIn, IsInt, IsISO8601, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { PricingOptionsDto } from './pricing-options.dto';
 
 export class TariffScheduleDto {
@@ -28,6 +28,8 @@ export class TariffPlanDto {
 
 export class UpdateTariffPlanDto extends TariffPlanDto {
   @Matches(/^[a-f0-9]{64}$/) expectedRevision: string;
+  // También pasar a las tarifas nuevas los vehículos que están adentro (recalcula toda su estadía).
+  @IsOptional() @IsBoolean() aplicarAActivos?: boolean;
 }
 
 export class SimulateTariffPlanDto {

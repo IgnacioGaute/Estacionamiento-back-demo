@@ -267,6 +267,36 @@ async removeTicketPrice(id: string) {
     return snapshot;
   }
 
+  // Pasar las estadías que siguen adentro a las tarifas recién aplicadas (lo pide el administrador
+  // al aplicar). Se recalcula toda la estadía, desde la entrada; lo ya cobrado sigue descontándose y
+  // un pago de más se devuelve al cerrar. Corre en la transacción de updatePlan, que ya tiene el
+  // bloqueo exclusivo de tarifas. Una estadía que la tarifa nueva no cubre (vehículo desactivado y
+  // sin precios) conserva la suya: cobrarla después fallaría.
+  async repriceActiveStays(manager: EntityManager): Promise<{ actualizadas: number; omitidas: number }> {
+    const settings = await this.getSchedule(manager);
+    const schedule = { dayStartHour: settings.dayStartHour, dayEndHour: settings.dayEndHour, graceMinutes: settings.graceMinutes, pricingDayTypeBasis: settings.pricingDayTypeBasis ?? 'EXIT', pricingOptions: settings.pricingOptions };
+    const brackets = await manager.getRepository(TicketPriceBracket).find();
+    const repository = manager.getRepository(TicketRegistration);
+    let actualizadas = 0, omitidas = 0;
+    for (const registration of await repository.find({ where: { departureTime: IsNull() }, relations: ['ticket'] })) {
+      // Sin copia ya se cobra con la tarifa vigente.
+      if (!registration.pricingSnapshot) continue;
+      const vehicle = registration.vehicleType ?? registration.ticket?.vehicleType;
+      if (!vehicle) { omitidas++; continue; }
+      // capturedAt queda como estaba: es cuándo entró, no cuándo cambió la tarifa.
+      const snapshot: PricingSnapshot = { version: 1, capturedAt: registration.pricingSnapshot.capturedAt, schedule, brackets: brackets.filter(row => row.vehicleType === vehicle) };
+      try { assertPricingCoverage(snapshot, vehicle, 'DAY'); assertPricingCoverage(snapshot, vehicle, 'NIGHT'); }
+      catch { omitidas++; continue; }
+      await repository.update({ id: registration.id }, { pricingSnapshot: snapshot });
+      actualizadas++;
+    }
+    return { actualizadas, omitidas };
+  }
+
+  countActiveStays(manager: EntityManager) {
+    return manager.getRepository(TicketRegistration).count({ where: { departureTime: IsNull() } });
+  }
+
   private async priceRegistration(registration: TicketRegistration, manager?: EntityManager) {
     const vehicle = registration.vehicleType ?? registration.ticket?.vehicleType;
     if (!vehicle) throw new BadRequestException('El registro no tiene tipo de vehículo.');

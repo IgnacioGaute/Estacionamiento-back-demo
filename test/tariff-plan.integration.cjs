@@ -277,3 +277,46 @@ test('las rutas estáticas nuevas quedan antes de :id y son sólo para administr
     assert.match(Reflect.getMetadata('path', controller.prototype[handler]), /^tariff-plan/);
   }
 });
+
+test('aplicar a los vehículos que están adentro recalcula toda su estadía, sólo si se pide', async () => {
+  // Playa propia: los demás tests comparan los planes de A y B.
+  const repo = entity => ds.getRepository(entity);
+  const empresa = await repo(Empresa).save({ nombre: 'C' });
+  const playa = await repo(Playa).save({ nombre: 'C', empresaId: empresa.id });
+  const user = await repo(User).save({ username: 'C', email: 'c@example.test', firstName: 'C', lastName: 'Admin', role: 'ADMIN', empresaId: empresa.id });
+  await scoped({ empresaId: empresa.id, playaId: playa.id, userId: user.id, role: 'ADMIN' }, async () => {
+    await tickets.createVehicleType({ code: 'AUTO', name: 'Auto' });
+    await tickets.createPriceBracket(bracket(1000));
+    await tickets.createVehicleType({ code: 'MOTO', name: 'Moto' });
+    await tickets.createPriceBracket(bracket(500, { vehicleType: 'MOTO' }));
+    const auto = await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'ADENTRO1' });
+    const moto = await tickets.createRegistrationByPlate({ vehicleType: 'MOTO', licensePlate: 'MOTO1' });
+    const snapshotOf = async id => (await repo(Registration).findOneBy({ id })).pricingSnapshot;
+    const precio = snapshot => calculateStayPrice(snapshot, snapshot.brackets[0].vehicleType, new Date(entryAt), new Date(new Date(entryAt).getTime() + 30 * 60000)).price;
+    const antes = await snapshotOf(auto.id);
+    const plan = await plans.getPlan();
+    assert.equal(plan.activeStays, 2);
+
+    // Sin pedirlo, los que están adentro conservan la tarifa con la que entraron.
+    let draft = requestFor(plan);
+    draft.brackets.find(row => row.vehicleType === 'AUTO').price = 1500;
+    const sinPedir = await plans.updatePlan(draft);
+    assert.equal(sinPedir.estadiasActualizadas, 0);
+    assert.equal(precio(await snapshotOf(auto.id)), 1000);
+
+    // La moto se desactiva y pierde sus precios: la tarifa nueva no la cubre y conserva la suya.
+    await tickets.updateVehicleType('MOTO', { enabled: false });
+    draft = requestFor(await plans.getPlan());
+    draft.brackets = draft.brackets.filter(row => row.vehicleType === 'AUTO');
+    draft.brackets[0].price = 2000;
+    const pedido = await plans.updatePlan({ ...draft, aplicarAActivos: true });
+    assert.equal(pedido.estadiasActualizadas, 1);
+    const despues = await snapshotOf(auto.id);
+    assert.equal(precio(despues), 2000);
+    // Se recalcula desde la entrada: la copia conserva cuándo entró.
+    assert.equal(despues.capturedAt, antes.capturedAt);
+    assert.equal(precio(await snapshotOf(moto.id)), 500);
+    const [registro] = await ds.query(`SELECT detalle FROM audit_log WHERE accion = 'TARIFAS_APLICADAS' AND "playaId" = $1 ORDER BY fecha DESC LIMIT 1`, [playa.id]);
+    assert.deepEqual(registro.detalle.estadiasActualizadas, { actualizadas: 1, omitidas: 1 });
+  });
+});

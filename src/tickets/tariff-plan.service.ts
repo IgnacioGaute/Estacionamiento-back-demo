@@ -64,10 +64,12 @@ export class TariffPlanService {
     return { plan: { revision, schedule, brackets } as TariffPlan, rows, vehicles };
   }
 
-  getPlan(): Promise<TariffPlan> {
+  // activeStays: cuántos vehículos están adentro, para ofrecer pasarlos a la tarifa nueva. Queda
+  // fuera de la revisión: entrar o salir no es un cambio de tarifas.
+  getPlan(): Promise<TariffPlan & { activeStays: number }> {
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock_shared(718903)');
-      return (await this.read(manager)).plan;
+      return { ...(await this.read(manager)).plan, activeStays: await this.tickets.countActiveStays(manager) };
     });
   }
 
@@ -116,8 +118,8 @@ export class TariffPlanService {
     return { schedule, brackets };
   }
 
-  async updatePlan(dto: UpdateTariffPlanDto): Promise<TariffPlan> {
-    const { aplicado, cambios } = await this.dataSource.transaction(async manager => {
+  async updatePlan(dto: UpdateTariffPlanDto): Promise<TariffPlan & { activeStays: number; estadiasActualizadas: number }> {
+    const { aplicado, cambios, estadias, activeStays } = await this.dataSource.transaction(async manager => {
       // Es el mismo bloqueo que usa el ingreso al congelar sus precios y la edición anterior.
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
       const { plan: current, rows, vehicles } = await this.read(manager);
@@ -137,11 +139,15 @@ export class TariffPlanService {
       const [stored] = await scheduleRepo.find({ order: { updatedAt: 'DESC' }, take: 1 });
       // Sólo se escriben campos tarifarios; recibos, tarjetas y turnos conservan su estado.
       await scheduleRepo.save(scheduleRepo.create({ ...stored, ...plan.schedule }));
+      // En la misma transacción: las estadías pasan a la tarifa nueva sólo si esta quedó guardada.
+      const estadias = dto.aplicarAActivos ? await this.tickets.repriceActiveStays(manager) : null;
       const aplicado = (await this.read(manager)).plan;
-      return { aplicado, cambios: cambiosDeTarifas(current, aplicado, vehicles) };
+      const cambios: Record<string, unknown> = cambiosDeTarifas(current, aplicado, vehicles);
+      if (estadias) cambios.estadiasActualizadas = estadias;
+      return { aplicado, cambios, estadias, activeStays: await this.tickets.countActiveStays(manager) };
     });
     await this.registrarCambios(cambios);
-    return aplicado;
+    return { ...aplicado, activeStays, estadiasActualizadas: estadias?.actualizadas ?? 0 };
   }
 
   // El historial de la empresa se escribe acá y no en AuditInterceptor: el plan se aplica entero,
