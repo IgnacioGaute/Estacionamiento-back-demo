@@ -3,6 +3,7 @@ import { Controller, Get, Post, Body, Patch, Param, Query, Delete, UseGuards, Re
 import { AuthenticatedRequest } from 'src/types/request';
 import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate.dto';
 import { DiscountRegistrationDto } from './dto/discount-registration.dto';
+import { CorregirEntradaDto } from './dto/corregir-entrada.dto';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
 import { PreviewPriceDto, SimulatePriceDto } from './dto/preview-price.dto';
 import { TicketsService } from './tickets.service';
@@ -240,6 +241,12 @@ export class TicketsController {
   discountRegistration(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: DiscountRegistrationDto) {
     if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
     return this.ticketsService.discountRegistration(id, dto, req.user.userId);
+  }
+
+  @Patch('registrations/:id/entrada')
+  corregirEntrada(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: CorregirEntradaDto) {
+    if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    return this.ticketsService.corregirEntradaOlvidada(id, dto.entrada, req.user.userId);
   }
 
   @Patch('registrations/:id/close')

@@ -1156,6 +1156,64 @@ async removePriceBracket(id: string) {
     return result;
   }
 
+  /**
+   * La entrada que se cargó tarde: el operador creyó haberla registrado al llegar el vehículo y
+   * la cargó recién al ir a cobrarle, así que la estadía figura con minutos y se cobraba como la
+   * primera duración. El panel de cobro lo pregunta cuando la estadía tiene menos de 5 minutos.
+   *
+   * Para que no sirva para cobrar de menos: la hora solo se mueve hacia atrás (cobra más, nunca
+   * menos), solo en una estadía abierta y recién cargada (una vez corregida deja de serlo), como
+   * mucho 24 horas, y no puede pisar otra estadía de la misma patente. Queda en la Actividad de la
+   * empresa con la patente, la hora que tenía y la nueva (AUDIT_RULES).
+   */
+  async corregirEntradaOlvidada(id: string, entradaIso: string, _usuarioId: string) {
+    const TZ = 'America/Argentina/Buenos_Aires';
+    const result = await this.dataSource.transaction(async manager => {
+      const repo = manager.getRepository(TicketRegistration);
+      const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+      if (!registration) throw new NotFoundException('Registro no encontrado.');
+      if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
+      if (!registration.entryDay || !registration.entryTime) throw new BadRequestException('La estadía no tiene hora de entrada.');
+      const ahora = dayjs().tz(TZ);
+      const actual = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', TZ);
+      if (ahora.diff(actual, 'minute') > 15)
+        throw new BadRequestException({ code: 'ENTRADA_NO_CORREGIBLE', message: 'Solo se puede corregir la hora de una entrada recién cargada.' });
+      const nueva = dayjs(entradaIso).tz(TZ).second(0).millisecond(0);
+      if (!nueva.isValid()) throw new BadRequestException('Indicá la hora en que entró.');
+      if (!nueva.isBefore(actual)) throw new BadRequestException('La hora en que entró tiene que ser anterior a la que figura.');
+      if (ahora.diff(nueva, 'hour', true) > 24) throw new BadRequestException('No se puede poner una entrada de hace más de 24 horas.');
+      const [pending] = await manager.query(`SELECT EXISTS (
+        SELECT 1 FROM cobros_mercadopago WHERE "registrationId"=$1 AND tipo='HORA' AND estado='PENDIENTE'
+        UNION ALL SELECT 1 FROM cobros_transferencia WHERE "registrationId"=$1 AND tipo='HORA' AND estado IN ('ESPERANDO','REVISION')
+      ) AS present`, [id]);
+      if (pending.present) throw new ConflictException('Cancelá el cobro pendiente antes de corregir la entrada.');
+      // Si la patente tuvo otra estadía en ese lapso (cerrada después de la hora nueva, o abierta),
+      // corregir cobraría dos veces el mismo tiempo.
+      if (registration.licensePlateNormalized) {
+        const [solapada] = await manager.query(
+          `SELECT 1 FROM ticket_registrations
+           WHERE id <> $1 AND "licensePlateNormalized" = $2
+             AND ("departureDay" IS NULL OR ("departureDay" + "departureTime") > $3::timestamp)
+           LIMIT 1`,
+          [id, registration.licensePlateNormalized, nueva.format('YYYY-MM-DD HH:mm:ss')],
+        );
+        if (solapada) throw new ConflictException({ code: 'ENTRADA_SOLAPADA', message: 'Esta patente tiene otra estadía en ese horario. Revisala antes de corregir.' });
+      }
+      registration.entryDay = nueva.format('YYYY-MM-DD');
+      registration.entryTime = nueva.format('HH:mm:ss');
+      await repo.save(registration);
+      return {
+        summary: await this.getCloseSummary(id, manager),
+        // Para la Actividad (AuditInterceptor copia estos tres de la respuesta).
+        patente: registration.licensePlateOriginal || registration.codeBarTicket || '',
+        entradaAnterior: actual.format('DD/MM HH:mm'),
+        entrada: nueva.format('DD/MM HH:mm'),
+      };
+    });
+    this.ticketGateway.emitNewRegistration(result.summary.registration);
+    return result;
+  }
+
   // Ambas identificaciones usan una operación atómica; reintentar un cierre no vuelve a cobrar.
   async closeRegistrationByPlate(id: string, dto: CloseRegistrationDto, usuarioId: string) {
     const saved = await this.dataSource.transaction(manager => this.cerrarEnTransaccion(manager, id, dto, usuarioId));

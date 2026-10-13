@@ -738,3 +738,47 @@ test('avisos de operador: descuento y entrada duplicada conservan autor, patente
     assert.equal(await ds.getRepository(Note).count({ where: { sourceType: 'TICKET', sourceId: original.id } }), 1);
   });
 });
+
+// La entrada que se cargó tarde (el operador creyó haberla registrado y la cargó al cobrar): el
+// panel de cobro permite poner la hora real, solo hacia atrás y solo recién cargada.
+const TZ_AR = 'America/Argentina/Buenos_Aires';
+test('entrada olvidada: corrige la hora hacia atrás una sola vez y recalcula el cobro', async () => {
+  const registration = await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'OLV' + (++counter) });
+  assert.equal((await tickets.getCloseSummary(registration.id)).previewBracket.price, 1000);
+  const real = dayjs().tz(TZ_AR).subtract(2, 'hour');
+  const result = await tickets.corregirEntradaOlvidada(registration.id, real.toISOString(), user.id);
+  assert.equal(result.summary.registration.entryTime, real.format('HH:mm:00'));
+  assert.ok(result.summary.elapsedMinutes >= 119);
+  assert.equal(result.summary.previewBracket.price, 2000);
+  assert.equal(result.entrada, real.format('DD/MM HH:mm'));
+  assert.equal(result.patente, registration.licensePlateOriginal);
+  // Ya corregida deja de ser «recién cargada»: no se puede seguir moviendo.
+  await assert.rejects(
+    tickets.corregirEntradaOlvidada(registration.id, real.subtract(1, 'hour').toISOString(), user.id),
+    error => error.getResponse().code === 'ENTRADA_NO_CORREGIBLE',
+  );
+});
+
+test('entrada olvidada: no adelanta, no pasa de 24 h, no toca estadías viejas ni pisa otra de la misma patente', async () => {
+  const fresca = await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'OLV' + (++counter) });
+  await assert.rejects(tickets.corregirEntradaOlvidada(fresca.id, dayjs().add(1, 'minute').toISOString(), user.id), /anterior/);
+  await assert.rejects(tickets.corregirEntradaOlvidada(fresca.id, dayjs().subtract(25, 'hour').toISOString(), user.id), /24 horas/);
+  const vieja = await openPlate();
+  await assert.rejects(
+    tickets.corregirEntradaOlvidada(vieja.id, dayjs().subtract(2, 'hour').toISOString(), user.id),
+    error => error.getResponse().code === 'ENTRADA_NO_CORREGIBLE',
+  );
+  // La misma patente salió hace 30 minutos: correr la entrada nueva antes de esa salida cobraría
+  // dos veces el mismo tiempo; después de la salida, sí se puede.
+  const plate = 'OLV' + (++counter);
+  const previa = await age(await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: plate }), 180);
+  const salida = dayjs().tz(TZ_AR).subtract(30, 'minute');
+  await ds.getRepository(Registration).update(previa.id, { departureDay: salida.format('YYYY-MM-DD'), departureTime: salida.format('HH:mm:ss') });
+  const otra = await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: plate });
+  await assert.rejects(
+    tickets.corregirEntradaOlvidada(otra.id, dayjs().subtract(2, 'hour').toISOString(), user.id),
+    error => error.getResponse().code === 'ENTRADA_SOLAPADA',
+  );
+  const bien = await tickets.corregirEntradaOlvidada(otra.id, dayjs().subtract(20, 'minute').toISOString(), user.id);
+  assert.ok(bien.summary.elapsedMinutes >= 19);
+});

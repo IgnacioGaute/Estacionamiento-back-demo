@@ -138,6 +138,12 @@ export const AUDIT_RULES: Record<string, Record<string, AuditRule>> = {
       entidad: 'tarjeta de código de barras',
       campos: ['codeBar'],
     },
+    // No es operación del día: es corregir a mano la hora de una estadía (cambia lo que se cobra).
+    corregirEntrada: {
+      accion: 'ENTRADA_CORREGIDA',
+      entidad: 'estadía',
+      respuesta: ['patente', 'entradaAnterior', 'entrada'],
+    },
     update: { accion: 'TICKET_EDITADO', entidad: 'tarjeta de código de barras' },
     remove: {
       accion: 'TICKET_ELIMINADO',

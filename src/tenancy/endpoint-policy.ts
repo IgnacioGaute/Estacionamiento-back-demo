@@ -24,6 +24,8 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     'searchActiveRegistrations',
     'getPlateStatus',
     'getCloseSummary',
+    // La entrada que se cargó tarde, desde el mismo panel de cobro (ver corregirEntradaOlvidada).
+    'corregirEntrada',
     'discountRegistration',
     'closeRegistrationByPlate',
     'getFrequentCustomers',
@@ -119,6 +121,7 @@ export const SUSPENDED_ENDPOINTS: Record<string, readonly string[]> = {
     'searchActiveRegistrations',
     'getPlateStatus',
     'getCloseSummary',
+    'corregirEntrada',
     'closeRegistrationByPlate',
     'issueParkingReceipt',
     'findOne',
