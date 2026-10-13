@@ -2,7 +2,10 @@ import {
   correspondeFactura,
   DatosCuenta,
   finDePrueba,
+  importeDeFactura,
+  importeProporcional,
   periodoDelPago,
+  proximoPeriodo,
   situacionDeCuenta,
   sumarMeses,
 } from './estado-cuenta';
@@ -126,5 +129,47 @@ describe('Estado de la cuenta con la plataforma', () => {
       desde: '2026-06-10',
       hasta: '2026-07-09',
     });
+  });
+  test('primer pago: lo que queda del mes desde que termina la prueba gratis, proporcional', () => {
+    // Alta el 13/10 con 10 días gratis (13 al 22): del 23 al 31 son 9 de 31 días; el 1/11, el mes.
+    const prueba = cuenta({ alta: '2026-10-13', pruebaHasta: finDePrueba('2026-10-13', 10) });
+    const primero = proximoPeriodo(prueba, 1)!;
+    expect(primero).toEqual({ desde: '2026-10-23', hasta: '2026-10-31', proporcional: true });
+    expect(importeDeFactura(primero, 31000, 1, 0)).toBe(9000);
+    expect(proximoPeriodo({ ...prueba, pagadoHasta: '2026-10-31' }, 1)).toEqual({
+      desde: '2026-11-01',
+      hasta: '2026-11-30',
+      proporcional: false,
+    });
+    expect(importeDeFactura(proximoPeriodo({ ...prueba, pagadoHasta: '2026-10-31' }, 1)!, 31000, 1, 0)).toBe(31000);
+  });
+
+  test('una prueba que cruza de mes cobra lo que queda del mes en que termina', () => {
+    const prueba = cuenta({ alta: '2026-10-25', pruebaHasta: finDePrueba('2026-10-25', 10) });
+    const primero = proximoPeriodo(prueba, 1)!;
+    expect(primero).toEqual({ desde: '2026-11-04', hasta: '2026-11-30', proporcional: true });
+    // 27 de 30 días de noviembre.
+    expect(importeProporcional(30000, 0, primero.desde, primero.hasta)).toBe(27000);
+    // Si la prueba termina el último día del mes, el primer pago es el mes siguiente entero.
+    const justo = proximoPeriodo(cuenta({ alta: '2026-10-22', pruebaHasta: '2026-10-31' }), 1)!;
+    expect(justo).toEqual({ desde: '2026-11-01', hasta: '2026-11-30', proporcional: true });
+    expect(importeDeFactura(justo, 30000, 1, 0)).toBe(30000);
+  });
+
+  test('sin días de prueba el primer pago va del alta a fin de ese mes; el descuento del período se aplica', () => {
+    const sinPrueba = cuenta({ alta: '2026-10-13', pruebaHasta: finDePrueba('2026-10-13', 0) });
+    expect(proximoPeriodo(sinPrueba, 3)).toEqual({ desde: '2026-10-13', hasta: '2026-10-31', proporcional: true });
+    expect(importeProporcional(31000, 10, '2026-10-13', '2026-10-31')).toBe(17100);
+    expect(importeProporcional(30000, 0, '2026-11-01', '2026-11-30')).toBe(30000);
+  });
+
+  test('el primer pago cubre lo mismo aunque llegue tarde o con la cuenta cortada', () => {
+    const cortada = cuenta({
+      alta: '2026-10-13',
+      pruebaHasta: '2026-10-22',
+      empresaEstado: 'SUSPENDIDA',
+      motivoSuspension: 'FALTA_DE_PAGO',
+    });
+    expect(periodoDelPago(cortada, 1, '2026-11-05')).toEqual({ desde: '2026-10-23', hasta: '2026-10-31' });
   });
 });

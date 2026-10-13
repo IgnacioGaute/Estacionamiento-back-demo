@@ -354,11 +354,14 @@ property mapped to the physical column `parkingType`). On `Customer` the relatio
 
 What the platform bills the empresa for using the system — not what a playa bills its abonados (that is
 `receipts`/`cuentas`). Lifecycle: **alta** (editable `suscripciones.alta`) → optional free-trial days (no plan
-needed; `diasPrueba` on empresa creation or `POST …/suscripcion/alta`) → when the trial ends the first month's
-invoice is issued and is due that same day → days of delay count from there → more than 5 days late, the daily
-`@Cron` (`SuscripcionesScheduler`, outside any tenant scope, advisory-locked, idempotent) suspends it
-(`FALTA_DE_PAGO`); 60 days suspended → `BAJA`. Every payment moves the due date a month; the next invoice is issued
-on its due date. `planes` is the price list (landing sizes: up to 50 / 51–120 / over 120 vehicles at once, each with
+needed; `diasPrueba` on empresa creation or `POST …/suscripcion/alta`) → when the trial ends the **first
+payment** is issued and due that same day: the rest of that month, prorated per day
+(`primerPeriodo`/`importeProporcional`/`proximoPeriodo` in `estado-cuenta.ts`; trial days are not charged) →
+from then on each period starts on the 1st → days of delay
+count from the due date → more than 5 days late, the daily `@Cron` (`SuscripcionesScheduler`, outside any tenant
+scope, advisory-locked, idempotent) suspends it (`FALTA_DE_PAGO`); 60 days suspended → `BAJA`. Every payment
+moves the due date a period; the next invoice is issued on its due date. The débito can only be activated after
+the first payment (`PRIMER_PAGO_PENDIENTE`). `planes` is the price list (landing sizes: up to 50 / 51–120 / over 120 vehicles at once, each with
 or without «alquileres mensuales»); `suscripcion_playas` gives each playa a plan with a frozen **precio pactado**
 (list changes never touch it; additional playas default to 30% off) and the empresa pays the sum; `suscripciones`
 holds only dates (`alta`, `pruebaHasta`, `pagadoHasta`, `prorrogaHasta`), `bonificada` and `motivoSuspension`;

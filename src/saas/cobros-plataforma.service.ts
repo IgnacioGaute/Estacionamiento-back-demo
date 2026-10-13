@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { SuscripcionesService, ResumenCuenta } from './suscripciones.service';
 import { MercadoPagoPlataforma } from './mercadopago-plataforma';
-import { hoyAR, sumarMeses } from './estado-cuenta';
+import { hoyAR } from './estado-cuenta';
 
 // Cuántos días vale un link de pago: si el cliente lo abre después, se genera otro.
 const DIAS_DEL_LINK = 3;
@@ -45,21 +45,19 @@ export class CobrosPlataformaService {
     return this.mp.clavePublica();
   }
 
-  /** Lo que hay para pagar ahora: lo que debe o, si está al día, su próximo período. */
+  /**
+   * Lo que hay para pagar ahora: lo que debe o, si está al día, su próxima factura (en prueba, el
+   * primer pago: lo que queda del mes cuando termina la prueba, proporcional).
+   */
   private aPagar(cuenta: ResumenCuenta) {
     const pendiente = cuenta.facturaPendiente;
     if (pendiente) return pendiente;
     if (
       ['PRUEBA', 'AL_DIA', 'VENCIDA', 'SUSPENDIDA'].includes(cuenta.estado) &&
-      cuenta.importePeriodo > 0 &&
-      cuenta.venceEl &&
-      cuenta.proximoVencimiento
+      cuenta.proximaFactura &&
+      cuenta.proximaFactura.importe > 0
     )
-      return {
-        importe: cuenta.importePeriodo,
-        desde: cuenta.proximoVencimiento,
-        hasta: sumarMeses(cuenta.venceEl, cuenta.periodo.meses),
-      };
+      return cuenta.proximaFactura;
     return null;
   }
 
@@ -115,6 +113,14 @@ export class CobrosPlataformaService {
         code: 'PAGO_PENDIENTE',
         message:
           'Primero pagá lo pendiente; después activás el débito para los meses que siguen.',
+      });
+    // El débito cobra siempre el mismo importe, el día 1. El primer pago es proporcional (desde
+    // el alta hasta fin de mes): se paga aparte y recién después arranca el débito.
+    if (!cuenta.pagadoHasta)
+      throw new BadRequestException({
+        code: 'PRIMER_PAGO_PENDIENTE',
+        message:
+          'El débito automático se activa después de tu primer pago: desde ahí se cobra solo el día 1 de cada mes.',
       });
 
     // Uno que quedó a medio confirmar (o que pausó desde MercadoPago) se reemplaza: no tiene que

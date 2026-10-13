@@ -6,22 +6,30 @@ playa le cobra a sus clientes: eso es `receipts`, `cuentas` y `movimientos`.
 ## El ciclo
 
 ```
-Alta ──(días de prueba, opcionales)──▶ Fin de la prueba ──▶ Factura del primer mes (vence ese día)
+Alta ──(días de prueba gratis, opcionales)──▶ Fin de la prueba ──▶ Primer pago (vence ese día):
+     lo que queda de ese mes, proporcional ──▶ desde ahí, el período entero el día 1
      ──▶ días de atraso ──(más de 5)──▶ Suspendida ──(60 días)──▶ Baja
-Cada pago corre el vencimiento: la factura del mes siguiente se emite el día en que vence.
 ```
 
 - **Alta**: desde qué día es cliente (`suscripciones.alta`, editable). Mientras no pagó nunca, la
   prueba se cuenta desde el alta: cambiar el alta corre la prueba conservando sus días. Con pagos,
   el alta es solo un dato.
-- **Prueba**: opcional y sin necesidad de plan. Se da al crear la empresa (casilla «Darle prueba
-  gratis», `diasPrueba` en `POST /tenancy/empresas`) o con «Dar de alta» en la solapa Plan
+- **Prueba gratis**: opcional y sin necesidad de plan. Se da al crear la empresa (casilla «Darle
+  prueba gratis», `diasPrueba` en `POST /tenancy/empresas`) o con «Dar de alta» en la solapa Plan
   (`POST /tenancy/empresas/:id/suscripcion/alta` con `{ alta, diasPrueba }`). El alta cuenta como
-  primer día: 7 días desde el 1 terminan el 7 y el primer mes se factura el 8. Con 0 días, la
-  primera factura vence el mismo día del alta. Sin alta, la cuenta queda `SIN_ACTIVAR` y no vence.
-- **Factura**: se emite el día en que empieza el período (al terminar la prueba o lo pagado) y
-  vence ese mismo día. Mientras no se pague sigue al plan; su fecha no se corre aunque la cuenta
-  se suspenda (dice desde cuándo debe).
+  primer día: 10 días desde el 13 terminan el 22. Sin alta, la cuenta queda `SIN_ACTIVAR` y no vence.
+- **Primer pago** (`primerPeriodo`, `importeProporcional` en `estado-cuenta.ts`): lo que queda del
+  mes desde el día siguiente a la prueba, en proporción a los días (del 23 al 31 de octubre son 9/31
+  del mensual), con el descuento del período de la cuenta. Si la prueba termina el último día del
+  mes, es el mes siguiente entero. Sin prueba, desde el alta. Es un solo tramo (`meses = 1`) aunque
+  pague trimestral, y vence el día en que empieza. Llegue cuando llegue (aunque la cuenta esté
+  cortada), cubre lo mismo. `proximaFactura` en el resumen lo anticipa («Si seguís, tu primer pago»).
+  Se eligió no cobrar los días de prueba: la prueba gratis convierte mejor y lo que se resigna es
+  poco y por única vez.
+- **Después, el día 1**: lo pagado termina a fin de mes y `sumarMeses` conserva el fin de mes, así
+  que cada período siguiente arranca el 1. Las cuentas que ya pagaban por aniversario lo conservan.
+- **Factura**: se emite el día en que vence (al terminar la prueba o lo pagado). Mientras no se
+  pague sigue al plan; su fecha no se corre aunque la cuenta se suspenda (dice desde cuándo debe).
 - **Atraso y suspensión**: desde el vencimiento se cuentan los días de atraso. Con 5 sigue
   operando; con el sexto la tarea diaria la suspende (`FALTA_DE_PAGO`).
 - **Días extra** (`POST …/dias-extra` con `{ hasta, motivo }`): una sola acción. Si nunca pagó,
@@ -160,8 +168,9 @@ esas credenciales ni al revés. Sin el token, Mi plan ofrece solo transferencia 
   queda activa en el acto, sin cuenta de MercadoPago (MercadoPago valida la tarjeta con un cobro
   mínimo que devuelve). Sin la clave pública queda `pending` y el cliente la confirma en
   MercadoPago con su cuenta. Acá nunca pasan datos de tarjeta. El primer cobro es el próximo
-  vencimiento a las 9 de Argentina y después uno por mes. Solo se activa sin deuda (`PAGO_PENDIENTE` si no): lo
-  vencido se paga aparte. Uno pendiente o pausado se cancela al pedir otro. `DELETE /mi-plan/debito`
+  vencimiento (el día 1) a las 9 de Argentina y después uno por mes. Solo se activa sin deuda
+  (`PAGO_PENDIENTE` si no): lo vencido se paga aparte. Tampoco antes del primer pago
+  (`PRIMER_PAGO_PENDIENTE`): el débito cobra siempre lo mismo y el primero es proporcional. Uno pendiente o pausado se cancela al pedir otro. `DELETE /mi-plan/debito`
   lo cancela. Si cambia el plan, `sincronizarImporte` actualiza el monto en MercadoPago.
 - **Gracia.** Con el débito confirmado (`debitoEstado = 'authorized'`) son 10 días en vez de 5
   (`DIAS_DE_GRACIA_DEBITO`): MercadoPago reintenta la tarjeta varios días.

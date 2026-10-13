@@ -11,9 +11,9 @@ dayjs.extend(timezone);
 // se usan igual en el resumen que ve el panel, en la tarea diaria y al registrar un pago, y así
 // se pueden probar solas.
 //
-// El ciclo: alta → días de prueba (opcionales) → al terminar la prueba se emite la factura del
-// primer mes, que vence ese mismo día → desde ahí se cuentan los días de atraso → con más de
-// DIAS_DE_GRACIA de atraso se suspende. Cada mes pago corre el vencimiento un mes.
+// El ciclo: alta → días de prueba gratis (opcionales) → al terminar la prueba se emite el primer
+// pago, que vence ese mismo día y cubre lo que queda del mes, en proporción → desde ahí cada
+// período arranca el día 1 → con más de DIAS_DE_GRACIA de atraso se suspende.
 //
 // Todas las fechas son días de Argentina ("YYYY-MM-DD") y se comparan como texto.
 
@@ -157,6 +157,75 @@ export const importeDelPeriodo = (
   descuento: number,
 ) => Math.round((mensual * meses * (100 - descuento)) / 100);
 
+export const finDeMes = (fecha: string) =>
+  dayjs(fecha).endOf('month').format('YYYY-MM-DD');
+
+/**
+ * Lo que se paga por un tramo que no es un período entero: de cada mes que toca, la parte de sus
+ * días (13 al 31 de octubre son 19 de 31), con el descuento de su período. Un mes entero da
+ * exactamente lo mensual.
+ */
+export function importeProporcional(
+  mensual: number,
+  descuento: number,
+  desde: string,
+  hasta: string,
+) {
+  let total = 0;
+  let dia = dayjs(desde);
+  const fin = dayjs(hasta);
+  while (!dia.isAfter(fin, 'day')) {
+    const finDelMes = dia.endOf('month').startOf('day');
+    const corte = finDelMes.isBefore(fin) ? finDelMes : fin;
+    total += (mensual * (corte.diff(dia, 'day') + 1)) / dia.daysInMonth();
+    dia = corte.add(1, 'day');
+  }
+  return Math.round((total * (100 - descuento)) / 100);
+}
+
+/**
+ * El primer pago de una cuenta que nunca pagó: desde el día siguiente a la prueba (que es gratis)
+ * hasta fin de ese mes, en proporción. Así el siguiente arranca el día 1. Sin días de prueba,
+ * desde el alta. Si la prueba termina el último día del mes, es el mes siguiente entero.
+ */
+export const primerPeriodo = (alta: string, pruebaHasta: string | null) => {
+  const finPrueba = pruebaHasta ? sumarDias(pruebaHasta, 1) : alta;
+  const desde = finPrueba > alta ? finPrueba : alta;
+  return { desde, hasta: finDeMes(desde) };
+};
+
+export type PeriodoAFacturar = {
+  desde: string;
+  hasta: string;
+  // El primer pago, en proporción a sus días; los demás son períodos enteros.
+  proporcional: boolean;
+};
+
+/**
+ * El período de la próxima factura: el primer pago si nunca pagó, o el que sigue a lo pagado.
+ * Null si la cuenta todavía no arrancó (sin alta).
+ */
+export function proximoPeriodo(
+  d: Pick<DatosCuenta, 'alta' | 'pruebaHasta' | 'pagadoHasta'>,
+  meses = 1,
+): PeriodoAFacturar | null {
+  if (d.pagadoHasta)
+    return { ...periodoSiguiente(d.pagadoHasta, meses), proporcional: false };
+  if (!d.pruebaHasta) return null;
+  return { ...primerPeriodo(d.alta, d.pruebaHasta), proporcional: true };
+}
+
+/** Lo que cuesta un período a facturar: el proporcional del primero o el período entero. */
+export const importeDeFactura = (
+  periodo: PeriodoAFacturar,
+  mensual: number,
+  meses: number,
+  descuento: number,
+) =>
+  periodo.proporcional
+    ? importeProporcional(mensual, descuento, periodo.desde, periodo.hasta)
+    : importeDelPeriodo(mensual, meses, descuento);
+
 /** Cortada por falta de pago: no tuvo el servicio, así que no se le cobra ese tiempo. */
 export const cortadaPorFaltaDePago = (d: DatosCuenta) =>
   d.empresaEstado !== 'ACTIVA' && d.motivoSuspension === 'FALTA_DE_PAGO';
@@ -168,16 +237,20 @@ export const periodoSiguiente = (venceEl: string, meses = 1) => ({
 });
 
 /**
- * El período que cubre un pago de `meses` meses. Si venía usando el sistema (al día, en prueba
- * o atrasada sin cortar) sigue desde su vencimiento, aunque pague tarde: el aniversario no se
- * mueve. Si estaba cortada, o nunca tuvo vencimiento, arranca el día del pago.
+ * El período que cubre un pago de `meses` meses. El primero de una cuenta con prueba es siempre el
+ * primer pago (del fin de la prueba a fin de ese mes), aunque llegue tarde o con la cuenta
+ * cortada: es la factura que tenía a la vista. Después, si venía usando el sistema (al día o
+ * atrasada sin cortar) sigue desde su vencimiento, aunque pague tarde. Si estaba cortada, o nunca
+ * tuvo vencimiento, arranca el día del pago.
  */
 export function periodoDelPago(
   d: DatosCuenta,
   meses: number,
   hoy = hoyAR(),
 ): { desde: string; hasta: string } {
-  const ultimo = d.pagadoHasta ?? d.pruebaHasta;
+  if (!d.pagadoHasta && d.pruebaHasta)
+    return primerPeriodo(d.alta, d.pruebaHasta);
+  const ultimo = d.pagadoHasta;
   if (!ultimo || cortadaPorFaltaDePago(d))
     return { desde: hoy, hasta: sumarDias(sumarMeses(hoy, meses), -1) };
   return periodoSiguiente(ultimo, meses);

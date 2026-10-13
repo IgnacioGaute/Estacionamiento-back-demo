@@ -38,7 +38,8 @@ import {
   hoyAR,
   importeDelPeriodo,
   periodoDelPago,
-  periodoSiguiente,
+  importeDeFactura,
+  proximoPeriodo,
   situacionDeCuenta,
   sumarDias,
 } from './estado-cuenta';
@@ -83,6 +84,28 @@ const importeDeCuenta = (
     Number(cuenta.periodoDescuento),
   );
 
+/** La próxima factura de una cuenta con lo que paga por mes: el primer pago o un período entero. */
+const proximaFactura = (
+  cuenta: Pick<
+    FilaCuenta,
+    'alta' | 'pruebaHasta' | 'pagadoHasta' | 'periodoMeses' | 'periodoDescuento'
+  >,
+  mensual: number,
+) => {
+  const meses = Number(cuenta.periodoMeses ?? 1);
+  const periodo = proximoPeriodo(cuenta, meses);
+  if (!periodo) return null;
+  return {
+    ...periodo,
+    importe: importeDeFactura(
+      periodo,
+      mensual,
+      meses,
+      Number(cuenta.periodoDescuento ?? 0),
+    ),
+  };
+};
+
 type LineaPlan = {
   playaId: string;
   playa: string;
@@ -110,6 +133,14 @@ export type ResumenCuenta = SituacionCuenta & {
   periodo: { codigo: string; nombre: string; meses: number; descuento: number };
   // Lo que paga cada período: lo mensual por los meses, con el descuento.
   importePeriodo: number;
+  // La próxima factura, emitida o no: en prueba es el primer pago (lo que queda del mes al terminar,
+  // proporcional), lo que la empresa ve como «si seguís, tu primer pago».
+  proximaFactura: {
+    desde: string;
+    hasta: string;
+    importe: number;
+    proporcional: boolean;
+  } | null;
   planes: LineaPlan[];
   facturaPendiente: {
     id: string;
@@ -221,6 +252,7 @@ export class SuscripcionesService {
           descuento: Number(fila.periodoDescuento),
         },
         importePeriodo: importeDeCuenta(fila, mensual),
+        proximaFactura: proximaFactura(fila, mensual),
         planes,
         facturaPendiente: pendiente
           ? {
@@ -260,8 +292,8 @@ export class SuscripcionesService {
 
   /** Lo justo para los avisos del menú: corre en cada carga del contexto. */
   async situacion(empresaId: string) {
-    // Lo que debe (la factura pendiente) o, si todavía no se emitió, lo que paga por mes: el aviso
-    // del menú dice el importe sin tener que abrir Mi plan.
+    // Lo que debe (la factura pendiente) o, si todavía no se emitió, la próxima (en prueba, el
+    // primer pago proporcional): el aviso del menú dice el importe sin tener que abrir Mi plan.
     const [fila] = await this.dataSource.query(
       `SELECT ${CAMPOS_CUENTA},
               (SELECT f.importe FROM facturas_saas f
@@ -277,7 +309,9 @@ export class SuscripcionesService {
       ...situacionDeCuenta(fila),
       motivoSuspension: fila.motivoSuspension ?? null,
       aPagar: Number(
-        fila.pendiente ?? importeDeCuenta(fila, Number(fila.mensual ?? 0)),
+        fila.pendiente ??
+          proximaFactura(fila, Number(fila.mensual ?? 0))?.importe ??
+          importeDeCuenta(fila, Number(fila.mensual ?? 0)),
       ),
       // Para decir «por mes» o «cada 3 meses».
       periodoMeses: Number(fila.periodoMeses),
@@ -684,7 +718,8 @@ export class SuscripcionesService {
 
   /**
    * Da de alta la cuenta: desde qué día es cliente y cuántos días de prueba gratis tiene. Al
-   * terminar la prueba se emite la factura del primer mes. No hace falta tener plan: se elige
+   * terminar la prueba se emite el primer pago (lo que queda de ese mes, proporcional). No hace
+   * falta tener plan: se elige
    * antes de que termine. Se puede volver a hacer mientras no haya pagado nunca.
    */
   async activar(
@@ -1062,6 +1097,10 @@ export class SuscripcionesService {
   ) {
     const empresaId = cuenta.empresaId;
     const periodo = periodoDelPago(cuenta, dto.meses, hoyAR());
+    // El primer pago de una cuenta con prueba es un solo tramo proporcional (lo que queda del mes
+    // al terminar la prueba), aunque pague trimestral: los períodos enteros arrancan el día 1.
+    const primerPago = !cuenta.pagadoHasta && !!cuenta.pruebaHasta;
+    const meses = primerPago ? 1 : dto.meses;
     const repo = m.getRepository(FacturaSaas);
     const pendiente = await repo.findOneBy({
       empresaId,
@@ -1072,13 +1111,13 @@ export class SuscripcionesService {
       empresaId,
       desde: periodo.desde,
       hasta: periodo.hasta,
-      meses: dto.meses,
+      meses,
       importe: dto.importe,
       // El de la factura que paga o, si paga su período, el de su cuenta. Es informativo: lo que
       // vale es el importe que entró.
       descuento:
         pendiente?.descuento ??
-        (dto.meses === Number(cuenta.periodoMeses)
+        (primerPago || dto.meses === Number(cuenta.periodoMeses)
           ? Number(cuenta.periodoDescuento)
           : 0),
       detalle: await this.lineasDeFactura(m, empresaId),
@@ -1107,7 +1146,7 @@ export class SuscripcionesService {
     await this.auditar(m, empresaId, actor, 'SUSCRIPCION_PAGO', {
       importe: dto.importe,
       medio: dto.medio,
-      meses: dto.meses,
+      meses,
       desde: periodo.desde,
       hasta: periodo.hasta,
       ...(dto.medio === 'MERCADOPAGO' && !actor ? { automatico: true } : {}),
@@ -1362,17 +1401,22 @@ export class SuscripcionesService {
       estado: 'PENDIENTE',
     });
     const detalle = await this.lineasDeFactura(m, cuenta.empresaId);
-    // Un período entero por factura: tres meses con su descuento si paga trimestral.
-    const meses = Number(cuenta.periodoMeses ?? 1);
+    // Un período entero por factura (tres meses con su descuento si paga trimestral), salvo el
+    // primer pago: lo que queda del mes al terminar la prueba, en proporción y como un solo tramo.
     const descuento = Number(cuenta.periodoDescuento ?? 0);
-    const importe = importeDeCuenta(
-      { periodoMeses: meses, periodoDescuento: descuento },
-      detalle.reduce((n, l) => n + l.precio, 0),
-    );
-    const venceEl = cuenta.pagadoHasta ?? cuenta.pruebaHasta;
+    const periodo = proximoPeriodo(cuenta, Number(cuenta.periodoMeses ?? 1));
+    const meses = periodo?.proporcional ? 1 : Number(cuenta.periodoMeses ?? 1);
+    const importe = periodo
+      ? importeDeFactura(
+          periodo,
+          detalle.reduce((n, l) => n + l.precio, 0),
+          meses,
+          descuento,
+        )
+      : 0;
     const corresponde =
-      correspondeFactura(cuenta, hoy) && importe > 0 && !!venceEl;
-    if (!corresponde) {
+      correspondeFactura(cuenta, hoy) && importe > 0 && !!periodo;
+    if (!corresponde || !periodo) {
       if (pendiente)
         await repo.update(
           { id: pendiente.id },
@@ -1384,7 +1428,6 @@ export class SuscripcionesService {
         );
       return false;
     }
-    const periodo = periodoSiguiente(venceEl, meses);
     if (pendiente) {
       await repo.update(
         { id: pendiente.id },

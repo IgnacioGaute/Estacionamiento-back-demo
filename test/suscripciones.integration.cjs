@@ -170,18 +170,23 @@ test('alta con prueba sin plan; el plan de cada playa, la playa adicional con 30
   assert.ok((await servicio.detalle(empresa.id)).historial.some((h) => h.accion === 'SUSCRIPCION_ALTA'));
 });
 
-test('termina la prueba: factura del primer mes, días de atraso y suspensión con más de 5', async () => {
+test('termina la prueba: primer pago proporcional hasta fin de mes, días de atraso y suspensión con más de 5', async () => {
   const { empresa, playas } = await nuevaEmpresa('Morosa');
   await servicio.asignarPlan(empresa.id, playas[0].id, { planId: (await plan('CHICA')).id }, superUser.id);
-  // Prueba terminada ayer: hoy vence la primera factura.
-  await fijar(empresa.id, { pruebaHasta: dia(-1) });
+  const mensual = (await servicio.resumen(empresa.id)).mensual;
+  // Prueba de 10 días terminada ayer: hoy vence el primer pago: lo que queda del mes.
+  await fijar(empresa.id, { alta: dia(-10), pruebaHasta: dia(-1) });
   assert.ok((await servicio.revisarVencimientos()).facturas >= 1);
   let cuenta = await servicio.resumen(empresa.id);
-  assert.equal(cuenta.facturaPendiente.desde, hoy, 'la factura vence el día en que empieza el período');
+  assert.equal(cuenta.proximoVencimiento, hoy, 'vence el día siguiente a la prueba');
+  assert.equal(cuenta.facturaPendiente.desde, hoy, 'la prueba es gratis: arranca cuando termina');
+  assert.equal(cuenta.facturaPendiente.hasta, reglas.finDeMes(hoy), 'hasta fin de ese mes');
+  assert.equal(cuenta.facturaPendiente.importe, reglas.importeProporcional(mensual, 0, hoy, reglas.finDeMes(hoy)));
+  assert.equal(cuenta.facturaPendiente.meses, 1);
   assert.equal(cuenta.diasDeAtraso, 0);
 
   // 5 días de atraso: sigue operando.
-  await fijar(empresa.id, { pruebaHasta: dia(-6) });
+  await fijar(empresa.id, { alta: dia(-15), pruebaHasta: dia(-6) });
   await servicio.revisarVencimientos();
   assert.equal(await estadoEmpresa(empresa.id), 'ACTIVA');
   cuenta = await servicio.resumen(empresa.id);
@@ -189,7 +194,7 @@ test('termina la prueba: factura del primer mes, días de atraso y suspensión c
   assert.equal(cuenta.facturaPendiente.desde, dia(-5), 'la pendiente sigue a la fecha real del vencimiento');
 
   // 6 días: se suspende.
-  await fijar(empresa.id, { pruebaHasta: dia(-7) });
+  await fijar(empresa.id, { alta: dia(-16), pruebaHasta: dia(-7) });
   assert.ok((await servicio.revisarVencimientos()).suspendidas >= 1);
   assert.equal(await estadoEmpresa(empresa.id), 'SUSPENDIDA');
   cuenta = await servicio.resumen(empresa.id);
@@ -199,12 +204,16 @@ test('termina la prueba: factura del primer mes, días de atraso y suspensión c
   await servicio.revisarVencimientos();
   assert.equal((await servicio.resumen(empresa.id)).facturaPendiente.desde, dia(-6));
 
-  await servicio.registrarPago(empresa.id, { meses: 1, importe: 60000, medio: 'TRANSFERENCIA', fecha: hoy, referencia: 'TRF-1' }, superUser.id);
-  assert.equal(await estadoEmpresa(empresa.id), 'ACTIVA');
+  // Paga tarde y cortada: el primer pago cubre lo mismo: del fin de la prueba a fin de ese mes.
+  await servicio.registrarPago(empresa.id, { meses: 1, importe: pendiente.importe, medio: 'TRANSFERENCIA', fecha: hoy, referencia: 'TRF-1' }, superUser.id);
   cuenta = await servicio.resumen(empresa.id);
-  assert.equal(cuenta.estado, 'AL_DIA');
-  assert.equal(cuenta.pagadoHasta, reglas.sumarDias(reglas.sumarMeses(hoy, 1), -1), 'estuvo cortada: el mes arranca hoy');
-  assert.equal(cuenta.facturaPendiente, null);
+  assert.equal(cuenta.pagadoHasta, reglas.finDeMes(dia(-6)));
+  const alDia = cuenta.pagadoHasta >= hoy;
+  assert.equal(await estadoEmpresa(empresa.id), alDia ? 'ACTIVA' : (cuenta.diasDeAtraso > 5 ? 'SUSPENDIDA' : 'ACTIVA'));
+  if (alDia) {
+    assert.equal(cuenta.estado, 'AL_DIA');
+    assert.equal(cuenta.facturaPendiente, null);
+  }
   const [pagada] = (await servicio.detalle(empresa.id)).facturas;
   assert.equal(pagada.id, pendiente.id, 'pagó la factura pendiente, no creó otra');
   assert.equal(pagada.estado, 'PAGADA');
@@ -284,7 +293,8 @@ test('activar sin prueba: la primera factura vence el día del alta', async () =
   assert.equal(d.cuenta.estado, 'VENCIDA');
   assert.equal(d.cuenta.diasDeAtraso, 0);
   assert.equal(d.cuenta.facturaPendiente.desde, hoy);
-  assert.equal(d.cuenta.facturaPendiente.importe, 70000);
+  assert.equal(d.cuenta.facturaPendiente.hasta, reglas.finDeMes(hoy), 'el primer pago llega a fin de mes');
+  assert.equal(d.cuenta.facturaPendiente.importe, reglas.importeProporcional(70000, 0, hoy, reglas.finDeMes(hoy)));
 });
 
 test('suspensión manual: ni el pago ni la tarea diaria la levantan; bonificar anula la pendiente', async () => {
@@ -450,7 +460,7 @@ test('pago con MercadoPago: se asienta una sola vez, llegue por el aviso, al vol
   assert.equal(ultimo.referencia, `plan:${empresa.id}:${cuenta.proximoVencimiento}`);
 });
 
-test('débito automático: arranca en el próximo vencimiento, se asienta solo y estira la gracia a 10 días', async () => {
+test('débito automático: después del primer pago, arranca el día 1, se asienta solo y estira la gracia a 10 días', async () => {
   const mp = mercadoPagoFalso();
   const cobros = new CobrosPlataformaService(servicio, mp);
   const { empresa, playas } = await nuevaEmpresa('Con débito');
@@ -458,13 +468,25 @@ test('débito automático: arranca en el próximo vencimiento, se asienta solo y
   await servicio.asignarPlan(empresa.id, playas[0].id, { planId: (await plan('CHICA')).id }, superUser.id);
   const mensual = (await servicio.resumen(empresa.id)).mensual;
 
+  // En prueba no se activa: el primer pago es proporcional y el débito cobra siempre lo mismo.
+  await assert.rejects(
+    cobros.activarDebito(empresa.id, 'duenio@example.test', superUser.id),
+    (e) => e.getResponse().code === 'PRIMER_PAGO_PENDIENTE',
+  );
+  const primerPago = (await servicio.resumen(empresa.id)).proximaFactura;
+  assert.equal(primerPago.desde, dia(7), 'desde que termina la prueba gratis');
+  assert.equal(primerPago.hasta, reglas.finDeMes(dia(7)));
+  await servicio.registrarPago(empresa.id, { meses: 1, importe: primerPago.importe, medio: 'TRANSFERENCIA', fecha: hoy }, superUser.id);
+  const unoDelMes = reglas.sumarDias(reglas.finDeMes(dia(7)), 1);
+
   const primero = await cobros.activarDebito(empresa.id, 'duenio@example.test', superUser.id);
   assert.equal(primero.url, 'https://mp.test/debito/deb-1');
   assert.deepEqual(
     mp.llamadas.find(([q]) => q === 'crearSuscripcion')[1],
-    { referencia: `debito:${empresa.id}`, motivo: 'Plan del sistema de estacionamiento', email: 'duenio@example.test', importe: mensual, meses: 1, inicio: dia(7), tarjeta: undefined },
-    'el primer cobro, el día después de la prueba',
+    { referencia: `debito:${empresa.id}`, motivo: 'Plan del sistema de estacionamiento', email: 'duenio@example.test', importe: mensual, meses: 1, inicio: unoDelMes, tarjeta: undefined },
+    'el primer cobro, el día 1 siguiente al primer pago',
   );
+  assert.equal(unoDelMes.slice(8), '01');
   let cuenta = await servicio.resumen(empresa.id);
   assert.deepEqual(cuenta.debito, { estado: 'pending', email: 'duenio@example.test', url: primero.url });
   assert.equal(cuenta.diasDeGracia, 5, 'mientras no lo confirme no cambia nada');
@@ -483,8 +505,8 @@ test('débito automático: arranca en el próximo vencimiento, se asienta solo y
   assert.ok((await servicio.detalle(empresa.id)).historial.some((h) => h.accion === 'SUSCRIPCION_DEBITO' && h.detalle.estado === 'authorized'));
   await assert.rejects(cobros.activarDebito(empresa.id, 'otro@example.test', superUser.id), /Ya tenés/);
 
-  // Terminó la prueba y la tarjeta todavía no pasó: con 7 días de atraso sigue operando.
-  await fijar(empresa.id, { pruebaHasta: dia(-8) });
+  // Venció el mes y la tarjeta todavía no pasó: con 7 días de atraso sigue operando.
+  await fijar(empresa.id, { pagadoHasta: dia(-8) });
   await servicio.revisarVencimientos();
   assert.equal(await estadoEmpresa(empresa.id), 'ACTIVA');
   cuenta = await servicio.resumen(empresa.id);
@@ -494,12 +516,12 @@ test('débito automático: arranca en el próximo vencimiento, se asienta solo y
   // Un intento rechazado no cuenta; el aprobado se asienta solo.
   mp.cobros.set('c-1', { id: 'c-1', suscripcionId: 'deb-2', pago: { id: '9001', estado: 'rejected', monto: mensual, fecha: hoy, referencia: null } });
   await cobros.procesarAviso('subscription_authorized_payment', 'c-1');
-  assert.equal((await pagadas(empresa.id)).length, 0);
+  assert.equal((await pagadas(empresa.id)).length, 1, 'solo el primer pago');
   mp.cobros.set('c-2', { id: 'c-2', suscripcionId: 'deb-2', pago: { id: '9002', estado: 'approved', monto: mensual, fecha: hoy, referencia: null } });
   await cobros.procesarAviso('subscription_authorized_payment', 'c-2');
   cuenta = await servicio.resumen(empresa.id);
   assert.equal(cuenta.estado, 'AL_DIA');
-  const [pagada] = await pagadas(empresa.id);
+  const pagada = (await pagadas(empresa.id)).find((f) => f.referencia === '9002');
   assert.equal(pagada.nota, 'Débito automático');
   assert.equal(pagada.referencia, '9002');
   assert.equal(pagada.desde, dia(-7), 'no estuvo cortada: el mes sigue desde su vencimiento');
@@ -533,11 +555,13 @@ test('débito con la tarjeta en el panel: sin cuenta de MercadoPago, queda activ
   const cobros = new CobrosPlataformaService(servicio, mp);
   const { empresa, playas } = await nuevaEmpresa('Débito con tarjeta');
   await servicio.asignarPlan(empresa.id, playas[0].id, { planId: (await plan('MEDIANA')).id }, superUser.id);
+  const primerPago = (await servicio.resumen(empresa.id)).proximaFactura;
+  await servicio.registrarPago(empresa.id, { meses: 1, importe: primerPago.importe, medio: 'TRANSFERENCIA', fecha: hoy }, superUser.id);
   const r = await cobros.activarDebito(empresa.id, 'caja@example.test', superUser.id, 'tok1234567890abcdef');
   assert.deepEqual(r, { estado: 'authorized', url: null }, 'no hay que ir a MercadoPago');
   const [, pedido] = mp.llamadas.find(([q]) => q === 'crearSuscripcion');
   assert.equal(pedido.tarjeta, 'tok1234567890abcdef');
-  assert.equal(pedido.inicio, dia(7), 'igual arranca en el próximo vencimiento');
+  assert.equal(pedido.inicio, reglas.sumarDias(primerPago.hasta, 1), 'igual arranca el día 1 que sigue al primer pago');
   const cuenta = await servicio.resumen(empresa.id);
   assert.deepEqual(cuenta.debito, { estado: 'authorized', email: 'caja@example.test', url: null });
   assert.equal(cuenta.diasDeGracia, 10);
@@ -666,40 +690,46 @@ test('períodos de pago: trimestral factura 3 meses con 10% menos, se paga y se 
   assert.equal(d.historial[0].accion, 'SUSCRIPCION_EDITADA');
   assert.equal(d.historial[0].detalle.periodo, 'TRIMESTRAL');
 
-  // Termina la prueba: la primera factura cubre tres meses, con el descuento.
-  await fijar(empresa.id, { pruebaHasta: dia(-1) });
+  // Termina la prueba: el primer pago es un solo tramo, lo que queda del mes, con el descuento.
+  await fijar(empresa.id, { alta: dia(-7), pruebaHasta: dia(-1) });
   await servicio.revisarVencimientos();
   cuenta = await servicio.resumen(empresa.id);
-  assert.equal(cuenta.facturaPendiente.meses, 3);
+  const finPrimero = reglas.finDeMes(hoy);
+  const primerPago = reglas.importeProporcional(cuenta.mensual, 10, hoy, finPrimero);
+  assert.equal(cuenta.facturaPendiente.meses, 1);
   assert.equal(cuenta.facturaPendiente.descuento, 10);
-  assert.equal(cuenta.facturaPendiente.importe, cuenta.importePeriodo);
-  assert.equal(cuenta.facturaPendiente.hasta, reglas.sumarMeses(dia(-1), 3));
-  assert.equal((await servicio.situacion(empresa.id)).aPagar, cuenta.importePeriodo, 'el aviso del menú dice el total');
+  assert.equal(cuenta.facturaPendiente.importe, primerPago);
+  assert.equal(cuenta.facturaPendiente.hasta, finPrimero);
+  assert.equal((await servicio.situacion(empresa.id)).aPagar, primerPago, 'el aviso del menú dice el primer pago');
 
-  // Lo paga con MercadoPago: cubre los tres meses.
+  // Lo paga con MercadoPago: cubre hasta fin de mes.
   await cobros.pagar(empresa.id);
   const [, link] = mp.llamadas.find(([q]) => q === 'crearPago');
-  assert.equal(link.importe, cuenta.importePeriodo);
-  mp.pagos.set('801', { id: '801', estado: 'approved', monto: cuenta.importePeriodo, fecha: hoy, referencia: link.referencia });
+  assert.equal(link.importe, primerPago);
+  mp.pagos.set('801', { id: '801', estado: 'approved', monto: primerPago, fecha: hoy, referencia: link.referencia });
   assert.equal((await cobros.conciliar(empresa.id)).acreditados, 1);
   cuenta = await servicio.resumen(empresa.id);
-  assert.equal(cuenta.estado, 'AL_DIA');
-  assert.equal(cuenta.pagadoHasta, reglas.sumarMeses(dia(-1), 3));
+  assert.equal(cuenta.pagadoHasta, finPrimero);
   const [pagada] = (await servicio.detalle(empresa.id)).facturas;
-  assert.equal(pagada.meses, 3);
+  assert.equal(pagada.meses, 1);
   assert.equal(pagada.descuento, 10);
+  // Desde el día 1, el período entero.
+  assert.deepEqual(cuenta.proximaFactura, { desde: reglas.sumarDias(finPrimero, 1), hasta: reglas.sumarMeses(finPrimero, 3), proporcional: false, importe: cuenta.importePeriodo });
 
-  // El débito cobra cada tres meses el total del período.
+  // El débito cobra cada tres meses el total del período, desde el día 1.
+  await fijar(empresa.id, { pagadoHasta: dia(5) });
+  cuenta = await servicio.resumen(empresa.id);
   await cobros.activarDebito(empresa.id, 'duenio@example.test', superUser.id, 'tok1234567890abcdef');
   const [, pedido] = mp.llamadas.find(([q]) => q === 'crearSuscripcion');
   assert.equal(pedido.meses, 3);
   assert.equal(pedido.importe, cuenta.importePeriodo);
+  assert.equal(pedido.inicio, dia(6));
   assert.match(pedido.motivo, /trimestral/);
-  // Un cobro del débito también corre tres meses.
+  // Un cobro del débito corre tres meses.
   const debitoId = (await servicio.datosDebito(empresa.id)).debitoId;
   mp.cobros.set('c-t', { id: 'c-t', suscripcionId: debitoId, pago: { id: '802', estado: 'approved', monto: cuenta.importePeriodo, fecha: hoy, referencia: null } });
   await cobros.procesarAviso('subscription_authorized_payment', 'c-t');
-  assert.equal((await servicio.resumen(empresa.id)).pagadoHasta, reglas.sumarMeses(dia(-1), 6));
+  assert.equal((await servicio.resumen(empresa.id)).pagadoHasta, reglas.sumarMeses(dia(5), 3));
 
   // Pasa a anual: el débito viejo cobraría mal, así que se da de baja primero en MercadoPago.
   const controller = new SuscripcionesController(servicio, cobros);

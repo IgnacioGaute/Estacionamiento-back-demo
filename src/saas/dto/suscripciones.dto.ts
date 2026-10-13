@@ -104,8 +104,8 @@ export class EditarPeriodoDto {
   activo?: boolean;
 }
 
-// Dar de alta la cuenta: desde qué día es cliente y cuántos días de prueba gratis tiene antes de
-// la primera factura. No hace falta tener plan asignado.
+// Dar de alta la cuenta: desde qué día es cliente y cuántos días de prueba gratis tiene antes del
+// primer pago. No hace falta tener plan asignado.
 export class ActivarCuentaDto {
   @Matches(FECHA, FECHA_INVALIDA)
   alta: string;
