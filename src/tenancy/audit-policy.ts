@@ -73,6 +73,12 @@ export const AUDIT_RULES: Record<string, Record<string, AuditRule>> = {
       accion: 'TARIFA_DIA_ELIMINADA',
       entidad: 'tarifa por día/semana',
     },
+    // Una estadía abierta cargada por error: qué patente y cuándo había entrado.
+    eliminarEstadia: {
+      accion: 'ESTADIA_ELIMINADA',
+      entidad: 'estadía cargada por error',
+      respuesta: ['patente', 'entrada'],
+    },
     createPriceBracket: {
       accion: 'FRANJA_CREADA',
       entidad: 'franja de precio',

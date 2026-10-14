@@ -151,6 +151,14 @@ export class ParkingReceiptsService {
       );
       return { ...receipt.snapshot, anulado: !!fila?.anulado };
     }
+    // Una estadía (o un abono) que el administrador eliminó por haberse cargado por error: el
+    // comprobante queda guardado, pero su link no muestra una estadía que no existió.
+    const [fila] = await this.ds.query(
+      `SELECT EXISTS (SELECT 1 FROM ticket_registrations WHERE id = $1)
+           OR EXISTS (SELECT 1 FROM ticket_registration_for_days WHERE id = $1) AS existe`,
+      [receipt.registrationId],
+    );
+    if (!fila?.existe) throw new NotFoundException('Comprobante no encontrado.');
     return receipt.snapshot;
   }
 }

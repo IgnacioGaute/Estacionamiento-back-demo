@@ -144,8 +144,17 @@ hecha. El QR sigue igual y no depende de esto.
 
 - **Intento** (`cobros_transferencia`): empresa, playa, estadía, operador, cuenta receptora, importe (lo que faltaba
   cobrar, congelado) y moneda. Uno abierto por estadía (índice único parcial). No registra cobro ni salida.
-- **Búsqueda**: desde un minuto antes de abrir el intento, ampliable una vez a cinco. Mientras está abierto, lo que
-  entró desde ese inicio sigue contando. Dura 15 minutos; después vence (antes de vencer se consulta una última vez).
+- **Búsqueda**: desde cinco minutos antes de abrir el intento (el cliente suele transferir antes de que el cajero
+  elija el medio; era uno, y un caso real de producción quedó afuera). Lo que entró desde ese inicio cuenta para la
+  confirmación automática. Dura 15 minutos; después vence (antes de vencer se consulta una última vez).
+- **Anteriores** (`esAnteriorElegible`): lo que entró entre 30 minutos antes de abrir el intento y el inicio de su
+  búsqueda **nunca se asocia solo**: se le ofrece al operador («¿Transfirió antes de que abrieras esto?») para que
+  pregunte el nombre y elija. Solo si está `DISPONIBLE` (ni usada ni en revisión), del mismo importe, y ningún cobro
+  de **otra** estadía del mismo importe la puede reclamar (uno que compite por ella o uno abierto o cerrado hace poco
+  que también la tendría como anterior): con dos autos del mismo importe no se le ofrece a ninguno. Elegirla vuelve a
+  validar todo dentro de la transacción, con el intento y la transferencia bloqueados; ofrecerla no cambia nada.
+  Límite conocido: una transferencia que un cajero cobró **a mano** como «Transferencia» para otro auto no figura
+  como usada; por eso se elige mirando el nombre del pagador.
 - **Consulta centralizada por cuenta**: las pantallas preguntan cada 4 segundos; a MercadoPago se le pregunta como
   mucho una vez cada 4 segundos por cuenta (en memoria del proceso: con varias instancias, una por instancia). Pagina
   de a 100 hasta 500; una lista incompleta es un error, no «no hay nada».

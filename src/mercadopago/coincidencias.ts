@@ -9,6 +9,11 @@
 // después de cerrarse: puede ser el cliente que pagó tarde, y no se le puede dar su plata a otro.
 export const GRACIA_PAGO_TARDIO_MS = 30 * 60 * 1000;
 
+// Hasta cuánto antes de abrir el cobro se le muestran al operador las transferencias del mismo
+// importe para que elija a mano (el cliente transfirió antes de que se eligiera el medio). Nunca
+// se asocian solas.
+export const ANTERIORES_MS = 30 * 60 * 1000;
+
 /** Lo que se necesita de una transferencia para decidir. */
 export interface TransferenciaParaDecidir {
   operacionId: string;
@@ -32,6 +37,10 @@ export interface IntentoParaDecidir {
     | 'PAGADO_OTRO_MEDIO';
   buscarDesde: Date;
   cerradoEl: Date | null;
+  // Para las transferencias anteriores: de qué estadía es y cuándo se abrió.
+  registrationId?: string;
+  tipo?: string;
+  createdAt?: Date;
 }
 
 export type Decision =
@@ -168,6 +177,51 @@ export function compite(
   if (i.cerradoEl == null) return true;
   return (
     t.fechaOperacion.getTime() <= i.cerradoEl.getTime() + GRACIA_PAGO_TARDIO_MS
+  );
+}
+
+/**
+ * Si una transferencia que entró ANTES de que el intento empezara a buscar se le puede ofrecer al
+ * operador para elegirla a mano. Nunca se asocia sola, y para que la plata de un cliente no se use
+ * para otro, se exige todo junto:
+ * - que esté disponible: ni usada ni ofrecida en revisión a otro cobro;
+ * - mismo importe y moneda, entre ANTERIORES_MS antes de abrir el intento y el inicio de su búsqueda
+ *   (lo de después lo decide `decidir`);
+ * - que ningún cobro de OTRA estadía pueda reclamarla: ni uno que compite por ella, ni uno del mismo
+ *   importe abierto (o cerrado hace poco) que también la tendría como anterior. Con dos autos del
+ *   mismo importe no se le ofrece a ninguno: se cobra de otra forma.
+ * Los intentos de la misma estadía (uno cancelado y vuelto a abrir) no cuentan como rivales.
+ */
+export function esAnteriorElegible(
+  intento: IntentoParaDecidir,
+  t: TransferenciaParaDecidir,
+  intentosDeLaCuenta: IntentoParaDecidir[],
+): boolean {
+  if (t.estado !== 'DISPONIBLE') return false;
+  if (!mismoImporte(intento.importe, t.importe) || intento.moneda !== t.moneda)
+    return false;
+  const abierto = (intento.createdAt ?? intento.buscarDesde).getTime();
+  const momento = t.fechaOperacion.getTime();
+  if (momento < abierto - ANTERIORES_MS) return false;
+  if (momento >= intento.buscarDesde.getTime()) return false;
+  const mismaEstadia = (i: IntentoParaDecidir) =>
+    !!intento.registrationId &&
+    i.registrationId === intento.registrationId &&
+    i.tipo === intento.tipo;
+  const laReclama = (i: IntentoParaDecidir) => {
+    if (i.estado === 'CONFIRMADO') return false;
+    if (!mismoImporte(i.importe, t.importe) || i.moneda !== t.moneda)
+      return false;
+    if (compite(i, t)) return true;
+    const desde = (i.createdAt ?? i.buscarDesde).getTime() - ANTERIORES_MS;
+    if (momento < desde) return false;
+    return (
+      i.cerradoEl == null ||
+      momento <= i.cerradoEl.getTime() + GRACIA_PAGO_TARDIO_MS
+    );
+  };
+  return !intentosDeLaCuenta.some(
+    (i) => i.id !== intento.id && !mismaEstadia(i) && laReclama(i),
   );
 }
 

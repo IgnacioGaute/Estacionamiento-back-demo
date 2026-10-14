@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, MoreThanOrEqual, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, MoreThanOrEqual, Repository } from 'typeorm';
 import { CuentaMercadoPago } from './entities/cuenta-mercadopago.entity';
 import {
   CobroTransferencia,
@@ -24,8 +24,10 @@ import { MercadoPagoService } from './mercadopago.service';
 import { TicketsService } from 'src/tickets/tickets.service';
 import { CONDICIONES_VIGENTES } from './condiciones';
 import {
+  ANTERIORES_MS,
   GRACIA_PAGO_TARDIO_MS,
   compite,
+  esAnteriorElegible,
   decidir,
   datosDelPagador,
   esTransferenciaRecibida,
@@ -36,9 +38,11 @@ const API = 'https://api.mercadopago.com';
 const TIEMPO_LIMITE_MS = 12_000;
 // Cuánto se espera la transferencia antes de dar el intento por vencido.
 const ESPERA_MS = 15 * 60 * 1000;
-// Margen hacia atrás al abrir el intento (el cliente pudo transferir antes de que se eligiera el
-// medio) y el máximo al que el operador lo puede ampliar.
-const VENTANA_INICIAL_MIN = 1;
+// Margen hacia atrás al abrir el intento: el cliente suele transferir antes de que el cajero elija
+// el medio. Lo que entró en este rato se asocia solo si es único; lo anterior (hasta
+// ANTERIORES_MS) solo se ofrece para elegir a mano. Los intentos viejos de 1 minuto todavía se
+// pueden ampliar hasta acá.
+const VENTANA_INICIAL_MIN = 5;
 const VENTANA_AMPLIADA_MIN = 5;
 // Las pantallas preguntan cada pocos segundos; a MercadoPago se le pregunta como mucho una vez en
 // este rato por cuenta, aunque haya muchas cajas esperando a la vez.
@@ -366,9 +370,14 @@ export class VerificacionAliasService {
     const abiertos = intentosCuenta.filter((i) =>
       (ABIERTOS as readonly string[]).includes(i.estado),
     );
-    const desde = new Date(
-      Math.min(...abiertos.map((i) => i.buscarDesde.getTime())),
-    );
+    // Se lee desde un rato antes de abrir cada intento: lo que entró antes de su búsqueda puede
+    // ofrecerse para elegir a mano (`esAnteriorElegible`).
+    const desdeAnteriores = (i: CobroTransferencia) =>
+      Math.min(
+        i.buscarDesde.getTime(),
+        (i.createdAt ?? i.buscarDesde).getTime() - ANTERIORES_MS,
+      );
+    const desde = new Date(Math.min(...abiertos.map(desdeAnteriores)));
     const lectura = await this.leer(cuenta, desde);
     if (lectura.ok === false)
       return this.vista(intento, {
@@ -377,7 +386,7 @@ export class VerificacionAliasService {
 
     await this.guardarCandidatas(cuenta, lectura.pagos, intentosCuenta);
     const minimoDesde = new Date(
-      Math.min(...intentosCuenta.map((i) => i.buscarDesde.getTime())),
+      Math.min(...intentosCuenta.map(desdeAnteriores)),
     );
     const transferencias = await this.transferencias.find({
       where: {
@@ -436,34 +445,7 @@ export class VerificacionAliasService {
       const opciones = await Promise.all(
         transferencias
           .filter((t) => decision.operaciones.includes(t.operacionId))
-          .map(async (t) => {
-            const pago = lectura.pagos.find(
-              (p) => String(p.id) === t.operacionId,
-            );
-            // Lo que haya de quien pagó, en el momento y sin guardarlo. Si la búsqueda no lo trae,
-            // se pide el detalle de ese pago, que puede traer más.
-            let { nombre, entidad, documento } = datosDelPagador(pago);
-            if (!nombre || !documento) {
-              const detalle = await this.pagador(
-                cuenta,
-                t.operacionId,
-                entidad,
-              );
-              nombre = detalle.nombre ?? nombre;
-              entidad = detalle.entidad ?? entidad;
-              documento = detalle.documento ?? documento;
-            }
-            return {
-              operacionId: t.operacionId,
-              importe: t.importe,
-              moneda: t.moneda,
-              fechaOperacion: t.fechaOperacion,
-              detectadaEl: t.detectadaEl,
-              nombre,
-              entidad,
-              documento,
-            };
-          }),
+          .map((t) => this.opcion(cuenta, t, lectura.pagos)),
       );
       return this.vista(await this.intentoPropio(id, playaId), {
         consulta,
@@ -475,9 +457,50 @@ export class VerificacionAliasService {
     if (
       intento.estado === 'ESPERANDO' &&
       Date.now() >= intento.venceEl.getTime()
-    )
+    ) {
       await this.cerrar(intento.id, 'VENCIDO');
-    return this.vista(await this.intentoPropio(id, playaId), { consulta });
+      return this.vista(await this.intentoPropio(id, playaId), { consulta });
+    }
+    // Nada en su búsqueda: lo que entró un rato antes de abrirlo, para que el operador pregunte
+    // el nombre y elija. No cambia el estado de nada: elegirla vuelve a validar todo.
+    const anteriores = await Promise.all(
+      transferencias
+        .filter((t) => esAnteriorElegible(intento, t, intentosCuenta))
+        .sort((a, b) => b.fechaOperacion.getTime() - a.fechaOperacion.getTime())
+        .map((t) => this.opcion(cuenta, t, lectura.pagos)),
+    );
+    return this.vista(await this.intentoPropio(id, playaId), {
+      consulta,
+      anteriores,
+    });
+  }
+
+  /** Cómo se muestra una transferencia para elegir, con el nombre de quien pagó si se sabe. */
+  private async opcion(
+    cuenta: CuentaMercadoPago,
+    t: TransferenciaRecibida,
+    pagos: any[],
+  ) {
+    const pago = pagos.find((p) => String(p.id) === t.operacionId);
+    // Lo que haya de quien pagó, en el momento y sin guardarlo. Si la búsqueda no lo trae, se pide
+    // el detalle de ese pago, que puede traer más.
+    let { nombre, entidad, documento } = datosDelPagador(pago);
+    if (!nombre || !documento) {
+      const detalle = await this.pagador(cuenta, t.operacionId, entidad);
+      nombre = detalle.nombre ?? nombre;
+      entidad = detalle.entidad ?? entidad;
+      documento = detalle.documento ?? documento;
+    }
+    return {
+      operacionId: t.operacionId,
+      importe: t.importe,
+      moneda: t.moneda,
+      fechaOperacion: t.fechaOperacion,
+      detectadaEl: t.detectadaEl,
+      nombre,
+      entidad,
+      documento,
+    };
   }
 
   /** El operador eligió cuál de las transferencias es la de este cliente. */
@@ -579,9 +602,19 @@ export class VerificacionAliasService {
           code: 'TRANSFERENCIA_EN_REVISION',
           message: 'Esta transferencia quedó en revisión.',
         });
-      if (!compite({ ...intento, cerradoEl: null }, t))
+      // La de su búsqueda, o, elegida a mano, una anterior que ningún otro cobro pueda reclamar
+      // (se vuelve a mirar acá, con el intento y la transferencia bloqueados).
+      const valida =
+        compite({ ...intento, cerradoEl: null }, t) ||
+        (modo === 'MANUAL' &&
+          esAnteriorElegible(
+            intento,
+            t,
+            await this.intentosDeCuenta(intento.mpUserId, m),
+          ));
+      if (!valida)
         throw new BadRequestException(
-          'Esa transferencia no corresponde a este cobro: el importe o la hora no coinciden.',
+          'Esa transferencia no corresponde a este cobro: el importe o la hora no coinciden, o la puede reclamar otro cobro.',
         );
 
       // Un abono cobrado al registrarlo queda pagado sin retirarse: el vehículo recién entra.
@@ -688,9 +721,9 @@ export class VerificacionAliasService {
    * Los intentos de TODAS las playas que cobran con esta cuenta y que importan para decidir: los
    * abiertos, y los cerrados hace poco (un pago tardío puede ser de ellos).
    */
-  private async intentosDeCuenta(mpUserId: string) {
+  private async intentosDeCuenta(mpUserId: string, m?: EntityManager) {
     const limite = new Date(Date.now() - GRACIA_PAGO_TARDIO_MS - ESPERA_MS);
-    return this.intentos
+    return (m ? m.getRepository(CobroTransferencia) : this.intentos)
       .createQueryBuilder('i')
       .where('i.mpUserId = :mpUserId', { mpUserId })
       .andWhere('(i.estado IN (:...abiertos) OR i.cerradoEl >= :limite)', {
@@ -887,6 +920,8 @@ export class VerificacionAliasService {
         | { ok: false; code: string; error: string };
       motivoRevision?: string;
       opciones?: unknown[];
+      // Mientras espera: las del mismo importe que entraron un rato antes de abrirlo, para elegir.
+      anteriores?: unknown[];
       // Quién pagó la transferencia recién asociada; solo en la respuesta que la confirma.
       pagador?: { nombre: string | null };
     } = {},
@@ -930,6 +965,7 @@ export class VerificacionAliasService {
       consulta: extra.consulta ?? null,
       motivoRevision: extra.motivoRevision ?? null,
       opciones: extra.opciones ?? [],
+      anteriores: extra.anteriores ?? [],
       ...(intento.tipo === 'INQUILINO' && intento.estado === 'CONFIRMADO'
         ? { recibo: await this.cuentasCorriente.reciboDeCobro(intento.id) }
         : {}),

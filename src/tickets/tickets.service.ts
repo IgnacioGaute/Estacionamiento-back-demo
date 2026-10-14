@@ -1283,6 +1283,66 @@ async removePriceBracket(id: string) {
     return { yaCerrada: false as const, cerrada: retirar, saldoPendiente: 0, registration };
   }
 
+  /**
+   * Elimina una estadía que se registró por error (patente equivocada, doble carga). Solo si sigue
+   * abierta, sin ningún cobro ni anticipo y sin un QR o una transferencia al alias esperando el
+   * pago: con plata de por medio no se borra nada, el libro de movimientos no se toca (se registra
+   * la salida y se corrige con un ajuste). Libera la tarjeta física si tenía; el link de su
+   * comprobante de entrada deja de abrir (readPublic). Queda en la Actividad (audit-policy) con la
+   * patente y la hora de entrada.
+   */
+  async eliminarEstadiaPorError(id: string) {
+    const eliminada = await this.dataSource.transaction(async manager => {
+      const repository = manager.getRepository(TicketRegistration);
+      const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+      if (!registration) throw new NotFoundException('Registro no encontrado.');
+      if (registration.departureTime)
+        throw new BadRequestException({ code: 'ESTADIA_CERRADA', message: 'Esta estadía ya tiene la salida registrada: no se puede eliminar.' });
+      const cobros = await manager.getRepository(Movimiento).count({ where: { ticketRegistration: { id } } });
+      if (cobros > 0 || Number(registration.advancePaidAmount ?? 0) > 0 || Number(registration.legacyCollectedOffset ?? 0) > 0)
+        throw new BadRequestException({ code: 'ESTADIA_CON_COBROS', message: 'Esta estadía tiene cobros o anticipos: no se puede eliminar. Registrá la salida y, si hace falta, corregilo con un ajuste.' });
+      const [enCurso] = await manager.query(
+        `SELECT (SELECT count(*) FROM cobros_mercadopago WHERE "registrationId" = $1 AND estado = 'PENDIENTE')
+              + (SELECT count(*) FROM cobros_transferencia WHERE "registrationId" = $1 AND estado IN ('ESPERANDO', 'REVISION')) AS n`,
+        [id],
+      );
+      if (Number(enCurso?.n ?? 0) > 0)
+        throw new BadRequestException({ code: 'COBRO_EN_CURSO', message: 'Hay un cobro con QR o al alias esperando el pago: cancelalo antes de eliminar la estadía.' });
+      const conTicket = await repository.findOne({ where: { id }, relations: ['ticket'] });
+      // Los turnos guardan cuántos vehículos había adentro al empezar («Recibidos») y al
+      // terminar («Quedan dentro»). Esta estadía, que nunca salió, quedó contada en cada foto
+      // tomada después de su entrada (si ya existía en ese momento): se descuenta, así el turno
+      // muestra lo que de verdad había. Salidas, entradas e informes se cuentan en vivo.
+      await manager.query(
+        `WITH e AS (
+           SELECT (("entryDay"::date + COALESCE("entryTime"::time, '00:00'::time)) AT TIME ZONE $2) AS entrada,
+                  "createdAt" AS creada, "playaId"
+           FROM ticket_registrations WHERE id = $1)
+         UPDATE turnos t SET
+           "vehiculosInicio" = CASE WHEN t."vehiculosInicio" IS NOT NULL AND t."fechaApertura" > e.entrada AND t."fechaApertura" > e.creada
+             THEN GREATEST(t."vehiculosInicio" - 1, 0) ELSE t."vehiculosInicio" END,
+           "vehiculosFin" = CASE WHEN t."vehiculosFin" IS NOT NULL AND t."fechaCierre" > e.entrada AND t."fechaCierre" > e.creada
+             THEN GREATEST(t."vehiculosFin" - 1, 0) ELSE t."vehiculosFin" END
+         FROM e
+         WHERE t."playaId" = e."playaId"
+           AND ((t."vehiculosInicio" IS NOT NULL AND t."fechaApertura" > e.entrada AND t."fechaApertura" > e.creada)
+             OR (t."vehiculosFin" IS NOT NULL AND t."fechaCierre" > e.entrada AND t."fechaCierre" > e.creada))`,
+        [id, 'America/Argentina/Buenos_Aires'],
+      );
+      // El comprobante de entrada no se borra (la playa solo puede crearlos): su link deja de
+      // mostrarse porque la lectura pública exige que la estadía exista.
+      await repository.delete({ id });
+      return {
+        id,
+        patente: registration.licensePlateOriginal || conTicket?.ticket?.codeBar || registration.lastNameCustomer || null,
+        entrada: [registration.entryDay, registration.entryTime?.slice(0, 5)].filter(Boolean).join(' ') || null,
+      };
+    });
+    // Las pantallas la sacan de la lista de vehículos adentro.
+    this.ticketGateway.emitNewRegistration({ id, eliminada: true });
+    return eliminada;
+  }
+
   /** Avisa a las pantallas que una estadía cambió (lo que hacen los cierres al terminar). */
   emitirRegistro(registration: TicketRegistration) {
     this.ticketGateway.emitNewRegistration(registration);

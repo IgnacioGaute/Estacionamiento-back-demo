@@ -334,6 +334,93 @@ test('abono por alias: cobrado al registrarlo queda pagado en la playa; cobrado 
   assert.equal((await repo(RegistrationDay).findOneBy({ id: alSalir.id })).retired, true);
 });
 
+const haceMinutos = (m) => new Date(Date.now() - m * 60_000).toISOString();
+
+test('pagó antes de abrir la espera: hasta 5 minutos se asocia sola; de antes se ofrece para elegir y no se usa dos veces', async () => {
+  const ctx = await empresaDePrueba();
+  // 3 minutos antes: entra en la búsqueda y es única, se asocia sola.
+  const r1 = await estadia(ctx, ctx.playaA);
+  pagosMp = [transferencia(ctx, 1000, { date_created: haceMinutos(3) })];
+  const i1 = await iniciar(ctx, ctx.playaA, r1.id);
+  assert.equal(i1.estado, 'CONFIRMADO');
+  assert.equal(i1.modo, 'AUTOMATICO_COINCIDENCIA_UNICA');
+
+  // 12 minutos antes: no se asocia sola, se ofrece con el nombre para que el cajero pregunte.
+  const r2 = await estadia(ctx, ctx.playaA);
+  const vieja = transferencia(ctx, 1000, { date_created: haceMinutos(12), payer: { first_name: 'María', last_name: 'Gómez' } });
+  pagosMp = [...pagosMp, vieja];
+  const i2 = await iniciar(ctx, ctx.playaA, r2.id);
+  assert.equal(i2.estado, 'ESPERANDO');
+  assert.deepEqual(i2.anteriores.map((o) => o.operacionId), [String(vieja.id)], 'la ya usada no se ofrece');
+  assert.equal(i2.anteriores[0].nombre, 'María Gómez');
+  assert.equal((await movimientosDe(r2.id)).length, 0, 'ofrecerla no registra nada');
+  assert.equal((await repo(Transferencia).findOneBy({ mpUserId: ctx.mpUserId, operacionId: String(vieja.id) })).estado, 'DISPONIBLE');
+
+  // El cajero la elige: cobro y salida, una sola vez.
+  const elegida = await ctx.en(ctx.playaA, () => alias.asignar(i2.id, String(vieja.id)));
+  assert.equal(elegida.estado, 'CONFIRMADO');
+  assert.equal(elegida.modo, 'MANUAL');
+  assert.equal(elegida.salidaRegistrada, true);
+  assert.equal((await movimientosDe(r2.id)).length, 1);
+
+  // Ya usada: no se le ofrece a otro auto ni se puede asignar a mano.
+  const r3 = await estadia(ctx, ctx.playaA);
+  const i3 = await iniciar(ctx, ctx.playaA, r3.id);
+  assert.equal(i3.anteriores.length, 0);
+  await assert.rejects(ctx.en(ctx.playaA, () => alias.asignar(i3.id, String(vieja.id))), (e) => codigo(e) === 'TRANSFERENCIA_USADA');
+  assert.equal((await movimientosDe(r3.id)).length, 0);
+  // Una de hace más de 30 minutos ni se ofrece.
+  pagosMp = [transferencia(ctx, 1000, { date_created: haceMinutos(31) })];
+  assert.equal((await consultar(ctx, ctx.playaA, i3.id)).anteriores.length, 0);
+});
+
+test('una anterior con dos autos del mismo importe esperando: no se le ofrece a ninguno ni se puede asignar', async () => {
+  const ctx = await empresaDePrueba();
+  const ra = await estadia(ctx, ctx.playaA);
+  const rb = await estadia(ctx, ctx.playaB);
+  const vieja = transferencia(ctx, 1000, { date_created: haceMinutos(12) });
+  pagosMp = [vieja];
+  const ia = await iniciar(ctx, ctx.playaA, ra.id);
+  assert.equal(ia.anteriores.length, 1, 'mientras hay un solo auto se ofrece');
+  const ib = await iniciar(ctx, ctx.playaB, rb.id);
+  assert.equal(ib.anteriores.length, 0);
+  assert.equal((await consultar(ctx, ctx.playaA, ia.id)).anteriores.length, 0, 'con el segundo auto deja de ofrecerse');
+  await assert.rejects(ctx.en(ctx.playaA, () => alias.asignar(ia.id, String(vieja.id))), /reclamar otro cobro/);
+  await assert.rejects(ctx.en(ctx.playaB, () => alias.asignar(ib.id, String(vieja.id))), /reclamar otro cobro/);
+  assert.equal((await movimientosDe(ra.id)).length + (await movimientosDe(rb.id)).length, 0);
+});
+
+test('eliminar una estadía cargada por error: sin cobros se borra; con anticipo, con un cobro esperando o cerrada, no', async () => {
+  const ctx = await empresaDePrueba();
+  const eliminar = (id) => ctx.en(ctx.playaA, () => tickets.eliminarEstadiaPorError(id));
+
+  const porError = await estadia(ctx, ctx.playaA);
+  const r = await eliminar(porError.id);
+  assert.equal(r.patente, porError.licensePlateOriginal);
+  assert.ok(r.entrada, 'para la Actividad: cuándo había entrado');
+  assert.equal(await repo(Registration).findOneBy({ id: porError.id }), null);
+  await assert.rejects(eliminar(porError.id), /no encontrado/);
+
+  const conAnticipo = await estadia(ctx, ctx.playaA);
+  await ctx.en(ctx.playaA, () => tickets.addAdvancePayment(conAnticipo.id, { advancePaidAmount: 500, metodo: 'CASH' }, ctx.operador.id));
+  await assert.rejects(eliminar(conAnticipo.id), /cobros o anticipos/);
+  assert.ok(await repo(Registration).findOneBy({ id: conAnticipo.id }));
+
+  // Con una transferencia al alias esperando no: la plata podría llegar. Cancelada, sí.
+  const esperando = await estadia(ctx, ctx.playaA);
+  pagosMp = [];
+  const i = await iniciar(ctx, ctx.playaA, esperando.id);
+  await assert.rejects(eliminar(esperando.id), /esperando el pago/);
+  await ctx.en(ctx.playaA, () => alias.cancelar(i.id));
+  await eliminar(esperando.id);
+  assert.equal(await repo(Registration).findOneBy({ id: esperando.id }), null);
+
+  const cerrada = await estadia(ctx, ctx.playaA);
+  const s = await ctx.en(ctx.playaA, () => tickets.getCloseSummary(cerrada.id));
+  await ctx.en(ctx.playaA, () => tickets.closeRegistrationByPlate(cerrada.id, { closeType: 'PAYMENT', metodo: 'CASH', expectedPrice: s.previewBracket.price, expectedCollected: s.totalCollectedSoFar }, ctx.operador.id));
+  await assert.rejects(eliminar(cerrada.id), /salida registrada/);
+});
+
 test('reabrir la pantalla recupera el mismo intento y no duplica', async () => {
   const ctx = await empresaDePrueba();
   const r = await estadia(ctx, ctx.playaA);

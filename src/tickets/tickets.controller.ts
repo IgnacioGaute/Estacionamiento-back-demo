@@ -261,6 +261,16 @@ export class TicketsController {
     return this.ticketsService.closeRegistrationByPlate(id, dto, req.user.userId);
   }
 
+  // Una estadía abierta y sin cobros que se cargó por error. Solo el administrador: no está en
+  // OPERATOR_ENDPOINTS, y queda en la Actividad (audit-policy).
+  @Delete('registrations/:id')
+  eliminarEstadia(@Req() req: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    if (!req.user?.userId) {
+      throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    }
+    return this.ticketsService.eliminarEstadiaPorError(id);
+  }
+
   @Get('registrations/summary')
   getTicketRegistrationsSummary(@Query('from') from?: string, @Query('to') to?: string) {
     return this.ticketsService.getTicketRegistrationsSummary(from, to);

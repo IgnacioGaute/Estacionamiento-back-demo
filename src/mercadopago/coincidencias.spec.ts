@@ -1,10 +1,12 @@
 import {
+  ANTERIORES_MS,
   GRACIA_PAGO_TARDIO_MS,
   IntentoParaDecidir,
   TransferenciaParaDecidir,
   camposDelPagador,
   datosDelPagador,
   decidir,
+  esAnteriorElegible,
   esTransferenciaRecibida,
 } from './coincidencias';
 
@@ -275,5 +277,81 @@ describe('Quién pagó', () => {
       'payer.identification.number',
       'point_of_interaction.transaction_data.bank_info.payer.long_name',
     ]);
+  });
+});
+
+describe('Transferencias anteriores: solo para elegir a mano y sin poder usarlas dos veces', () => {
+  // Abierto en T0, busca solo desde 5 minutos antes; lo anterior, hasta 30 minutos antes.
+  const abierto = (id: string, extra: Partial<IntentoParaDecidir> = {}) =>
+    intento(id, {
+      createdAt: T0,
+      buscarDesde: en(-300),
+      registrationId: `estadia-${id}`,
+      tipo: 'HORA',
+      ...extra,
+    });
+  const antes = (minutos: number, extra: Partial<TransferenciaParaDecidir> = {}) =>
+    transferencia(`op-${minutos}`, { fechaOperacion: en(-minutos * 60), ...extra });
+
+  test('la de 10 minutos antes se ofrece; la de 31 no, y la que está en su búsqueda tampoco (esa la decide decidir)', () => {
+    const a = abierto('a');
+    expect(esAnteriorElegible(a, antes(10), [a])).toBe(true);
+    expect(esAnteriorElegible(a, antes(31), [a])).toBe(false);
+    expect(esAnteriorElegible(a, antes(2), [a])).toBe(false);
+  });
+
+  test('nunca una usada, una en revisión de otro cobro o de otro importe', () => {
+    const a = abierto('a');
+    expect(esAnteriorElegible(a, antes(10, { estado: 'USADA' }), [a])).toBe(false);
+    expect(esAnteriorElegible(a, antes(10, { estado: 'REVISION' }), [a])).toBe(false);
+    expect(esAnteriorElegible(a, antes(10, { importe: 3600 }), [a])).toBe(false);
+  });
+
+  test('con otro auto del mismo importe esperando, no se le ofrece a ninguno', () => {
+    const a = abierto('a');
+    const b = abierto('b', { createdAt: en(60), buscarDesde: en(-240) });
+    const t = antes(10);
+    expect(esAnteriorElegible(a, t, [a, b])).toBe(false);
+    expect(esAnteriorElegible(b, t, [a, b])).toBe(false);
+  });
+
+  test('tampoco si otro cobro la tiene en su búsqueda, o se canceló hace poco y puede ser su pago tardío', () => {
+    const a = abierto('a');
+    const esperando = abierto('b', { createdAt: en(-700), buscarDesde: en(-1000) });
+    expect(esAnteriorElegible(a, antes(10), [a, esperando])).toBe(false);
+    const cancelado = abierto('c', {
+      estado: 'CANCELADO',
+      createdAt: en(-900),
+      buscarDesde: en(-1200),
+      cerradoEl: en(-800),
+    });
+    expect(esAnteriorElegible(a, antes(10), [a, cancelado])).toBe(false);
+  });
+
+  test('un cobro de otro importe, uno ya confirmado o uno de la misma estadía no la bloquean', () => {
+    const a = abierto('a');
+    const otroImporte = abierto('b', { importe: 5000 });
+    const confirmado = abierto('c', { estado: 'CONFIRMADO' });
+    const mismaEstadia = abierto('d', {
+      estado: 'CANCELADO',
+      registrationId: 'estadia-a',
+      cerradoEl: en(-30),
+      createdAt: en(-120),
+      buscarDesde: en(-420),
+    });
+    expect(esAnteriorElegible(a, antes(10), [a, otroImporte, confirmado, mismaEstadia])).toBe(true);
+  });
+
+  test('un cobro cerrado hace más de la gracia ya no la reclama', () => {
+    const a = abierto('a');
+    const viejo = abierto('b', {
+      estado: 'VENCIDO',
+      createdAt: en(-3000),
+      buscarDesde: en(-3300),
+      cerradoEl: en(-2500),
+    });
+    // El otro cerró hace casi 42 minutos: la transferencia de hace 10 entró pasada su gracia de 30.
+    expect(esAnteriorElegible(a, antes(10), [a, viejo])).toBe(true);
+    expect(GRACIA_PAGO_TARDIO_MS).toBe(ANTERIORES_MS);
   });
 });

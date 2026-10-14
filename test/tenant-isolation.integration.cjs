@@ -747,6 +747,48 @@ test('comprobantes: permisos, aislamiento, entrega configurable y enlaces inmuta
   await request(app.getHttpServer()).get(entryUrl).expect(200);
 });
 
+test('estadía cargada por error: solo el administrador de su playa la elimina, sin cobros, y su comprobante deja de abrir', async () => {
+  const http = (method, route, who = adminB, scope = b) => request(app.getHttpServer())[method](route)
+    .set('Authorization', 'Bearer ' + token(who)).set('X-Playa-Id', scope.playaId);
+  await http('patch', '/tickets/schedule-settings').send({ receiptDelivery: { whatsapp: true, qr: true, print: true, paperWidth: 58 } }).expect(200);
+  const nueva = (patente) => ds.getRepository(Registration).save({ playaId: b.playaId, description: 'Por error', price: 0,
+    licensePlateOriginal: patente, vehicleType: 'AUTO', entryDay: '2026-10-13', entryTime: '10:00:00' });
+  const porError = await nueva('ERR123');
+  const recibo = await http('post', `/tickets/registrations/${porError.id}/receipt`).send({ kind: 'ENTRY' }).expect(201);
+  await request(app.getHttpServer()).get('/public/parking-receipts/' + recibo.body.token).expect(200);
+
+  // Entró el 13/10 a las 10:00 (13:00 UTC) y se cargó a las 13:05 UTC. Los turnos guardan cuántos había adentro.
+  await ds.query(`UPDATE ticket_registrations SET "createdAt" = '2026-10-13T13:05:00Z' WHERE id = $1`, [porError.id]);
+  const Turno = load('turnos/entities/turno.entity', 'Turno');
+  const turno = (playaId, usuario, datos) => ds.getRepository(Turno).save({ playaId, usuarioApertura: { id: usuario.id }, fondoInicial: 0, ...datos });
+  const antes = await turno(b.playaId, adminB, { fechaApertura: new Date('2026-10-13T12:00:00Z'), vehiculosInicio: 5, fechaCierre: new Date('2026-10-13T20:00:00Z'), vehiculosFin: 7, estado: 'CERRADO' });
+  const despues = await turno(b.playaId, adminB, { fechaApertura: new Date('2026-10-13T20:00:00Z'), vehiculosInicio: 7, estado: 'CERRADO' });
+  const sinCargar = await turno(b.playaId, adminB, { fechaApertura: new Date('2026-10-13T13:02:00Z'), vehiculosInicio: 4, fechaCierre: new Date('2026-10-13T13:03:00Z'), vehiculosFin: 4, estado: 'CERRADO' });
+  const otraPlaya = await turno(a.playaId, adminA, { fechaApertura: new Date('2026-10-13T20:00:00Z'), vehiculosInicio: 3, estado: 'CERRADO' });
+
+  const operador = await ds.getRepository(User).save({ username: 'deleteOperator', email: 'delete-op@example.test', firstName: 'Delete', lastName: 'Operator', role: 'USER', empresaId: b.empresaId });
+  await ds.getRepository(load('tenancy/entities/usuario-playa.entity', 'UsuarioPlaya')).save({ usuarioId: operador.id, playaId: b.playaId, rolPlaya: 'OPERADOR' });
+  await http('delete', `/tickets/registrations/${porError.id}`, operador).expect(403);
+  await http('delete', `/tickets/registrations/${porError.id}`, adminA, a).expect(404);
+
+  const borrada = await http('delete', `/tickets/registrations/${porError.id}`).expect(200);
+  assert.equal(borrada.body.patente, 'ERR123');
+  assert.equal(await ds.getRepository(Registration).findOneBy({ id: porError.id }), null);
+  await request(app.getHttpServer()).get('/public/parking-receipts/' + recibo.body.token).expect(404);
+  // Los turnos que la contaban dejan de contarla; los demás no cambian.
+  const leer = async (t) => ds.getRepository(Turno).findOneBy({ id: t.id });
+  assert.deepEqual([(await leer(antes)).vehiculosInicio, (await leer(antes)).vehiculosFin], [5, 6], 'abrió antes de que entrara: «Recibidos» no cambia, «Quedan dentro» baja');
+  assert.equal((await leer(despues)).vehiculosInicio, 6, '«Recibidos» baja de 7 a 6');
+  assert.deepEqual([(await leer(sinCargar)).vehiculosInicio, (await leer(sinCargar)).vehiculosFin], [4, 4], 'todavía no estaba cargada: no la contaba');
+  assert.equal((await leer(otraPlaya)).vehiculosInicio, 3, 'otra playa no se toca');
+
+  const cobrada = await nueva('COB123');
+  await ds.getRepository(Movimiento).save({ playaId: b.playaId, ticketRegistration: { id: cobrada.id }, usuario: { id: adminB.id }, monto: 500, tipo: 'ANTICIPO', metodo: 'CASH' });
+  const rechazo = await http('delete', `/tickets/registrations/${cobrada.id}`).expect(400);
+  assert.equal(rechazo.body.code, 'ESTADIA_CON_COBROS');
+  assert.ok(await ds.getRepository(Registration).findOneBy({ id: cobrada.id }));
+});
+
 test('telefono: primera entrada figura en frecuentes, normaliza, recupera contacto y no lo publica', async () => {
   const http = (method, route) => request(app.getHttpServer())[method](route)
     .set('Authorization', 'Bearer ' + token(adminB)).set('X-Playa-Id', b.playaId);
