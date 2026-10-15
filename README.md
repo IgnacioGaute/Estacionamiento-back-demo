@@ -12,7 +12,7 @@ docker compose up -d   # PostgreSQL 16 en el puerto 5430 (base, usuario y clave:
 pnpm dev               # API en http://localhost:3030, se reinicia al guardar
 ```
 
-Las variables de entorno van en `.env`; la lista completa está en [CLAUDE.md](CLAUDE.md). Con una base
+Las variables de entorno van en `.env`; la lista completa está en [docs/desarrollo.md](docs/desarrollo.md). Con una base
 vacía, el primer arranque se hace con `DB_BOOTSTRAP=true` para crear las tablas. Después hay que apagarlo:
 encendido contra una base real puede borrar columnas. Las migraciones corren solas en cada arranque.
 
@@ -108,3 +108,8 @@ un commit que pasó el CI.
 
 - [CLAUDE.md](CLAUDE.md): arquitectura, multiempresa, permisos y convenciones.
 - [docs/](docs/): tarifas, caja y turnos, administración de la plataforma, comprobantes, planes y cuentas, seguridad.
+
+
+## Desarrollo con agentes
+
+Estructura, skills, revisores, hooks y ejemplos: [guía de Claude](docs/claude-workflow.md).

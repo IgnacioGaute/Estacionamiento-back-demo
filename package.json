@@ -7,6 +7,7 @@
   "license": "UNLICENSED",
   "packageManager": "pnpm@9.15.4",
   "scripts": {
+    "test:agents": "node --test .claude/hooks/config.test.cjs .claude/hooks/project-hooks.test.cjs",
     "dev": "nest start --watch",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",

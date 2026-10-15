@@ -55,7 +55,10 @@ pids
 .playwright-mcp
 
 # AI agent tooling
-.claude
-
+.claude/settings.local.json
+.claude/worktrees/
+.claude/agent-memory-local/
+CLAUDE.local.md
+.worktrees/
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json

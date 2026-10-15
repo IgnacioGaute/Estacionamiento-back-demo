@@ -1,23 +1,51 @@
 {
   "permissions": {
     "allow": [
-      "Bash(mkdir -p \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test\\\\src\\\\types\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test\\\\src\\\\services\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test\\\\src\\\\controllers\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test\\\\src\\\\routes\")",
-      "Bash(mkdir -p \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-2\\\\src\\\\types\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-2\\\\src\\\\services\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-2\\\\src\\\\controllers\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-2\\\\src\\\\routes\")",
-      "Bash(mkdir -p \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-3\\\\src\\\\types\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-3\\\\src\\\\services\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-3\\\\src\\\\controllers\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-3\\\\src\\\\routes\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-3\\\\src\\\\middleware\")",
-      "Bash(mkdir -p \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-4\\\\src\\\\types\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-4\\\\src\\\\services\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-4\\\\src\\\\controllers\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-4\\\\src\\\\routes\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-4\\\\src\\\\middleware\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-4\\\\src\\\\data\")",
-      "Bash(mkdir -p \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-5\\\\src\\\\types\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-5\\\\src\\\\services\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-5\\\\src\\\\controllers\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-5\\\\src\\\\routes\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-5\\\\src\\\\middleware\" \"C:\\\\Users\\\\nachi\\\\Projects\\\\towerhouse-test-5\\\\src\\\\data\")"
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(pnpm typecheck)",
+      "Bash(pnpm test:*)",
+      "Bash(pnpm build)",
+      "Bash(pnpm test:agents)",
+      "Bash(pnpm lint:ci)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/project-hooks.cjs\"",
+            "timeout": 15
+          }
+        ]
+      }
     ],
-    "additionalDirectories": [
-      "C:\\Users\\nachi\\Projects\\towerhouse-test\\src",
-      "C:\\Users\\nachi\\Projects\\towerhouse-test",
-      "C:\\Users\\nachi\\Projects\\towerhouse-test-2\\src",
-      "C:\\Users\\nachi\\Projects\\towerhouse-test-2",
-      "C:\\Users\\nachi\\Projects\\towerhouse-test-3\\src",
-      "C:\\Users\\nachi\\Projects\\towerhouse-test-3",
-      "C:\\Users\\nachi\\Projects\\towerhouse-test-4\\src",
-      "C:\\Users\\nachi\\Projects\\towerhouse-test-4",
-      "C:\\Users\\nachi\\Projects\\towerhouse-test-5\\src",
-      "C:\\Users\\nachi\\Projects\\towerhouse-test-5"
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/project-hooks.cjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/project-hooks.cjs\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
