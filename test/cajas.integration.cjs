@@ -310,6 +310,10 @@ test('al cerrar el turno se repasan las entradas que registró su operador y sig
     await tickets.closeRegistrationByPlate(cerrada.id, await payload(cerrada.id), user.id);
     const lista = await shifts.estadiasAbiertas(t.id, user.id, 'ADMIN');
     const ids = lista.map(e => e.id);    assert.ok(ids.includes(abierta.id), 'la que sigue abierta aparece');
+    // Como texto, como en las entidades: un Date crudo rompía el cálculo de la hora en la pantalla.
+    const fila = lista.find(e => e.id === abierta.id);
+    assert.match(fila.entryDay, /^\d{4}-\d{2}-\d{2}$/);
+    assert.match(fila.entryTime, /^\d{2}:\d{2}:\d{2}$/);
     assert.ok(!ids.includes(cerrada.id), 'la que ya salió no');
     assert.ok(!ids.includes(anterior.id), 'la de antes de abrir el turno no');
     await assert.rejects(shifts.estadiasAbiertas(t.id, second.id, 'USER'), /responsable del turno/);

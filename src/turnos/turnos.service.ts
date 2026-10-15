@@ -238,8 +238,10 @@ export class TurnosService {
     const nombre = u ? (`${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || u.username) : null;
     if (!nombre) return [];
     const filas = await this.dataSource.query(
-      `SELECT id, "licensePlateOriginal" AS patente, "vehicleType" AS "vehicleType", "entryDay" AS "entryDay",
-              "entryTime" AS "entryTime", COALESCE("advancePaidAmount", 0) AS anticipo
+      // Fecha y hora como texto, igual que las entidades: el driver convierte un `date` crudo en un
+      // Date de JS y la pantalla, que combina «YYYY-MM-DD HH:mm:ss», recibía una fecha inválida.
+      `SELECT id, "licensePlateOriginal" AS patente, "vehicleType" AS "vehicleType", to_char("entryDay", 'YYYY-MM-DD') AS "entryDay",
+              "entryTime"::text AS "entryTime", COALESCE("advancePaidAmount", 0) AS anticipo
          FROM ticket_registrations
         WHERE "departureTime" IS NULL AND "departureDay" IS NULL AND "entryOperatorName" = $1
           AND ("entryDay" + "entryTime") >= date_trunc('minute', $2::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires')
