@@ -485,13 +485,35 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
     return type === 'EGRESOS' ? -price : price;
   }
 
+  /**
+   * El turno donde queda un ingreso o gasto de «Varios». Lo normal es el de quien lo carga; si lo
+   * carga alguien sin turno abierto (el administrador desde Caja), va al turno abierto de la caja:
+   * la plata sale o entra de ese cajón y su arqueo la tiene que contar. Antes se rechazaba con
+   * «Abrí tu turno…» y el administrador no podía registrar un gasto. Con cajas distintas abiertas
+   * no se sabe de cuál sale: lo registra alguien con turno en esa caja. `undefined` deja la regla
+   * de siempre (el turno propio, o ninguno si los turnos están apagados).
+   */
+  private async turnoParaVarios(manager: EntityManager): Promise<string | undefined> {
+    await rolloverShifts(manager);
+    const usuarioId = tenantContext.getStore()?.userId;
+    const repo = manager.getRepository(Turno);
+    if (usuarioId && await repo.exists({ where: { usuarioApertura: { id: usuarioId }, estado: 'ABIERTO' } })) return undefined;
+    const abiertos = await repo.find({ where: { estado: 'ABIERTO', cashVersion: 2 }, order: { fechaApertura: 'DESC' } });
+    if (!abiertos.length) return undefined;
+    if (new Set(abiertos.map(t => t.cashSessionId)).size > 1)
+      throw new BadRequestException('Hay más de una caja abierta: registralo desde el turno de la caja de donde sale o entra el efectivo.');
+    return abiertos[0].id;
+  }
+
   async createOtherPayment(dto: CreateOtherPaymentDto) {
     return this.dataSource.transaction(async manager => {
       const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
       const amount = dto.paymentMethod === 'TRANSFER' ? 0 : this.computeBoxDelta(dto.type, dto.price);
-      const box = await this.applyTicketPayment(date, amount, manager, undefined, undefined, dto.type === 'EGRESOS' ? 'GASTO' : 'INGRESO');
+      const digital = dto.paymentMethod === 'TRANSFER' && dto.type !== 'EGRESOS';
+      const turnoId = amount || digital ? await this.turnoParaVarios(manager) : undefined;
+      const box = await this.applyTicketPayment(date, amount, manager, turnoId, undefined, dto.type === 'EGRESOS' ? 'GASTO' : 'INGRESO');
       const saved = await manager.getRepository(OtherPayment).save(manager.getRepository(OtherPayment).create({ ...dto, operatorName: await operatorName(manager), dateNow: date, boxList: { id: box.id } }));
-      if (dto.paymentMethod === 'TRANSFER' && dto.type !== 'EGRESOS') await recordDigital(manager, dto.price, 'TRANSFER', 'Varios ' + saved.id);
+      if (digital) await recordDigital(manager, dto.price, 'TRANSFER', 'Varios ' + saved.id, undefined, turnoId);
       return saved;
     });
   }
@@ -509,10 +531,11 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
       const after = updated.paymentMethod === 'TRANSFER' ? 0 : this.computeBoxDelta(updated.type, updated.price);
       const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
       if (old.dateNow !== date) throw new BadRequestException('Los movimientos de días anteriores se corrigen con un movimiento nuevo.');
-      await this.applyTicketPayment(date, -before, manager, undefined, undefined, oldType === 'EGRESOS' ? 'GASTO' : 'INGRESO');
-      const box = await this.applyTicketPayment(date, after, manager, undefined, undefined, updated.type === 'EGRESOS' ? 'GASTO' : 'INGRESO');
       const digitalAfter = updated.paymentMethod === 'TRANSFER' && updated.type !== 'EGRESOS' ? updated.price : 0;
-      if (digitalAfter !== digitalBefore) await recordDigital(manager, digitalAfter - digitalBefore, 'TRANSFER', 'Corrección varios ' + id);
+      const turnoId = before || after || digitalAfter !== digitalBefore ? await this.turnoParaVarios(manager) : undefined;
+      await this.applyTicketPayment(date, -before, manager, turnoId, undefined, oldType === 'EGRESOS' ? 'GASTO' : 'INGRESO');
+      const box = await this.applyTicketPayment(date, after, manager, turnoId, undefined, updated.type === 'EGRESOS' ? 'GASTO' : 'INGRESO');
+      if (digitalAfter !== digitalBefore) await recordDigital(manager, digitalAfter - digitalBefore, 'TRANSFER', 'Corrección varios ' + id, undefined, turnoId);
       updated.boxList = { id: box.id } as BoxList;
       return repo.save(updated);
     });
@@ -538,8 +561,11 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
       if (!payment) throw new NotFoundException('Movimiento no encontrado.');
       const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
       if (payment.dateNow !== date) throw new BadRequestException('Los movimientos de días anteriores se corrigen con un movimiento nuevo.');
-      if (payment.paymentMethod !== 'TRANSFER') await this.applyTicketPayment(date, -this.computeBoxDelta(payment.type, payment.price), manager, undefined, undefined, payment.type === 'EGRESOS' ? 'GASTO' : 'INGRESO');
-      else if (payment.type !== 'EGRESOS') await recordDigital(manager, -payment.price, 'TRANSFER', 'Eliminación varios ' + id);
+      const efectivo = payment.paymentMethod !== 'TRANSFER';
+      const digital = !efectivo && payment.type !== 'EGRESOS';
+      const turnoId = efectivo || digital ? await this.turnoParaVarios(manager) : undefined;
+      if (efectivo) await this.applyTicketPayment(date, -this.computeBoxDelta(payment.type, payment.price), manager, turnoId, undefined, payment.type === 'EGRESOS' ? 'GASTO' : 'INGRESO');
+      else if (digital) await recordDigital(manager, -payment.price, 'TRANSFER', 'Eliminación varios ' + id, undefined, turnoId);
       await repo.remove(payment);
       return { message: 'Movimiento eliminado.' };
     });

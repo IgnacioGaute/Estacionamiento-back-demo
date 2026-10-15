@@ -441,6 +441,23 @@ test('abono digital: al eliminarlo registra la reversión en el turno', async ()
 });
 
 
+test('varios: un gasto cargado por quien no tiene turno queda en el turno abierto de la caja', async () => {
+  // El operador trabaja; el administrador (este contexto, sin turno propio) carga un gasto desde Caja.
+  const t = await openCash(second.id, 15000);
+  try {
+    const gasto = await boxes.createOtherPayment({ description: 'Gasto del admin', price: 1000, type: 'EGRESOS', paymentMethod: 'CASH' });
+    const filas = await ds.query(`SELECT amount, categoria FROM cash_entries WHERE "turnoId" = $1 AND categoria = 'GASTO'`, [t.id]);
+    assert.deepEqual(filas.map(f => [Number(f.amount), f.categoria]), [[-1000, 'GASTO']], 'el gasto queda en el turno del operador');
+    assert.equal((await context(second.id)).active.efectivoDisponible, 14000, 'y su arqueo lo descuenta');
+    await boxes.updateOtherPayment(gasto.id, { price: 500 });
+    assert.equal((await context(second.id)).active.efectivoDisponible, 14500);
+    await boxes.removeOtherPayment(gasto.id);
+    assert.equal((await context(second.id)).active.efectivoDisponible, 15000);
+  } finally {
+    await closeCash(second.id, 15000);
+  }
+});
+
 test('varios: elimina gastos sin inventar cobros y conserva las transferencias netas', async () => {
   const t = await openCash(user.id, 15000);
   const expense = await boxes.createOtherPayment({ description: 'Gasto eliminado', price: 1000, type: 'EGRESOS', paymentMethod: 'CASH' });
