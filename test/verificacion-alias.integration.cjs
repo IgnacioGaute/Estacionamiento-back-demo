@@ -293,19 +293,47 @@ test('pagada por otro medio mientras esperaba: no genera otro cobro ni otra sali
   assert.equal(movs[0].metodo, 'CASH');
 });
 
-test('si la tarifa subió mientras se esperaba, se registra el pago y queda el saldo, sin salida', async () => {
+test('si la transferencia llega después de pasar de escalón, se cobra lo pedido y la salida queda a la hora del pedido', async () => {
   const ctx = await empresaDePrueba();
   const r = await estadia(ctx, ctx.playaA, 30);
   pagosMp = [];
   const i = await iniciar(ctx, ctx.playaA, r.id);
   assert.equal(i.importe, 1000);
+  // Pasó una hora entre el pedido y la acreditación: ahora la estadía ya cuesta 2000.
+  const pedido = dayjs().subtract(60, 'minute');
+  await repo(Intento).update(i.id, { createdAt: pedido.toDate() });
   await envejecer(r, 90);
   pagosMp = [transferencia(ctx, 1000)];
   const v = await consultar(ctx, ctx.playaA, i.id);
   assert.equal(v.estado, 'CONFIRMADO');
+  assert.equal(v.salidaRegistrada, true);
+  const cerrada = await repo(Registration).findOneBy({ id: r.id });
+  assert.equal(Number(cerrada.price), 1000);
+  assert.equal(cerrada.departureTime.slice(0, 5), pedido.tz('America/Argentina/Buenos_Aires').format('HH:mm'));
+  const movs = await movimientosDe(r.id);
+  assert.deepEqual(movs.map((m) => [m.tipo, m.monto]), [['ANTICIPO', 1000]], 'no agrega otro cobro ni deja saldo');
+});
+
+test('anticipo por alias al entrar: queda pagado con su duración y la estadía sigue adentro', async () => {
+  const ctx = await empresaDePrueba();
+  const r = await estadia(ctx, ctx.playaA, 5);
+  pagosMp = [];
+  olvidarLecturas();
+  const i = await ctx.en(ctx.playaA, () => alias.iniciar(r.id, 'HORA', { anticipoMinutos: 120, anticipoEtiqueta: '2 horas' }));
+  assert.equal(i.importe, 2000, 'el importe lo calcula el servidor para la duración elegida');
+  assert.deepEqual(i.anticipo, { minutos: 120, etiqueta: '2 horas' });
+  // Con el anticipo esperando, el cobro de la salida no reutiliza ese intento.
+  olvidarLecturas();
+  await assert.rejects(ctx.en(ctx.playaA, () => alias.iniciar(r.id)), /anticipo por alias esperando/);
+  pagosMp = [transferencia(ctx, 2000)];
+  const v = await consultar(ctx, ctx.playaA, i.id);
+  assert.equal(v.estado, 'CONFIRMADO');
   assert.equal(v.salidaRegistrada, false);
-  assert.equal(v.saldoPendiente, 1000);
-  assert.equal((await repo(Registration).findOneBy({ id: r.id })).departureTime, null);
+  const guardada = await repo(Registration).findOneBy({ id: r.id });
+  assert.equal(guardada.departureTime, null, 'un anticipo nunca registra la salida');
+  assert.equal(guardada.expectedUptoMinutes, 120);
+  assert.equal(Number(guardada.advancePaidAmount), 2000);
+  assert.deepEqual((await movimientosDe(r.id)).map((m) => [m.tipo, m.metodo, m.monto]), [['ANTICIPO', 'TRANSFER', 2000]]);
 });
 
 test('abono por alias: cobrado al registrarlo queda pagado en la playa; cobrado al salir, además se retira', async () => {

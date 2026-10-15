@@ -24,6 +24,19 @@ export class CrearCobroDto {
   @IsBoolean()
   alIngresar?: boolean;
 
+  // Solo por hora: un anticipo al entrar por la duración elegida. El importe lo calcula el
+  // servidor y al acreditarse queda como anticipo, sin registrar la salida.
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(5256000)
+  anticipoMinutos?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  anticipoEtiqueta?: string;
+
   @ValidateIf((dto: CrearCobroDto) => dto.tipo === 'INQUILINO')
   @Type(() => Number)
   @IsInt({ message: 'Los importes van en pesos enteros, sin centavos.' })

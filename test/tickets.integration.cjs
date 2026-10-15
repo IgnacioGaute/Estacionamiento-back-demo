@@ -270,10 +270,21 @@ test('pago por QR de MercadoPago: si cubre el saldo registra la salida en la mis
   assert.equal(await totalBox(), caja, 'MercadoPago no suma al efectivo');
   await assert.rejects(tickets.registrarPagoExterno(pagada.id, 1000, 'MERCADOPAGO', 'MercadoPago QR-2', user.id), /ya está cerrado/);
 
-  // La tarifa subió mientras pagaba: queda el pago y el saldo, y la salida la registra el cajero.
+  // Se pagó menos de lo que cuesta: queda el pago y el saldo, y la salida la registra el cajero.
   const parcial = await openPlate();
   assert.deepEqual(await tickets.registrarPagoExterno(parcial.id, 600, 'MERCADOPAGO', 'MercadoPago QR-3', user.id), { cerrada: false, saldoPendiente: 400 });
   assert.equal((await ds.getRepository(Registration).findOneBy({ id: parcial.id })).departureTime, null);
+
+  // Anticipo por QR al entrar: el importe sale de la duración elegida y no registra la salida,
+  // aunque cubra lo que cuesta la estadía hasta ese momento.
+  const anticipada = await openPlate();
+  const { monto } = await tickets.montoAnticipo(anticipada.id, 60);
+  assert.ok(monto > 0);
+  assert.deepEqual(await tickets.registrarAnticipoExterno(anticipada.id, monto, 'MERCADOPAGO', 'MercadoPago QR-A', user.id, { minutos: 60, etiqueta: '1 hora' }), { cerrada: false, saldoPendiente: 0 });
+  const guardada = await ds.getRepository(Registration).findOneBy({ id: anticipada.id });
+  assert.equal(guardada.departureTime, null);
+  assert.equal(guardada.expectedUptoMinutes, 60);
+  await assert.rejects(tickets.montoAnticipo(anticipada.id, 60), /cubre esta duración/);
 });
 
 
@@ -587,8 +598,16 @@ test('escaneo: busca solo patentes exactas activas y conserva duplicados para el
   assert.deepEqual(found.daily, []);
   const legacy = await repo.save({ ...base, entryMode: 'BARCODE', vehiclePlateCustomer: 'leg-123', licensePlateNormalized: null });
   assert.deepEqual((await tickets.getPlateStatus('LEG123')).hourly.map(r => r.id), [legacy.id]);
-  assert.deepEqual(await tickets.getPlateStatus('NEW123'), { plate: 'NEW123', hourly: [], daily: [] });
+  assert.deepEqual(await tickets.getPlateStatus('NEW123'), { plate: 'NEW123', hourly: [], daily: [], similares: [] });
   await assert.rejects(tickets.getPlateStatus('---'), /patente no es válida/);
+  // Un carácter mal leído no encuentra nada exacto, pero ofrece los de adentro parecidos (y nunca
+  // uno con salida); con coincidencia exacta no se ofrecen.
+  const malLeida = await tickets.getPlateStatus('SO128AA');
+  assert.deepEqual(malLeida.hourly, []);
+  const parecidas = malLeida.similares.map(r => r.licensePlateNormalized);
+  assert.ok(parecidas.includes('SO123AA') && parecidas.includes('S0123AA'));
+  assert.ok(malLeida.similares.every(r => r.departureTime === null));
+  assert.deepEqual(found.similares, []);
 });
 
 test('escaneo: encuentra abonos activos con formatos históricos sin incluir retirados', async () => {

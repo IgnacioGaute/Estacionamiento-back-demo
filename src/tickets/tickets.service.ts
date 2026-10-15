@@ -1,5 +1,5 @@
 import { publishAutomaticNote } from 'src/notes/automatic-note';
-import { operatorShift, recordDigital, reverseDigital } from 'src/turnos/turno-book';
+import { externalPayment, operatorShift, recordDigital, reverseDigital } from 'src/turnos/turno-book';
 import { VehicleTypeEntity } from './entities/vehicle-type.entity';
 import { ListPagination, listResult } from 'src/utils/list-pagination';
 import { CreateVehicleTypeDto, UpdateVehicleTypeDto } from './dto/vehicle-type.dto';
@@ -38,7 +38,7 @@ import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate
 import { DiscountRegistrationDto } from './dto/discount-registration.dto';
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
-import { normalizePlate, toSearchKey } from './utils/license-plate.util';
+import { normalizePlate, patentesParecidas, toSearchKey } from './utils/license-plate.util';
 import { Brackets } from 'typeorm';
 import { resolveDayType, validateBracket } from './pricing/pricing';
 import { PricingSnapshot } from './pricing/pricing.types';
@@ -297,12 +297,12 @@ async removeTicketPrice(id: string) {
     return manager.getRepository(TicketRegistration).count({ where: { departureTime: IsNull() } });
   }
 
-  private async priceRegistration(registration: TicketRegistration, manager?: EntityManager) {
+  private async priceRegistration(registration: TicketRegistration, manager?: EntityManager, salida: Date = new Date()) {
     const vehicle = registration.vehicleType ?? registration.ticket?.vehicleType;
     if (!vehicle) throw new BadRequestException('El registro no tiene tipo de vehículo.');
     const snapshot = registration.pricingSnapshot ?? await this.capturePricing(vehicle, manager, false);
     const entry = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', 'America/Argentina/Buenos_Aires');
-    const calculated = calculateStayPrice(snapshot, vehicle, entry.toDate(), new Date());
+    const calculated = calculateStayPrice(snapshot, vehicle, entry.toDate(), salida);
     const { total } = await (manager ?? this.dataSource.manager).getRepository(Movimiento).createQueryBuilder('m')
       .select('COALESCE(SUM(m.monto), 0)', 'total')
       .where("m.ticketRegistrationId = :id AND m.tipo = 'DESCUENTO'", { id: registration.id }).getRawOne();
@@ -772,8 +772,7 @@ async addAdvancePayment(id: string, dto: AdvancePaymentTicketRegistrationDto, us
  * Registra en la estadía un pago que se cobró por fuera del mostrador (hoy, el QR de MercadoPago
  * ya acreditado). Igual que una transferencia al alias: entra como un pago más y, si con eso no
  * queda saldo, la salida se registra en la misma transacción, así el cajero no tiene que tocar
- * nada más. Si la tarifa subió mientras el cliente pagaba, queda el pago y el saldo a cobrar, y
- * cierra el cajero: nunca se registra una salida con plata de menos.
+ * nada más. La estadía se cobra hasta la hora en que el cajero pidió el pago (ver acreditarPagoEn).
  *
  * `referencia` guarda el id del pago en MercadoPago: es el rastro que permite reconciliar una
  * fila del libro con un pago real.
@@ -828,7 +827,9 @@ async removePriceBracket(id: string) {
   async findAllRegistrations(pagination?: ListPagination, operation = false) {
     try{
         const query = this.ticketRegistrationRepository.createQueryBuilder('r').leftJoinAndSelect('r.ticket', 'ticket').leftJoinAndSelect('r.boxList', 'box');
-        if (operation) query.where('r.departureTime IS NULL OR r.id IN (SELECT id FROM ticket_registrations ORDER BY "updatedAt" DESC, id DESC LIMIT 1)');
+        // Además de los que están adentro, los últimos 4 que cambiaron: son los que muestra
+        // «Últimos movimientos» al abrir la pantalla, salidas incluidas.
+        if (operation) query.where('r.departureTime IS NULL OR r.id IN (SELECT id FROM ticket_registrations ORDER BY "updatedAt" DESC, id DESC LIMIT 4)');
         query.orderBy('r.createdAt', 'DESC').addOrderBy('r.id', 'DESC');
         if (!pagination) return query.getMany();
         const [data, total] = await query.skip((pagination.page - 1) * pagination.limit).take(pagination.limit).getManyAndCount();
@@ -1068,7 +1069,14 @@ async removePriceBracket(id: string) {
       .where('COALESCE(r.retired, false) = false')
       .andWhere("regexp_replace(UPPER(COALESCE(r.vehiclePlateCustomer, '')), '[^A-Z0-9]', '', 'g') = :plate", { plate })
       .orderBy('r.createdAt', 'ASC').getMany();
-    return { plate, hourly, daily };
+    // Sin coincidencia exacta, los de adentro con una patente a un carácter de distancia: el auto
+    // puede ser uno de ellos mal leído al entrar o al salir. Las pantallas los ofrecen antes de
+    // registrar una entrada nueva.
+    const similares = hourly.length || daily.length ? [] : (await this.ticketRegistrationRepository.find({ where: { departureTime: IsNull() }, relations: ['ticket'] }))
+      .filter((r) => !!r.licensePlateNormalized && patentesParecidas(plate, r.licensePlateNormalized))
+      .sort((a, b) => `${a.entryDay} ${a.entryTime}`.localeCompare(`${b.entryDay} ${b.entryTime}`))
+      .slice(0, 5);
+    return { plate, hourly, daily, similares };
   }
 
   async searchActiveRegistrations(q: string) {
@@ -1119,9 +1127,12 @@ async removePriceBracket(id: string) {
       pricingDayType: preview.ticketDayType, pricingDayTypeBasis: preview.pricingDayTypeBasis, tariffSnapshotUsed: preview.tariffSnapshotUsed };
   }
 
+  // Un importe negativo acá es siempre plata de un anticipo que se devuelve en efectivo (sobró al
+  // cerrar, o se redujo el anticipo): va con su propia categoría para que el resumen del turno la
+  // descuente de lo cobrado en efectivo y no la muestre como un retiro de caja.
   private async linkToTodaysBoxList(registration: TicketRegistration, amount: number, manager: EntityManager, usuarioId?: string) {
     const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
-    const box = await this.boxListsService.applyTicketPayment(date, amount, manager, undefined, usuarioId);
+    const box = await this.boxListsService.applyTicketPayment(date, amount, manager, undefined, usuarioId, amount < 0 ? 'DEVOLUCION_ANTICIPO' : 'COBRO');
     registration.dateNow = date;
     registration.boxList = { id: box.id } as BoxList;
   }
@@ -1225,8 +1236,7 @@ async removePriceBracket(id: string) {
    * Una transferencia al alias que el sistema asoció a esta estadía (VerificacionAliasService):
    * se registra como un pago más y, si con eso no queda saldo, se registra la salida, todo dentro
    * de la transacción del que llama, la misma en la que la transferencia queda marcada como usada.
-   * Si la estadía ya se había cerrado por otro lado no registra nada (`yaCerrada`). Si la tarifa
-   * subió mientras se esperaba, queda el pago y el saldo a cobrar, sin salida.
+   * Si la estadía ya se había cerrado por otro lado no registra nada (`yaCerrada`).
    */
   async acreditarTransferenciaEn(manager: EntityManager, id: string, monto: number, referencia: string, usuarioId: string) {
     return this.acreditarPagoEn(manager, id, monto, 'TRANSFER', referencia, usuarioId);
@@ -1235,7 +1245,13 @@ async removePriceBracket(id: string) {
   // El pago entra como ANTICIPO y la salida, si corresponde, como un cierre sin cobro: el libro
   // queda igual que si el cajero hubiera cobrado a mano. Pasa por linkToTodaysBoxList aunque no
   // sea efectivo —con importe 0— porque es lo que hace visible el pago en la caja y la planilla.
+  //
+  // El precio es el de la hora en que el cajero pidió el pago (`externalPayment.at`), no el de la
+  // acreditación: el importe pedido salió de ese momento y el auto se va al pagar. Calcularlo al
+  // acreditar dejaba abiertas, con saldo y sin salida, las estadías cuya transferencia llegaba
+  // después de pasar de escalón, cuando el cliente ya no estaba para cobrarle la diferencia.
   private async acreditarPagoEn(manager: EntityManager, id: string, monto: number, metodo: MovimientoMetodo, referencia: string, usuarioId: string) {
+    const pedidoEn = externalPayment.getStore()?.at;
     const repository = manager.getRepository(TicketRegistration);
     const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
     if (!registration) throw new NotFoundException('Registro no encontrado.');
@@ -1246,13 +1262,57 @@ async removePriceBracket(id: string) {
     await repository.save(registration);
     const withTicket = await repository.findOne({ where: { id }, relations: ['ticket'] });
     registration.ticket = withTicket!.ticket;
-    const preview = await this.priceRegistration(registration, manager);
+    const preview = await this.priceRegistration(registration, manager, pedidoEn);
     const collected = await this.collectedAmount(registration, manager);
-    // Falta plata (la tarifa subió) o sobra (hay que decidir cómo devolver): lo resuelve el cajero.
+    // Falta plata (se pagó menos de lo pedido) o sobra (hay que decidir cómo devolver): lo resuelve el cajero.
     if (collected !== preview.price)
       return { yaCerrada: false as const, cerrada: false, saldoPendiente: Math.max(0, preview.price - collected), registration: withTicket! };
-    const saved = await this.cerrarEnTransaccion(manager, id, { closeType: 'NO_CHARGE', expectedPrice: preview.price, expectedCollected: collected }, usuarioId);
+    const saved = await this.cerrarEnTransaccion(manager, id, { closeType: 'NO_CHARGE', expectedPrice: preview.price, expectedCollected: collected }, usuarioId, pedidoEn);
     return { yaCerrada: false as const, cerrada: true, saldoPendiente: 0, registration: saved };
+  }
+
+  /**
+   * Lo que falta cobrar para dejar pagada una duración planificada, para pedirlo por QR o alias al
+   * entrar. Lo calcula el servidor (como el resto de los cobros externos): el mostrador solo elige
+   * la duración.
+   */
+  async montoAnticipo(registrationId: string, minutos: number) {
+    const registration = await this.ticketRegistrationRepository.findOne({ where: { id: registrationId }, relations: ['ticket'] });
+    if (!registration) throw new NotFoundException('Registro no encontrado.');
+    if (registration.departureTime) throw new BadRequestException('El ticket ya está cerrado.');
+    const planned = await this.plannedPriceForRegistration(registration, minutos);
+    const monto = planned.price - await this.collectedAmount(registration);
+    if (monto <= 0) throw new BadRequestException('Lo ya cobrado cubre esta duración: no hay anticipo para cobrar.');
+    return { monto, patente: registration.licensePlateOriginal || 'Sin patente' };
+  }
+
+  /**
+   * Un anticipo pedido por QR o alias que se acreditó: entra como ANTICIPO, guarda la duración
+   * planificada y nunca registra la salida (el auto recién entra; si se queda más, al salir se
+   * cobra la diferencia). Igual que el anticipo en efectivo, pasa por linkToTodaysBoxList con
+   * importe 0 para quedar visible en la caja y la planilla.
+   */
+  async acreditarAnticipoEn(manager: EntityManager, id: string, monto: number, metodo: MovimientoMetodo, referencia: string, usuarioId: string, anticipo: { minutos: number; etiqueta?: string | null }) {
+    const repository = manager.getRepository(TicketRegistration);
+    const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+    if (!registration) throw new NotFoundException('Registro no encontrado.');
+    if (registration.departureTime) return { yaCerrada: true as const };
+    await this.movimientosService.create({ ticketRegistrationId: id, monto, metodo, tipo: 'ANTICIPO', referencia, usuarioId }, manager);
+    await this.linkToTodaysBoxList(registration, metodo === 'CASH' ? monto : 0, manager, usuarioId);
+    registration.advancePaidAmount = await this.collectedAmount(registration, manager);
+    registration.expectedUptoMinutes = anticipo.minutos;
+    registration.expectedBracketLabel = anticipo.etiqueta ?? null;
+    await repository.save(registration);
+    const saved = await repository.findOne({ where: { id }, relations: ['ticket'] });
+    return { yaCerrada: false as const, cerrada: false, saldoPendiente: 0, registration: saved! };
+  }
+
+  /** El anticipo por QR ya acreditado por MercadoPago (ver acreditarAnticipoEn). */
+  async registrarAnticipoExterno(registrationId: string, monto: number, metodo: MovimientoMetodo, referencia: string, usuarioId: string, anticipo: { minutos: number; etiqueta?: string | null }) {
+    const r = await this.dataSource.transaction(manager => this.acreditarAnticipoEn(manager, registrationId, monto, metodo, referencia, usuarioId, anticipo));
+    if (r.yaCerrada) throw new BadRequestException('El ticket ya está cerrado.');
+    this.ticketGateway.emitNewRegistration(r.registration);
+    return { cerrada: false, saldoPendiente: 0 };
   }
 
   /**
@@ -1348,14 +1408,15 @@ async removePriceBracket(id: string) {
     this.ticketGateway.emitNewRegistration(registration);
   }
 
-  private async cerrarEnTransaccion(manager: EntityManager, id: string, dto: CloseRegistrationDto, usuarioId: string) {
+  // `salidaEn`: solo para un pago externo, la hora en que se pidió el pago; sin él, ahora.
+  private async cerrarEnTransaccion(manager: EntityManager, id: string, dto: CloseRegistrationDto, usuarioId: string, salidaEn?: Date) {
       const repository = manager.getRepository(TicketRegistration);
       const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!registration) throw new NotFoundException('Registro no encontrado.');
       if (registration.departureTime) return registration;
       const withTicket = await repository.findOne({ where: { id }, relations: ['ticket'] });
       registration.ticket = withTicket!.ticket;
-      const preview = await this.priceRegistration(registration, manager);
+      const preview = await this.priceRegistration(registration, manager, salidaEn);
       const collected = await this.collectedAmount(registration, manager);
       if (dto.expectedPrice !== preview.price || dto.expectedCollected !== collected) {
         throw new ConflictException({ code: 'TICKET_PRICE_CHANGED', message: 'El importe cambió. Revisá el resumen actualizado antes de confirmar.' });
@@ -1379,7 +1440,7 @@ async removePriceBracket(id: string) {
         await this.movimientosService.create({ ticketRegistrationId: id, monto: -refund, metodo: dto.refundMetodo, tipo: 'AJUSTE', motivo: 'Devolución de anticipo excedente al cerrar la estadía', usuarioId }, manager);
         if (dto.refundMetodo === 'CASH') cashDelta -= refund;
       }
-      const now = dayjs().tz('America/Argentina/Buenos_Aires');
+      const now = dayjs(salidaEn ?? new Date()).tz('America/Argentina/Buenos_Aires');
       registration.entryMode ??= registration.ticket ? 'BARCODE' : 'PLATE';
       registration.vehicleType ??= registration.ticket?.vehicleType as any;
       registration.codeBarTicket = registration.ticket?.codeBar ?? registration.codeBarTicket;

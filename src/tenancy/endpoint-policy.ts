@@ -68,7 +68,8 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     'unread',
     'markRead',
   ],
-  TurnosController: ['open', 'close', 'getCashContext', 'getMyOpenTurno'],
+  // estadiasAbiertas: el operador repasa, al cerrar su turno, las entradas suyas que siguen abiertas.
+  TurnosController: ['open', 'close', 'getCashContext', 'getMyOpenTurno', 'estadiasAbiertas'],
   TenantContextController: ['context'],
   // El operador ve la lista (sin los totales de la playa), lo que debe y lo que pagó cada
   // inquilino, le cobra y le entrega el recibo. El estado de cuenta con sus movimientos, saldo
@@ -141,6 +142,6 @@ export const SUSPENDED_ENDPOINTS: Record<string, readonly string[]> = {
     'ampliarBusqueda',
     'cancelarCobro',
   ],
-  TurnosController:['open', 'close', 'getCashContext', 'getMyOpenTurno'],
+  TurnosController:['open', 'close', 'getCashContext', 'getMyOpenTurno', 'estadiasAbiertas'],
   BoxListsController: ['findOne', 'findBoxByDate'],
 };

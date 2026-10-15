@@ -282,6 +282,46 @@ test('medianoche: corta una vez, conserva caja y jornada y no retira sueldo', as
   await assert.rejects(ds.transaction(m => book().offlineShift(m, t.id, user.id, opened)), /jornada ya terminó/);
 });
 
+test('resumen: lo devuelto en efectivo de un anticipo se descuenta de lo cobrado, no es un retiro', async () => {
+  await tickets.updateSchedule({ sueldoAutomatico: false });
+  const t = await openCash(user.id, 15000);
+  const a = await openPlate();
+  await tickets.addAdvancePayment(a.id, { advancePaidAmount: 3000, metodo: 'CASH' }, user.id);
+  // Cuesta 1000: sobran 2000 del anticipo y se devuelven en efectivo al salir.
+  await tickets.closeRegistrationByPlate(a.id, { closeType: 'NO_CHARGE', expectedPrice: 1000, expectedCollected: 3000, refundMetodo: 'CASH' }, user.id);
+  // Se deja el mismo fondo para el siguiente: lo único retirado es la recaudación neta del turno.
+  const closed = await shifts.close(t.id, user.id, { efectivoContado: 16000, efectivoEsperado: 16000, efectivoParaSiguiente: 15000 });
+  const r = await book().shiftSummary(ds.manager, closed);
+  assert.equal(r.efectivoCobrado, 1000);
+  assert.equal(r.devolucionesEfectivo, 0);
+  assert.equal(r.efectivoNeto, 1000);
+  assert.equal(r.totalRetirado, 1000, 'la devolución no figura como retiro');
+  assert.equal(t.fondoInicial + r.efectivoCobrado, r.totalRetirado + closed.efectivoParaSiguiente);
+});
+
+test('al cerrar el turno se repasan las entradas que registró su operador y siguen abiertas', async () => {
+  await tickets.updateSchedule({ sueldoAutomatico: false });
+  const anterior = await openPlate(); // Entró antes de abrir el turno: no es de este turno.
+  const t = await openCash(user.id, 15000);
+  // Como en el mostrador: la entrada guarda quién la registró.
+  const abierta = await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'TURNO' + (++counter) }, user.id);
+  const cerrada = await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'TURNO' + (++counter) }, user.id);
+  try {
+    await tickets.closeRegistrationByPlate(cerrada.id, await payload(cerrada.id), user.id);
+    const lista = await shifts.estadiasAbiertas(t.id, user.id, 'ADMIN');
+    const ids = lista.map(e => e.id);    assert.ok(ids.includes(abierta.id), 'la que sigue abierta aparece');
+    assert.ok(!ids.includes(cerrada.id), 'la que ya salió no');
+    assert.ok(!ids.includes(anterior.id), 'la de antes de abrir el turno no');
+    await assert.rejects(shifts.estadiasAbiertas(t.id, second.id, 'USER'), /responsable del turno/);
+  } finally {
+    // Se deja la caja como la esperan las pruebas siguientes: sin estadías ni turno abiertos.
+    await tickets.closeRegistrationByPlate(abierta.id, await payload(abierta.id), user.id);
+    await tickets.closeRegistrationByPlate(anterior.id, await payload(anterior.id), user.id);
+    const efectivo = (await shifts.getCashContext(user.id)).active.efectivoDisponible;
+    await shifts.close(t.id, user.id, { efectivoContado: efectivo, efectivoEsperado: efectivo, efectivoParaSiguiente: 15000 });
+  }
+});
+
 test('resumen: digitales sin efectivo, salida sin cobro y ocupación al cerrar', async () => {
   await tickets.updateSchedule({ sueldoAutomatico: false });
   const t = await openCash(user.id, 15000);

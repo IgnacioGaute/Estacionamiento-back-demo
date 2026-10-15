@@ -76,7 +76,8 @@ export class CobroTransferencia {
   // Inquilino: cargos y nota. Abono: `alIngresar` si se cobra al registrarlo (queda pagado, no
   // retirado).
   @Column('jsonb', { nullable: true })
-  detalle: { receiptIds?: string[]; nota?: string | null; alIngresar?: boolean } | null;
+  // `anticipo`: por hora, se cobra al entrar una duración planificada; no registra la salida.
+  detalle: { receiptIds?: string[]; nota?: string | null; alIngresar?: boolean; anticipo?: { minutos: number; etiqueta?: string | null } } | null;
 
   // La cuenta receptora: la de la empresa al momento de abrir el intento.
   @Column('varchar', { length: 64 })

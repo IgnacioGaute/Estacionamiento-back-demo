@@ -35,7 +35,8 @@ export class CobroMercadoPago {
   // igual que si se hubiera cobrado en el mostrador. Abonos: `alIngresar` si se cobra al
   // registrarlo, que lo deja pagado pero no retirado (al salir, sí se retira).
   @Column('jsonb', { nullable: true })
-  detalle: { receiptIds?: string[]; nota?: string | null; alIngresar?: boolean } | null;
+  // `anticipo`: por hora, se cobra al entrar una duración planificada; no registra la salida.
+  detalle: { receiptIds?: string[]; nota?: string | null; alIngresar?: boolean; anticipo?: { minutos: number; etiqueta?: string | null } } | null;
 
   // Congelado al generar el QR. La tarifa sigue corriendo mientras el cliente paga, así que el
   // importe que se cobra es el que se le mostró, y la diferencia —si la hay— queda como saldo.

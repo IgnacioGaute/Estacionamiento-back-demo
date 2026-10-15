@@ -222,6 +222,33 @@ export class TurnosService {
     });
   }
 
+  /**
+   * Las estadías por hora que el responsable del turno registró desde que lo abrió y siguen
+   * abiertas. Al cerrar el turno se repasan: una entrada que nadie cerró (el auto se fue sin
+   * registrar la salida, o se cargó como entrada un auto que se estaba yendo) quedaba abierta para
+   * siempre sin que nadie lo notara. Se identifica por el nombre que la estadía guarda al entrar,
+   * el mismo que arma operatorName en TicketsService.
+   */
+  async estadiasAbiertas(id: string, usuarioId: string, rol?: UserRole) {
+    const turno = await this.turnoRepository.findOne({ where: { id }, relations: ['usuarioApertura'] });
+    if (!turno) throw new NotFoundException('Turno no encontrado.');
+    if (turno.usuarioApertura?.id !== usuarioId && rol !== 'ADMIN')
+      throw new ForbiddenException('Solo el responsable del turno o un administrador pueden revisarlo.');
+    const u = turno.usuarioApertura;
+    const nombre = u ? (`${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || u.username) : null;
+    if (!nombre) return [];
+    const filas = await this.dataSource.query(
+      `SELECT id, "licensePlateOriginal" AS patente, "vehicleType" AS "vehicleType", "entryDay" AS "entryDay",
+              "entryTime" AS "entryTime", COALESCE("advancePaidAmount", 0) AS anticipo
+         FROM ticket_registrations
+        WHERE "departureTime" IS NULL AND "departureDay" IS NULL AND "entryOperatorName" = $1
+          AND ("entryDay" + "entryTime") >= date_trunc('minute', $2::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires')
+        ORDER BY "entryDay", "entryTime"`,
+      [nombre, turno.fechaApertura],
+    );
+    return filas.map((f: { anticipo: string | number }) => ({ ...f, anticipo: Number(f.anticipo) }));
+  }
+
   async close(id: string, usuarioId: string, dto: CloseTurnoDto, rol?: UserRole): Promise<Turno> {
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');

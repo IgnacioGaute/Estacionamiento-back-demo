@@ -263,9 +263,11 @@ export class VerificacionAliasService {
    * Abre la espera de una transferencia para una estadía. No registra cobro ni salida. Si la
    * estadía ya tenía un intento abierto, devuelve ese (reabrir la pantalla no duplica nada).
    */
-  async iniciar(registrationId: string, tipo: 'HORA' | 'ABONO' | 'INQUILINO' = 'HORA', datos?: { monto?: number; receiptIds?: string[]; nota?: string; alIngresar?: boolean }) {
+  async iniciar(registrationId: string, tipo: 'HORA' | 'ABONO' | 'INQUILINO' = 'HORA', datos?: { monto?: number; receiptIds?: string[]; nota?: string; alIngresar?: boolean; anticipoMinutos?: number; anticipoEtiqueta?: string }) {
     const { empresaId, playaId, userId } = this.scope();
     const cuenta = await this.exigirHabilitacion(empresaId);
+    // Por hora puede ser el cobro de la salida o un anticipo al entrar (una duración planificada).
+    const anticipo = tipo === 'HORA' && datos?.anticipoMinutos ? { minutos: datos.anticipoMinutos, etiqueta: datos.anticipoEtiqueta?.trim() || null } : null;
     if (tipo === 'INQUILINO') {
       if (!datos?.monto || !Number.isInteger(datos.monto) || datos.monto < 1 || datos.monto > 1_000_000_000) throw new BadRequestException('Ingresá el importe a cobrar, en pesos enteros.');
       await this.cuentasCorriente.validarCobroQr(registrationId);
@@ -279,12 +281,15 @@ export class VerificacionAliasService {
       if (abierto.playaId !== playaId)
         throw new NotFoundException('Registro no encontrado.');
       if (tipo === 'INQUILINO' && abierto.importe !== datos?.monto) throw new ConflictException('Este inquilino ya tiene un cobro por alias esperando otro importe. Cancelalo antes de empezar uno nuevo.');
+      if (!!abierto.detalle?.anticipo !== !!anticipo) throw new ConflictException(abierto.detalle?.anticipo ? 'Esta estadía tiene un anticipo por alias esperando la transferencia. Cancelalo antes de cobrar la salida.' : 'Esta estadía tiene el cobro de la salida por alias esperando la transferencia. Cancelalo antes de cobrar un anticipo.');
       return this.consultar(abierto.id);
     }
     // El resumen de cierre lee la estadía con el alcance de la playa: la de otra playa no existe.
     const resumen = tipo === 'INQUILINO' ? { saldoACobrar: datos!.monto! } : tipo === 'ABONO'
       ? await this.resumenAbono(registrationId)
-      : await this.tickets.getCloseSummary(registrationId);
+      : anticipo
+        ? { saldoACobrar: (await this.tickets.montoAnticipo(registrationId, anticipo.minutos)).monto }
+        : await this.tickets.getCloseSummary(registrationId);
     if (resumen.saldoACobrar <= 0)
       throw new BadRequestException('No queda saldo por cobrar.');
     const ahora = Date.now();
@@ -295,7 +300,7 @@ export class VerificacionAliasService {
           playaId,
           registrationId,
           tipo,
-          detalle: tipo === 'INQUILINO' ? { receiptIds: datos?.receiptIds ?? [], nota: datos?.nota?.trim() || null } : tipo === 'ABONO' && datos?.alIngresar ? { alIngresar: true } : null,
+          detalle: tipo === 'INQUILINO' ? { receiptIds: datos?.receiptIds ?? [], nota: datos?.nota?.trim() || null } : tipo === 'ABONO' && datos?.alIngresar ? { alIngresar: true } : anticipo ? { anticipo } : null,
           mpUserId: cuenta.mpUserId,
           importe: resumen.saldoACobrar,
           moneda: 'ARS',
@@ -618,10 +623,15 @@ export class VerificacionAliasService {
         );
 
       // Un abono cobrado al registrarlo queda pagado sin retirarse: el vehículo recién entra.
+      // Un anticipo al entrar queda como pago de la estadía, sin registrar la salida.
+      const anticipo = intento.detalle?.anticipo;
       const acreditar = intento.tipo === 'ABONO'
         ? (mm: import('typeorm').EntityManager, id: string, importe: number, ref: string, usuario: string) =>
             this.tickets.acreditarTransferenciaAbonoEn(mm, id, importe, ref, usuario, !intento.detalle?.alIngresar)
-        : this.tickets.acreditarTransferenciaEn.bind(this.tickets);
+        : anticipo
+          ? (mm: import('typeorm').EntityManager, id: string, importe: number, ref: string, usuario: string) =>
+              this.tickets.acreditarAnticipoEn(mm, id, importe, 'TRANSFER', ref, usuario, anticipo)
+          : this.tickets.acreditarTransferenciaEn.bind(this.tickets);
       const r = await externalPayment.run({ userId: intento.creadoPor, at: intento.createdAt, medio: 'ALIAS' }, async () => intento.tipo === 'INQUILINO' ? await this.acreditarInquilino(m, intento, usuarioId) : await acreditar(
         m,
         intento.registrationId,
@@ -953,6 +963,7 @@ export class VerificacionAliasService {
       modo: intento.modo,
       salidaRegistrada: intento.salidaRegistrada,
       saldoPendiente: intento.saldoPendiente,
+      anticipo: intento.detalle?.anticipo ?? null,
       transferencia: usada
         ? {
             operacionId: usada.operacionId,

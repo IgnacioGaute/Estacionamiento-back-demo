@@ -30,6 +30,19 @@ export class IniciarCobroAliasDto {
   @IsBoolean()
   alIngresar?: boolean;
 
+  // Solo por hora: un anticipo al entrar por la duración elegida. El importe lo calcula el
+  // servidor y al confirmarse queda como anticipo, sin registrar la salida.
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(5256000)
+  anticipoMinutos?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  anticipoEtiqueta?: string;
+
   // Un inquilino puede pagar una parte o dejar saldo a favor: el mostrador decide el importe.
   @ValidateIf((dto: IniciarCobroAliasDto) => dto.tipo === 'INQUILINO')
   @IsInt()

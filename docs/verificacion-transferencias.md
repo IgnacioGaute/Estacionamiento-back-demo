@@ -213,8 +213,9 @@ operación. El operador pregunta quién transfirió, elige y toca «Asignar tran
 simulado): una transferencia y un cobro → una sola confirmación con cobro y salida; dos transferencias → revisión y
 la otra nunca se asocia sola; una transferencia y dos autos en distintas playas → revisión y dos cajas simultáneas,
 solo una la usa; tarjeta, suscripción, egreso y QR del sistema excluidos; error de MercadoPago → sigue esperando;
-cancelación y pago tardío → revisión; pagada por otro medio; tarifa que subió → pago con saldo pendiente, sin
-salida; reabrir recupera el mismo intento; sin adicional no se ofrece ni confirma; otra playa no toca el intento.
+cancelación y pago tardío → revisión; pagada por otro medio; transferencia que llega después de pasar de
+escalón → se cobra lo pedido y la salida queda a la hora del pedido (antes quedaba con saldo y sin salida, y esas
+estadías se acumulaban abiertas); reabrir recupera el mismo intento; sin adicional no se ofrece ni confirma; otra playa no toca el intento.
 
 ## 7. Limitaciones conocidas
 

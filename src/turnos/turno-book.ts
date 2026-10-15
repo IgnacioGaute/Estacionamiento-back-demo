@@ -131,8 +131,11 @@ export async function reverseDigital(m: EntityManager, amount: number, method: s
 export async function shiftSummary(m: EntityManager, turno: Turno) {
   // No inventar detalles de retiros o vehículos que el esquema anterior no registraba.
   if (!turno.fechaOperativa) return null;
+  // Lo devuelto en efectivo de un anticipo se descuenta de lo cobrado: es el mismo cobro que
+  // terminó siendo menor, no un retiro. Las demás devoluciones siguen aparte.
   const [cash] = await m.query(`SELECT COALESCE(SUM(amount),0) AS neto,
-    COALESCE(SUM(GREATEST(amount,0)) FILTER (WHERE categoria = 'COBRO'),0) AS cobros,
+    COALESCE(SUM(GREATEST(amount,0)) FILTER (WHERE categoria = 'COBRO'),0)
+      + COALESCE(SUM(amount) FILTER (WHERE categoria = 'DEVOLUCION_ANTICIPO'),0) AS cobros,
     COALESCE(-SUM(amount) FILTER (WHERE categoria = 'GASTO'),0) AS gastos,
     COALESCE(SUM(amount) FILTER (WHERE categoria = 'INGRESO'),0) AS ingresos,
     COALESCE(-SUM(amount) FILTER (WHERE categoria = 'COBRO' AND amount < 0),0) AS devoluciones

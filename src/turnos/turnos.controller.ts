@@ -30,6 +30,12 @@ export class TurnosController {
     return this.turnosService.close(id, requireUserId(req), dto, req.user?.role);
   }
 
+  // Las estadías que el operador registró en este turno y siguen abiertas: se repasan al cerrarlo.
+  @Get(':id/estadias-abiertas')
+  estadiasAbiertas(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.turnosService.estadiasAbiertas(id, requireUserId(req), req.user?.role);
+  }
+
   @Get('configuracion')
   getConfiguration() { return this.turnosService.getConfiguration(); }
 

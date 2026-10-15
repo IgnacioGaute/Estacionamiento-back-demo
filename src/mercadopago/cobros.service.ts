@@ -60,15 +60,18 @@ export class CobrosMercadoPagoService {
     registrationId: string,
     tipo: 'HORA' | 'ABONO' | 'INQUILINO',
     usuarioId: string,
-    inquilino?: { monto?: number; receiptIds?: string[]; nota?: string; alIngresar?: boolean },
+    inquilino?: { monto?: number; receiptIds?: string[]; nota?: string; alIngresar?: boolean; anticipo?: { minutos: number; etiqueta?: string | null } },
   ) {
     const { empresaId, playaId } = this.scope();
+    const anticipo = tipo === 'HORA' ? inquilino?.anticipo : undefined;
     const { monto, patente } =
       tipo === 'INQUILINO'
         ? await this.datosDeInquilino(registrationId, inquilino?.monto)
         : tipo === 'ABONO'
           ? await this.datosDeAbono(registrationId)
-          : await this.datosDeEstadia(registrationId);
+          : anticipo
+            ? await this.tickets.montoAnticipo(registrationId, anticipo.minutos)
+            : await this.datosDeEstadia(registrationId);
 
     // Un solo QR vivo por estadía: si había otro pendiente se cancela, para que no queden dos
     // códigos dando vueltas por el mismo auto. Una orden QR se cancela también en MercadoPago.
@@ -102,7 +105,9 @@ export class CobrosMercadoPagoService {
               }
             : tipo === 'ABONO' && inquilino?.alIngresar
               ? { alIngresar: true }
-              : null,
+              : anticipo
+                ? { anticipo: { minutos: anticipo.minutos, etiqueta: anticipo.etiqueta ?? null } }
+                : null,
         estado: 'PENDIENTE',
         preferenceId: '',
         initPoint: '',
@@ -301,6 +306,16 @@ export class CobrosMercadoPagoService {
             : { paid: true, paymentMetodo: 'MERCADOPAGO', retired: true },
           cobro.creadoPor ?? undefined,
         );
+      } else if (cobro.detalle?.anticipo) {
+        // Anticipo al entrar: el auto recién llega, se registra el pago y nunca la salida.
+        await this.tickets.registrarAnticipoExterno(
+          cobro.registrationId,
+          pago.monto || cobro.monto,
+          'MERCADOPAGO',
+          `MercadoPago ${pago.id}`,
+          cobro.creadoPor ?? '',
+          cobro.detalle.anticipo,
+        );
       } else {
         // Se registra lo que MercadoPago dice que entró, no lo que habíamos pedido: si por lo que
         // fuera difieren, el libro tiene que reflejar la plata real.
@@ -349,6 +364,7 @@ export class CobrosMercadoPagoService {
       interoperable: !!cobro.qrData,
       expiraEl: cobro.expiraEl,
       acreditadoEl: cobro.acreditadoEl,
+      anticipo: cobro.detalle?.anticipo ?? null,
       salidaRegistrada: await this.salidaRegistrada(cobro),
       ...(cobro.tipo === 'INQUILINO' && cobro.estado === 'ACREDITADO'
         ? { recibo: await this.cuentas.reciboDeCobro(cobro.id) }

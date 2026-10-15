@@ -39,6 +39,7 @@ export class CobrosMercadoPagoController {
       receiptIds: dto.receiptIds,
       nota: dto.nota,
       alIngresar: dto.alIngresar,
+      anticipo: dto.anticipoMinutos ? { minutos: dto.anticipoMinutos, etiqueta: dto.anticipoEtiqueta ?? null } : undefined,
     });
   }
 
