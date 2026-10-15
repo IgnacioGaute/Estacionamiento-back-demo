@@ -1121,10 +1121,41 @@ async removePriceBracket(id: string) {
     if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
     const preview = await this.priceRegistration(registration, manager);
     const totalCollectedSoFar = await this.collectedAmount(registration, manager);
+    const saldoACobrar = Math.max(0, preview.price - totalCollectedSoFar);
     return { registration, elapsedMinutes: preview.elapsedMinutes, previewBracket: preview,
-      totalCollectedSoFar, saldoACobrar: Math.max(0, preview.price - totalCollectedSoFar),
+      totalCollectedSoFar, saldoACobrar,
       cambioARetornar: Math.max(0, totalCollectedSoFar - preview.price),
+      tarifaAnterior: await this.tarifaAnterior(registration, preview, saldoACobrar, manager),
       pricingDayType: preview.ticketDayType, pricingDayTypeBasis: preview.pricingDayTypeBasis, tariffSnapshotUsed: preview.tariffSnapshotUsed };
+  }
+
+  /**
+   * El escalón anterior al que corresponde ahora y el descuento que deja la estadía en ese precio.
+   * Es para cuando el cliente pagó tarde (cerró la espera del alias o del QR, tardó en transferir)
+   * y la estadía pasó de escalón mientras tanto: el cajero cobra lo que le había dicho con un
+   * descuento justificado, sin hacer la cuenta a mano. Se busca con el mismo cálculo del cobro el
+   * último minuto en que la estadía costaba menos. null si ya está en el primer escalón o si no
+   * queda saldo que descontar.
+   */
+  private async tarifaAnterior(registration: TicketRegistration, preview: Awaited<ReturnType<TicketsService['priceRegistration']>>, saldo: number, manager?: EntityManager) {
+    if (saldo <= 0) return null;
+    const vehicle = registration.vehicleType ?? registration.ticket?.vehicleType;
+    if (!vehicle) return null;
+    const snapshot = registration.pricingSnapshot ?? await this.capturePricing(vehicle, manager, false);
+    const entry = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', 'America/Argentina/Buenos_Aires');
+    const bruto = preview.price + preview.descuentoTotal;
+    const calcular = (minutos: number) => calculateStayPrice(snapshot, vehicle, entry.toDate(), entry.add(minutos, 'minute').toDate());
+    let menor = 0;
+    let mayor = Math.max(0, Math.floor(preview.elapsedMinutes));
+    if (calcular(menor).price >= bruto) return null;
+    while (mayor - menor > 1) {
+      const medio = Math.floor((menor + mayor) / 2);
+      if (calcular(medio).price < bruto) menor = medio; else mayor = medio;
+    }
+    const anterior = calcular(menor);
+    const descuento = Math.min(saldo, preview.price - anterior.price);
+    if (descuento <= 0) return null;
+    return { precio: anterior.price, etiqueta: anterior.label, hastaMinutos: menor, descuento };
   }
 
   // Un importe negativo acá es siempre plata de un anticipo que se devuelve en efectivo (sobró al

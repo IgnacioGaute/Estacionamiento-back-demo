@@ -84,7 +84,7 @@ Backend y frontend deben actualizarse juntos. Las migraciones están registradas
 
 ## Descuentos y responsables en la planilla
 
-Tanto administración como el operador pueden aplicar descuentos con su propia sesión. En registrar salida, **Descuento** permite ingresar un importe o descontar todo el saldo pendiente, con motivo obligatorio. Se aplica primero el descuento; después se confirma el cobro del resto (efectivo, transferencia, alias o QR) o la salida sin cobro. Los anticipos ya pagados se conservan: descontar todo el saldo no devuelve lo pagado.
+Tanto administración como el operador pueden aplicar descuentos con su propia sesión. En registrar salida, **Descuento** permite ingresar un importe o descontar todo el saldo pendiente, con motivo obligatorio. Si la estadía ya pasó del primer escalón, también ofrece **Tarifa anterior** (elegida al abrir): el resumen de cierre trae `tarifaAnterior` (el último minuto en que la estadía costaba menos, calculado con el mismo cálculo del cobro) y el descuento exacto para cobrar ese precio, con un motivo sugerido. Es para el cliente que pagó tarde (cerró la espera del alias o del QR) y pasó de escalón mientras tanto. Se aplica primero el descuento; después se confirma el cobro del resto (efectivo, transferencia, alias o QR) o la salida sin cobro. Los anticipos ya pagados se conservan: descontar todo el saldo no devuelve lo pagado.
 
 Cada descuento se guarda como `DESCUENTO`, separado del dinero. Reduce el precio de la estadía, pero no cuenta como efectivo cobrado, gasto, devolución, comisión o retiro. No puede superar el saldo ni repetirse con el mismo presupuesto; un QR o alias pendiente debe cancelarse antes. La salida de una estadía con descuentos requiere conexión para verificar su saldo actualizado.
 

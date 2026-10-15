@@ -314,6 +314,20 @@ test('si la transferencia llega después de pasar de escalón, se cobra lo pedid
   assert.deepEqual(movs.map((m) => [m.tipo, m.monto]), [['ANTICIPO', 1000]], 'no agrega otro cobro ni deja saldo');
 });
 
+test('tarifa anterior: si pagó tarde, el resumen ofrece el escalón anterior y el descuento exacto', async () => {
+  const ctx = await empresaDePrueba();
+  const primera = await estadia(ctx, ctx.playaA, 30);
+  assert.equal((await ctx.en(ctx.playaA, () => tickets.getCloseSummary(primera.id))).tarifaAnterior, null, 'en el primer escalón no hay anterior');
+  const r = await estadia(ctx, ctx.playaA, 90);
+  const s = await ctx.en(ctx.playaA, () => tickets.getCloseSummary(r.id));
+  assert.equal(s.previewBracket.price, 2000);
+  assert.deepEqual({ precio: s.tarifaAnterior.precio, descuento: s.tarifaAnterior.descuento }, { precio: 1000, descuento: 1000 });
+  assert.ok(s.tarifaAnterior.hastaMinutos <= 65 && s.tarifaAnterior.hastaMinutos >= 60, 'hasta el final del escalón con la tolerancia');
+  await ctx.en(ctx.playaA, () => tickets.discountRegistration(r.id, { monto: s.tarifaAnterior.descuento, motivo: 'Tarifa anterior: demoró en pagar', expectedPrice: 2000, expectedCollected: 0 }, ctx.operador.id));
+  const despues = await ctx.en(ctx.playaA, () => tickets.getCloseSummary(r.id));
+  assert.equal(despues.saldoACobrar, 1000);
+});
+
 test('anticipo por alias al entrar: queda pagado con su duración y la estadía sigue adentro', async () => {
   const ctx = await empresaDePrueba();
   const r = await estadia(ctx, ctx.playaA, 5);
