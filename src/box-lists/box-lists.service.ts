@@ -304,9 +304,13 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
   // se ubican en su fecha de apertura, sin repetirlos en las planillas siguientes.
   private turnosDeFecha(date: string, manager: EntityManager) {
     const start = dayjs.tz(`${date} 00:00:00`, 'America/Argentina/Buenos_Aires');
-    return manager.getRepository(Turno).createQueryBuilder('t')
-      .where('t.fechaOperativa = :date OR (t.fechaOperativa IS NULL AND t.fechaApertura >= :start AND t.fechaApertura < :end)',
+    const query = manager.getRepository(Turno).createQueryBuilder('t')
+      .where('(t.fechaOperativa = :date OR (t.fechaOperativa IS NULL AND t.fechaApertura >= :start AND t.fechaApertura < :end))',
         { date, start: start.toDate(), end: start.add(1, 'day').toDate() });
+    const scope = tenantContext.getStore();
+    // La pantalla y el PDF comparten esta consulta: el operador sólo recibe sus turnos.
+    if (scope?.role === 'USER') query.andWhere('t.usuarioAperturaId = :usuarioId', { usuarioId: scope.userId });
+    return query;
   }
 
   private async withTurnos(box: BoxList, manager?: EntityManager) {
@@ -338,7 +342,7 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
         abarcaOtrosDias: !turno.fechaOperativa && (dayjs(turno.fechaApertura).isBefore(start) || !turno.fechaCierre || dayjs(turno.fechaCierre).isAfter(end)) };
     }));
     const unassigned = rows.find(r => !r.turnoId);
-    if (unassigned) turnosDelDia.push({ turnoId: null, turno: null, efectivoDelDia: Number(unassigned.efectivoDelDia), movimientos: Number(unassigned.movimientos), desde: unassigned.desde, hasta: unassigned.hasta, abarcaOtrosDias: false });
+    if (unassigned && tenantContext.getStore()?.role !== 'USER') turnosDelDia.push({ turnoId: null, turno: null, efectivoDelDia: Number(unassigned.efectivoDelDia), movimientos: Number(unassigned.movimientos), desde: unassigned.desde, hasta: unassigned.hasta, abarcaOtrosDias: false });
 
     return Object.assign(box, { turnosDelDia });
   }

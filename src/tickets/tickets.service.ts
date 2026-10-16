@@ -1,4 +1,5 @@
 import { publishAutomaticNote } from 'src/notes/automatic-note';
+import { usuariosConSueldoConfigurable } from 'src/turnos/sueldos';
 import { externalPayment, operatorShift, recordDigital, reverseDigital } from 'src/turnos/turno-book';
 import { VehicleTypeEntity } from './entities/vehicle-type.entity';
 import { ListPagination, listResult } from 'src/utils/list-pagination';
@@ -208,6 +209,8 @@ async removeTicketPrice(id: string) {
   async getSchedule(manager?: EntityManager) {
     const repository = manager ? manager.getRepository(TicketScheduleSettings) : this.ticketScheduleSettingsRepository;
     const [latest] = await repository.find({ order: { updatedAt: 'DESC' }, take: 1 });
+    const scope = tenantContext.getStore();
+    if (latest && scope?.role === 'USER') latest.sueldosPorUsuario = (latest.sueldosPorUsuario ?? []).filter(s => s.usuarioId === scope.userId);
     const storedOptions = latest?.pricingOptions ?? defaultPricingOptions();
     // La permanencia se retiró de la configuración actual. Las copias guardadas en
     // estadías abiertas siguen intactas; ninguna entrada nueva usa reglas ocultas.
@@ -236,7 +239,12 @@ async removeTicketPrice(id: string) {
       const [current] = await repository.find({ order: { updatedAt: 'DESC' }, take: 1 });
       const merged = { ...this.defaultTicketSchedule, ...current, ...dto };
       if (dto.shiftsEnabled === false) merged.multipleShiftsEnabled = false;
-      if (merged.sueldoAutomatico && !(merged.sueldoPorTurno > 0)) throw new BadRequestException('Indicá un importe de sueldo mayor que cero.');
+      if (dto.sueldosPorUsuario != null) {
+        const usuarios = await usuariosConSueldoConfigurable(manager);
+        if (dto.sueldosPorUsuario.some(s => !usuarios.some(u => u.id === s.usuarioId))) {
+          throw new BadRequestException({ code: 'SUELDO_USUARIO_INVALIDO', message: 'Elegí usuarios habilitados para esta playa.' });
+        }
+      }
       if (merged.multipleShiftsEnabled && !merged.shiftsEnabled) throw new BadRequestException('Activá Turnos de caja antes de permitir turnos múltiples.');
       if (merged.multipleShiftsEnabled !== (current?.multipleShiftsEnabled ?? false)) {
         await manager.query('SELECT pg_advisory_xact_lock(718904)');

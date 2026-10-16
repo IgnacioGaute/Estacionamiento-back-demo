@@ -87,6 +87,11 @@ describe('TenantGuard: quién puede llamar a qué', () => {
   });
 
   describe('operador (USER)', () => {
+    test('no consulta el historial administrativo ni el listado de otros operadores', async () => {
+      await rechaza('TurnosController', 'findAll', { sesion: operador }, 'requiere un administrador');
+      await rechaza('TurnosController', 'findOperadores', { sesion: operador }, 'requiere un administrador');
+    });
+
     test('usa lo que está en su lista: ingresos, salidas, turnos, cobro a inquilinos', async () => {
       await deja('TicketsController', 'createRegistrationByPlate', { sesion: operador });
       await deja('TicketsController', 'closeRegistrationByPlate', { sesion: operador });

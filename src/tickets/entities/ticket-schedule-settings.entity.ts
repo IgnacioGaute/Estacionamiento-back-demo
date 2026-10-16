@@ -18,6 +18,8 @@ import { Playa } from 'src/tenancy/entities/playa.entity';
 export class TicketScheduleSettings {
   @Column('boolean', { default: false }) sueldoAutomatico: boolean;
   @Column('int', { default: 0 }) sueldoPorTurno: number;
+  @Column('jsonb', { default: () => "'[]'::jsonb" })
+  sueldosPorUsuario: { usuarioId: string; importe: number }[];
   @Column('jsonb', { default: () => `'{"whatsapp":false,"qr":false,"print":false,"paperWidth":80}'::jsonb` })
   receiptDelivery: { whatsapp: boolean; qr: boolean; print: boolean; paperWidth: 58 | 80 };
 

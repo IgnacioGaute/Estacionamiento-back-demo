@@ -216,8 +216,68 @@ test('migración: agrega tablas y modo sin recalcular cierres, y puede repetirse
 const book = () => require('../dist/turnos/turno-book');
 const SessionMovement = load('turnos/entities/cash-session-movement.entity', 'CashSessionMovement');
 
+test('sueldos individuales: importes distintos, usuario sin retiro y jornadas congeladas', async () => {
+  await tickets.updateSchedule({ shiftsEnabled: true, multipleShiftsEnabled: true, sueldoAutomatico: true,
+    sueldosPorUsuario: [{ usuarioId: user.id, importe: 10000 }, { usuarioId: second.id, importe: 20000 }] });
+  await assert.rejects(tickets.updateSchedule({ sueldosPorUsuario: [{ usuarioId: '00000000-0000-4000-8000-000000000001', importe: 1 }] }), /usuarios habilitados/);
+  const ownSettings = await tenantContext.run({ userId: second.id, role: 'USER' }, () => tickets.getSchedule());
+  assert.deepEqual(ownSettings.sueldosPorUsuario, [{ usuarioId: second.id, importe: 20000 }]);
+  const a = await openCash(user.id, (await principal()).efectivoDisponible);
+  const b = await openCash(second.id, 0);
+  const c = await openCash(third.id, 0);
+  assert.deepEqual([a.sueldoPrevisto, b.sueldoPrevisto, c.sueldoPrevisto], [10000, 20000, 0]);
+  await cash(user.id, 100000);
+  await tickets.updateSchedule({ sueldosPorUsuario: [] });
+  const balance = (await context()).efectivoDisponible;
+  const closedA = await shifts.close(a.id, user.id, { cerrarCaja: false, efectivoEsperado: balance, sueldoEsperado: 10000 });
+  const closedB = await shifts.close(b.id, second.id, { cerrarCaja: false, efectivoEsperado: balance - 10000, sueldoEsperado: 20000 });
+  const closedC = await closeCash(third.id, 15000);
+  assert.deepEqual([closedA.sueldoRetirado, closedB.sueldoRetirado, closedC.sueldoRetirado], [10000, 20000, 0]);
+  assert.equal(closedC.alertaSueldo, null);
+  assert.equal(await ds.getRepository(SessionMovement).count({ where: { turnoId: c.id, tipo: 'SUELDO' } }), 0);
+  const next = await openCash(user.id, 15000);
+  assert.equal(next.sueldoPrevisto, 0);
+  await closeCash(user.id, 15000);
+});
+
+test('sueldos: migración conserva importes, limita usuarios por empresa/playa y no pisa cambios', async () => {
+  const runner = ds.createQueryRunner();
+  await runner.connect();
+  await runner.startTransaction();
+  try {
+    const m = runner.manager;
+    const Empresa = load('tenancy/entities/empresa.entity', 'Empresa');
+    const Playa = load('tenancy/entities/playa.entity', 'Playa');
+    const UsuarioPlaya = load('tenancy/entities/usuario-playa.entity', 'UsuarioPlaya');
+    const empresa = await m.getRepository(Empresa).save({ nombre: 'Sueldos' });
+    const ajena = await m.getRepository(Empresa).save({ nombre: 'Ajena' });
+    const playa = await m.getRepository(Playa).save({ nombre: 'Sueldos', empresaId: empresa.id });
+    await m.getRepository(User).update(user.id, { empresaId: empresa.id });
+    await m.getRepository(User).update(second.id, { empresaId: empresa.id });
+    await m.getRepository(User).update(third.id, { empresaId: ajena.id });
+    await m.getRepository(UsuarioPlaya).save({ usuarioId: second.id, playaId: playa.id });
+    const settings = await m.getRepository(Schedule).save({ playaId: playa.id, dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, sueldoAutomatico: true, sueldoPorTurno: 25000 });
+    await runner.query('ALTER TABLE ticket_schedule_settings DROP COLUMN "sueldosPorUsuario"');
+    const migration = new (load('database/migrations/1790000041000-sueldos-por-usuario', 'SueldosPorUsuario1790000041000'))();
+    await migration.up(runner);
+    const migrated = await m.getRepository(Schedule).findOneByOrFail({ id: settings.id });
+    assert.deepEqual(migrated.sueldosPorUsuario.map(s => s.usuarioId).sort(), [user.id, second.id].sort());
+    assert.ok(migrated.sueldosPorUsuario.every(s => s.importe === 25000));
+    const scope = { userId: user.id, role: 'ADMIN', empresaId: empresa.id, playaId: playa.id };
+    const { usuariosConSueldoConfigurable } = require('../dist/turnos/sueldos');
+    const allowed = await tenantContext.run(scope, () => usuariosConSueldoConfigurable(m));
+    assert.deepEqual(allowed.map(u => u.id).sort(), [user.id, second.id].sort());
+    await m.getRepository(UsuarioPlaya).delete({ usuarioId: second.id, playaId: playa.id });
+    const reassigned = await tenantContext.run(scope, () => usuariosConSueldoConfigurable(m));
+    assert.deepEqual(reassigned.map(u => u.id), [user.id]);
+    await m.getRepository(Schedule).update(settings.id, { sueldosPorUsuario: [] });
+    await migration.up(runner);
+    assert.deepEqual((await m.getRepository(Schedule).findOneByOrFail({ id: settings.id })).sueldosPorUsuario, []);
+  } finally { await runner.rollbackTransaction(); await runner.release(); }
+});
+
 test('sueldo: protege el fondo, resta una sola vez y separa gastos del retiro final', async () => {
-  await tickets.updateSchedule({ shiftsEnabled: true, sueldoAutomatico: true, sueldoPorTurno: 25000 });
+  await tickets.updateSchedule({ shiftsEnabled: true, sueldoAutomatico: true, sueldosPorUsuario: [{ usuarioId: user.id, importe: 25000 }, { usuarioId: second.id, importe: 25000 }] });
   const register = await principal();
   await shifts.saveCaja({ nombre: register.nombre, fondoObjetivo: 15000 }, register.id);
   const t = await openCash(user.id, 15000);
@@ -385,7 +445,7 @@ test('migración diaria: repetible y conserva cierres existentes', async () => {
 
 
 test('caja compartida: el primer sueldo reduce el saldo y el segundo no consume el fondo', async () => {
-  await tickets.updateSchedule({ multipleShiftsEnabled: true, sueldoAutomatico: true, sueldoPorTurno: 25000 });
+  await tickets.updateSchedule({ multipleShiftsEnabled: true, sueldoAutomatico: true, sueldosPorUsuario: [{ usuarioId: user.id, importe: 25000 }, { usuarioId: second.id, importe: 25000 }] });
   const a = await openCash(user.id, 15000);
   const b = await openCash(second.id, 0);
   await cash(user.id, 25000);
@@ -555,6 +615,19 @@ test('planilla: filtra por día argentino y ordena abiertos y últimos cierres p
     const legacyDay = await boxes.findBoxByDate('2021-07-15', runner.manager);
     assert.equal(legacyDay.totalPrice, 0);
     assert.deepEqual(legacyDay.turnosDelDia.map(t => t.turnoId), [onlyLegacy.id]);
+
+    // Aun compartiendo día, los turnos modernos e históricos quedan limitados al dueño.
+    await repo.update([open.id, midnight.id], { usuarioAperturaId: second.id });
+    await repo.update([cut.id, lastManual.id], { usuarioAperturaId: third.id });
+    await runner.manager.getRepository(CashEntry).save({ boxId: selected.id, turnoId: null, amount: 100, description: 'Sin turno' });
+    const own = await tenantContext.run({ userId: second.id, role: 'USER' }, () => boxes.findBoxByDate('2021-07-18', runner.manager));
+    assert.deepEqual(own.turnosDelDia.map(t => t.turnoId), [open.id, midnight.id]);
+    const other = await tenantContext.run({ userId: third.id, role: 'USER' }, () => boxes.findBoxByDate('2021-07-18', runner.manager));
+    assert.deepEqual(other.turnosDelDia.map(t => t.turnoId), [cut.id, lastManual.id]);
+    const empty = await tenantContext.run({ userId: user.id, role: 'USER' }, () => boxes.findBoxByDate('2021-07-18', runner.manager));
+    assert.deepEqual(empty.turnosDelDia, []);
+    const admin = await boxes.findBoxByDate('2021-07-18', runner.manager);
+    assert.deepEqual(admin.turnosDelDia.map(t => t.turnoId), [open.id, cut.id, lastManual.id, laterOpening.id, midnight.id, null]);
   } finally { await runner.rollbackTransaction(); await runner.release(); }
 });
 

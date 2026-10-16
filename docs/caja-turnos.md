@@ -45,6 +45,10 @@ En Administración → Caja → Turnos, las tarjetas agrupan los participantes p
 
 ## Corte diario y sueldo
 
+En Configuración → Operación → Turnos → Sueldo, administración habilita el retiro y elige por separado qué usuarios lo cobran y su importe por jornada. Un usuario sin importe configurado no retira sueldo ni recibe una alerta por falta de efectivo. Los usuarios nuevos quedan sin retiro. La configuración corresponde a la playa actual y sólo admite usuarios de su empresa habilitados para operar allí.
+
+El importe individual se copia al abrir la jornada: cambiarlo o desactivarlo afecta a jornadas nuevas, no a turnos ya abiertos ni a sus continuaciones de medianoche. `sueldosPorUsuario` guarda los pares `{ usuarioId, importe }`; una lista vacía deja a todos sin retiro. `sueldoAutomatico` conserva el interruptor general. `sueldoPorTurno` queda como dato de compatibilidad, pero ya no determina el retiro. La migración 1790000041000 conserva el importe anterior para los usuarios existentes habilitados en cada playa, sin modificar turnos ni movimientos históricos.
+
 A las 00:00 de Argentina se cierra el tramo del día y se abre una continuación del mismo operador, caja y sesión. El corte no cuenta dinero, no retira sueldo y no vuelve a sumar el fondo. Cada tramo dura como máximo hasta la siguiente medianoche; los relevos manuales pueden durar menos. El cron recupera cortes al reiniciar y las operaciones validan el corte dentro de su transacción.
 
 El sueldo se retira una sola vez al finalizar la jornada del operador, aunque cruce medianoche o cierre antes que otros participantes de la caja. Solo se descuenta si el efectivo permite pagar el importe completo y conservar el fondo objetivo. Si no alcanza, el descuento es cero y queda una alerta visible en el cierre y en el historial. El operador retira físicamente el dinero al confirmar.
@@ -52,6 +56,8 @@ El sueldo se retira una sola vez al finalizar la jornada del operador, aunque cr
 Ejemplo: fondo $15.000 + cobros $100.000 − gastos $10.000 = $105.000 contados. Sueldo $25.000 + retiro de recaudación $65.000 + fondo al siguiente $15.000 = $105.000. Los gastos aparecen en el total retirado, pero ya salieron del saldo antes del arqueo.
 
 ## Resumen en historial y planilla
+
+El operador sólo puede ver sus propios turnos en la planilla diaria y su PDF, tanto abiertos como cerrados e históricos. El backend filtra por el usuario autenticado y omite los movimientos sin turno en ese resumen. Administración conserva todos los turnos de la playa. El historial administrativo y su filtro de operadores siguen siendo exclusivos de administración. Los saldos físicos y el traspaso de caja conservan sus reglas compartidas.
 
 El historial administrativo, el pie de la planilla del operador y su PDF muestran el mismo resumen compacto: efectivo cobrado, Mercado Pago con detalle de alias y QR, transferencias, total retirado con gastos/sueldo/recaudación, vehículos recibidos/salidas/vehículos que quedan y efectivo dejado al siguiente turno. Se omiten los campos repetidos de efectivo neto, ingresos varios y devoluciones, sin cambiar el cálculo del saldo físico. Lo que se devuelve en efectivo de un anticipo (sobró al cerrar o se redujo) se guarda en `cash_entries` con categoría `DEVOLUCION_ANTICIPO` y se descuenta del efectivo cobrado: es el mismo cobro que terminó siendo menor, no un retiro. Las devoluciones registradas antes de este cambio siguen como `COBRO` negativo y figuran en el total retirado. Los importes digitales son antes de comisiones; el cálculo de comisiones sigue en el resumen de la planilla. La planilla lista exclusivamente los turnos de la fecha seleccionada: primero los abiertos y luego los cerrados por fecha de cierre descendente. Los turnos históricos sin fecha operativa se ubican en el día de su apertura; no se repiten en los días siguientes. En la planilla se presentan como acordeón: el primero aparece desplegado, y abrir otro cierra el anterior. El saldo que se deja queda fuera del total retirado; se muestra junto al fondo inicial de la caja.
 
@@ -62,7 +68,7 @@ Los registros históricos anteriores conservan sus datos y no reciben un detalle
 ## Contratos
 
 - GET /turnos/caja: turno propio, cajas habilitadas con sesión, último cierre, saldo y participantes; openTurnos sólo para administración.
-- GET /turnos/configuracion: cajas y existencia de turnos abiertos; exclusivo de administración.
+- GET /turnos/configuracion: cajas, usuarios habilitados para configurar su sueldo y existencia de turnos abiertos; exclusivo de administración.
 - POST /turnos/cajas y PATCH /turnos/cajas/:id: crear y editar cajas; administración.
 - POST /turnos/sesiones/:id/movimientos: aporte o retiro con saldo esperado y motivo; exclusivo de administración.
 - POST /turnos/open: caja, fondo, cambio agregado y referencia a sesión anterior o sesión activa.

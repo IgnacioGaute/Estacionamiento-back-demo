@@ -1,4 +1,5 @@
 import { publishAutomaticNote } from 'src/notes/automatic-note';
+import { usuariosConSueldoConfigurable } from './sueldos';
 import { exitCount, operatorShift, rolloverShifts, occupancyAt, salaryWithdrawal, shiftSummary, SHIFT_TZ } from './turno-book';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -131,7 +132,7 @@ export class TurnosService {
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const cajas = await this.ensureCajas(manager);
-      return { cajas, hayTurnosAbiertos: await manager.getRepository(Turno).exists({ where: { estado: 'ABIERTO' } }) };
+      return { cajas, usuarios: await usuariosConSueldoConfigurable(manager), hayTurnosAbiertos: await manager.getRepository(Turno).exists({ where: { estado: 'ABIERTO' } }) };
     });
   }
 
@@ -211,7 +212,7 @@ export class TurnosService {
       const operator = await manager.getRepository(User).findOneBy({ id: usuarioId });
       if (!operator) throw new NotFoundException('Operador no encontrado.');
       const turno = await repo.save(repo.create({ usuarioApertura: { id: usuarioId }, cajaId: caja.id, cashSessionId: session.id,
-        fechaOperativa: dayjs().tz(SHIFT_TZ).format('YYYY-MM-DD'), sueldoPrevisto: settings.sueldoAutomatico ? settings.sueldoPorTurno : 0, vehiculosInicio: await occupancyAt(manager, new Date()),
+        fechaOperativa: dayjs().tz(SHIFT_TZ).format('YYYY-MM-DD'), sueldoPrevisto: settings.sueldoAutomatico ? settings.sueldosPorUsuario?.find(s => s.usuarioId === usuarioId)?.importe ?? 0 : 0, vehiculosInicio: await occupancyAt(manager, new Date()),
         fondoInicial: ctx.session ? 0 : dto.fondoInicial, nombre: [operator.firstName, operator.lastName].join(' ').trim() || operator.username,
         duracionPrevistaHoras: null, cashVersion: 2, estado: 'ABIERTO', fondoRecibido: ctx.session ? 0 : dto.fondoInicial - (dto.cambioAgregado ?? 0),
         turnoAnteriorId: ctx.session ? null : dto.turnoAnteriorId ?? ctx.legacyPending?.id ?? null }));
