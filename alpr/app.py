@@ -76,6 +76,19 @@ def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
     return interseccion / union if union > 0 else 0.0
 
 
+def _cortada(caja: tuple[int, int, int, int], zona: tuple[int, int, int, int], ancho: int, alto: int) -> bool:
+    # Llega a un borde del recorte que no es borde de la imagen: la patente sigue afuera y su OCR
+    # daría una patente incompleta (AE650J). La pasada sobre la imagen entera la ve completa.
+    # El detector deja el recuadro de una patente cortada a unos píxeles del borde, no justo en él.
+    x1, y1, x2, y2 = caja
+    zx1, zy1, zx2, zy2 = zona
+    margen = max(3, 0.02 * min(zx2 - zx1, zy2 - zy1))
+    return (
+        (zx1 > 0 and x1 <= zx1 + margen) or (zy1 > 0 and y1 <= zy1 + margen)
+        or (zx2 < ancho and x2 >= zx2 - margen) or (zy2 < alto and y2 >= zy2 - margen)
+    )
+
+
 def _detectar(frame: np.ndarray) -> list[tuple[int, int, int, int]]:
     # El detector achica toda la imagen a 384 px de lado. En el cuadro vertical del celular
     # (1080x1920) la patente apuntada le llega cinco veces más chica y, con poca luz o foco blando,
@@ -83,11 +96,12 @@ def _detectar(frame: np.ndarray) -> list[tuple[int, int, int, int]]:
     # casi al doble de tamaño. La imagen entera se revisa igual, para fotos con la patente corrida.
     alto, ancho = frame.shape[:2]
     cajas: list[tuple[tuple[int, int, int, int], float]] = []
-    for zx1, zy1, zx2, zy2 in (_zona_central(ancho, alto), (0, 0, ancho, alto)):
+    for zona in (_zona_central(ancho, alto), (0, 0, ancho, alto)):
+        zx1, zy1, zx2, zy2 = zona
         for deteccion in alpr.detector.predict(frame[zy1:zy2, zx1:zx2]):
             b = deteccion.bounding_box
             caja = (max(b.x1 + zx1, 0), max(b.y1 + zy1, 0), min(b.x2 + zx1, ancho), min(b.y2 + zy1, alto))
-            if caja[2] - caja[0] < 3 or caja[3] - caja[1] < 3:
+            if caja[2] - caja[0] < 3 or caja[3] - caja[1] < 3 or _cortada(caja, zona, ancho, alto):
                 continue
             # La misma patente vista en las dos pasadas: queda la detección más segura.
             repetida = next((i for i, (otra, _) in enumerate(cajas) if _iou(caja, otra) > 0.5), None)

@@ -73,6 +73,19 @@ class LectorTest(unittest.TestCase):
         self.assertEqual([c.args[0].shape[:2] for c in detector.call_args_list], [(90, 90), (120, 240)])
         self.assertEqual(cajas, [(85, 45, 155, 70), (0, 0, 40, 20)])
 
+    def test_descarta_la_patente_cortada_por_el_cuadrado_central(self):
+        # Cuadrado central (75, 15, 165, 105): esta patente sigue a la derecha del recorte (el
+        # detector la corta a unos píxeles del borde) y su OCR sería incompleto. Queda la de la
+        # imagen entera, aunque el detector la vea menos segura.
+        cortada = SimpleNamespace(confidence=0.9, bounding_box=SimpleNamespace(x1=40, y1=30, x2=87, y2=55))
+        entera = SimpleNamespace(confidence=0.35, bounding_box=SimpleNamespace(x1=110, y1=44, x2=200, y2=71))
+        with patch.object(app.alpr.detector, "predict", side_effect=[[cortada], [entera]]):
+            self.assertEqual(app._detectar(np.zeros((120, 240, 3), dtype=np.uint8)), [(110, 44, 200, 71)])
+        # Si el borde del recorte es el de la imagen (cuadro vertical), la patente no está cortada.
+        al_borde = SimpleNamespace(confidence=0.9, bounding_box=SimpleNamespace(x1=0, y1=30, x2=60, y2=50))
+        with patch.object(app.alpr.detector, "predict", side_effect=[[al_borde], []]):
+            self.assertEqual(app._detectar(np.zeros((120, 90, 3), dtype=np.uint8)), [(0, 45, 60, 65)])
+
     def test_fallback_guia(self):
         ocr = SimpleNamespace(text="abc123_", confidence=[0.98, 0.86])
         with patch.object(app.alpr.detector, "predict", return_value=[]), patch.object(app.alpr.ocr, "predict", return_value=ocr) as fallback:
