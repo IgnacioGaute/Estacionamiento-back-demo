@@ -17,4 +17,7 @@ row only). With a playa token, requests use Plate Recognizer and each lookup con
 Without a token, `alprConfigurado()` selects the platform ALPR when both `ALPR_URL` and `ALPR_TOKEN` exist.
 Only when neither provider is available does the service return `PATENTES_SIN_PLAN`; tenant context also
 accounts for configured ALPR before hiding the camera. ALPR failure does not silently use another playa's key.
-The front's live scanner (`src/utils/plate-scan.ts`) filters frames before sending them. See `alpr/README.md`.
+The front's live scanner (`src/utils/plate-scan.ts`) filters frames before sending them and uploads only the part
+of the frame visible in its 3:4 viewer, at native resolution. The ALPR service detects in the central square around
+the guide and in the whole image, so a plate the operator aims at is found even with poor phone cameras. See
+`alpr/README.md`.
