@@ -1522,9 +1522,14 @@ async removePriceBracket(id: string) {
       let cashDelta = 0;
       if (dto.closeType === 'PAYMENT') {
         if (saldo <= 0) throw new BadRequestException('No queda saldo por cobrar.');
-        if (!dto.metodo) throw new BadRequestException('Elegí el medio de pago.');
-        await this.movimientosService.create({ ticketRegistrationId: id, monto: saldo, metodo: dto.metodo, tipo: 'SALDO', referencia: dto.referencia, usuarioId }, manager);
-        cashDelta = dto.metodo === 'CASH' ? saldo : 0;
+        // Un medio por todo el saldo, o el saldo repartido (pago híbrido): un SALDO por medio, así la
+        // planilla y el turno ven cada parte con el suyo, y solo el efectivo suma a la caja.
+        const pagos = dto.pagos?.length ? dto.pagos : dto.metodo ? [{ metodo: dto.metodo, importe: saldo }] : null;
+        if (!pagos) throw new BadRequestException('Elegí el medio de pago.');
+        if (new Set(pagos.map(p => p.metodo)).size !== pagos.length) throw new BadRequestException('Cada medio de pago va una sola vez.');
+        if (pagos.reduce((s, p) => s + p.importe, 0) !== saldo) throw new BadRequestException(`Los importes tienen que sumar lo que falta cobrar: ${saldo}.`);
+        for (const p of pagos) await this.movimientosService.create({ ticketRegistrationId: id, monto: p.importe, metodo: p.metodo, tipo: 'SALDO', referencia: dto.referencia, usuarioId }, manager);
+        cashDelta = pagos.filter(p => p.metodo === 'CASH').reduce((s, p) => s + p.importe, 0);
       } else if (dto.closeType === 'NO_CHARGE') {
         if (saldo > 0) throw new BadRequestException('Todavía queda saldo por cobrar.');
       } else if (dto.closeType === 'COURTESY') {

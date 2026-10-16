@@ -299,6 +299,25 @@ test('resumen: lo devuelto en efectivo de un anticipo se descuenta de lo cobrado
   assert.equal(t.fondoInicial + r.efectivoCobrado, r.totalRetirado + closed.efectivoParaSiguiente);
 });
 
+test('pago híbrido al salir: efectivo y transferencia, y solo el efectivo suma a la caja', async () => {
+  await tickets.updateSchedule({ sueldoAutomatico: false });
+  const t = await openCash(user.id, 15000);
+  const a = await openPlate();
+  try {
+    const base = { closeType: 'PAYMENT', expectedPrice: 1000, expectedCollected: 0 };
+    await assert.rejects(tickets.closeRegistrationByPlate(a.id, { ...base, pagos: [{ metodo: 'CASH', importe: 400 }, { metodo: 'TRANSFER', importe: 500 }] }, user.id), /tienen que sumar/);
+    await assert.rejects(tickets.closeRegistrationByPlate(a.id, { ...base, pagos: [{ metodo: 'CASH', importe: 400 }, { metodo: 'CASH', importe: 600 }] }, user.id), /una sola vez/);
+    await tickets.closeRegistrationByPlate(a.id, { ...base, pagos: [{ metodo: 'CASH', importe: 400 }, { metodo: 'TRANSFER', importe: 600 }] }, user.id);
+    const movs = await ds.getRepository(Movimiento).find({ where: { ticketRegistration: { id: a.id } } });
+    assert.deepEqual(movs.map(m => [m.tipo, m.metodo, m.monto]).sort(), [['SALDO', 'CASH', 400], ['SALDO', 'TRANSFER', 600]]);
+    const r = await book().shiftSummary(ds.manager, t);
+    assert.equal(r.efectivoCobrado, 400);
+    assert.equal(r.transferencias, 600);
+  } finally {
+    await closeCash(user.id, 15000);
+  }
+});
+
 test('al cerrar el turno se repasan las entradas que registró su operador y siguen abiertas', async () => {
   await tickets.updateSchedule({ sueldoAutomatico: false });
   const anterior = await openPlate(); // Entró antes de abrir el turno: no es de este turno.
