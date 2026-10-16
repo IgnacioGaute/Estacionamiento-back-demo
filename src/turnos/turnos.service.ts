@@ -228,25 +228,31 @@ export class TurnosService {
    * registrar la salida, o se cargó como entrada un auto que se estaba yendo) quedaba abierta para
    * siempre sin que nadie lo notara. Se identifica por el nombre que la estadía guarda al entrar,
    * el mismo que arma operatorName en TicketsService.
+   *
+   * `todas`: todas las que siguen abiertas en la playa, de cualquier operador y turno. Las pide
+   * quien cierra la caja (el que cuenta el efectivo al final): en Playa Nuclear seis autos que
+   * registró el turno de la mañana se fueron durante el de la tarde sin registrar la salida, y al
+   * repaso del que cerró no le aparecían porque no eran suyos.
    */
-  async estadiasAbiertas(id: string, usuarioId: string, rol?: UserRole) {
+  async estadiasAbiertas(id: string, usuarioId: string, rol?: UserRole, todas = false) {
     const turno = await this.turnoRepository.findOne({ where: { id }, relations: ['usuarioApertura'] });
     if (!turno) throw new NotFoundException('Turno no encontrado.');
     if (turno.usuarioApertura?.id !== usuarioId && rol !== 'ADMIN')
       throw new ForbiddenException('Solo el responsable del turno o un administrador pueden revisarlo.');
     const u = turno.usuarioApertura;
     const nombre = u ? (`${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || u.username) : null;
-    if (!nombre) return [];
+    if (!nombre && !todas) return [];
     const filas = await this.dataSource.query(
       // Fecha y hora como texto, igual que las entidades: el driver convierte un `date` crudo en un
       // Date de JS y la pantalla, que combina «YYYY-MM-DD HH:mm:ss», recibía una fecha inválida.
       `SELECT id, "licensePlateOriginal" AS patente, "vehicleType" AS "vehicleType", to_char("entryDay", 'YYYY-MM-DD') AS "entryDay",
-              "entryTime"::text AS "entryTime", COALESCE("advancePaidAmount", 0) AS anticipo
+              "entryTime"::text AS "entryTime", COALESCE("advancePaidAmount", 0) AS anticipo, "entryOperatorName" AS operador
          FROM ticket_registrations
-        WHERE "departureTime" IS NULL AND "departureDay" IS NULL AND "entryOperatorName" = $1
-          AND ("entryDay" + "entryTime") >= date_trunc('minute', $2::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires')
+        WHERE "departureTime" IS NULL AND "departureDay" IS NULL
+          ${todas ? '' : `AND "entryOperatorName" = $1
+          AND ("entryDay" + "entryTime") >= date_trunc('minute', $2::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires')`}
         ORDER BY "entryDay", "entryTime"`,
-      [nombre, turno.fechaApertura],
+      todas ? [] : [nombre, turno.fechaApertura],
     );
     return filas.map((f: { anticipo: string | number }) => ({ ...f, anticipo: Number(f.anticipo) }));
   }

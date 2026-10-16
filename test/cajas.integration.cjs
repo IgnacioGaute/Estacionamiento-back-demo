@@ -317,6 +317,10 @@ test('al cerrar el turno se repasan las entradas que registró su operador y sig
     assert.ok(!ids.includes(cerrada.id), 'la que ya salió no');
     assert.ok(!ids.includes(anterior.id), 'la de antes de abrir el turno no');
     await assert.rejects(shifts.estadiasAbiertas(t.id, second.id, 'USER'), /responsable del turno/);
+    // Quien cierra la caja ve todas las de la playa, también las de antes de su turno y de otros.
+    const todas = await shifts.estadiasAbiertas(t.id, user.id, 'ADMIN', true);
+    assert.ok(todas.some(e => e.id === anterior.id), 'la de antes del turno aparece al cerrar la caja');
+    assert.ok(todas.some(e => e.id === abierta.id && e.operador === 'Test Operator'), 'con quién la registró');
   } finally {
     // Se deja la caja como la esperan las pruebas siguientes: sin estadías ni turno abiertos.
     await tickets.closeRegistrationByPlate(abierta.id, await payload(abierta.id), user.id);
