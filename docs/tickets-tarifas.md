@@ -84,6 +84,12 @@ La consulta se limita a la playa actual, normaliza mayúsculas/separadores y com
 sin activos abre Registrar entrada; con un activo abre el cobro por hora o el detalle del abono por día/semana/mes.
 Con varios activos muestra una elección. No usa las equivalencias de la búsqueda aproximada (O/0, I/1) para decidir
 qué vehículo cobrar, ni interpreta una consulta fallida como una entrada nueva. La lectura no cobra ni registra sola.
+Sin coincidencia exacta devuelve `similares`: los activos a 1 o 2 caracteres (`patentesParecidas`), que las pantallas ofrecen antes de registrar una entrada.
+
+El buscador de Cobrar salida (GET /tickets/registrations/active/search?q=) devuelve primero las que coinciden por patente,
+casillero, apellido o ficha y, si el texto tiene al menos 5 caracteres de patente, hasta 5 activas parecidas marcadas
+`parecida: true`, sin repetir. En el celular tiene la cámara al lado del campo: la patente leída se escribe en el buscador.
+El operador elige; nunca se cobra una parecida sola.
 
 Registrar entrada reúne patente y búsqueda de clientes frecuentes en un campo. Las sugerencias aparecen debajo,
 con consultas demoradas 250 ms y descarte de respuestas obsoletas. La coincidencia exacta carga los datos guardados;

@@ -608,6 +608,14 @@ test('escaneo: busca solo patentes exactas activas y conserva duplicados para el
   assert.ok(parecidas.includes('SO123AA') && parecidas.includes('S0123AA'));
   assert.ok(malLeida.similares.every(r => r.departureTime === null));
   assert.deepEqual(found.similares, []);
+  // Cobrar salida: la búsqueda trae las que coinciden y, después, las parecidas marcadas, sin repetir.
+  const busqueda = await tickets.searchActiveRegistrations('SO128AA');
+  assert.ok(busqueda.some(r => r.id === first.id));
+  assert.ok(busqueda.every(r => r.parecida === true && r.departureTime === null));
+  const exacta = await tickets.searchActiveRegistrations('SO123AA');
+  assert.ok(exacta.some(r => r.id === first.id && !r.parecida));
+  assert.equal(new Set(exacta.map(r => r.id)).size, exacta.length);
+  assert.ok((await tickets.searchActiveRegistrations('SO1')).every(r => !r.parecida), 'con poco texto no hay parecidas');
 });
 
 test('escaneo: encuentra abonos activos con formatos históricos sin incluir retirados', async () => {

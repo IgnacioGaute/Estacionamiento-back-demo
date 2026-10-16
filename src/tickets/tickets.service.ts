@@ -1106,7 +1106,17 @@ async removePriceBracket(id: string) {
       );
     }
 
-    return qb.orderBy('r.entryDay', 'ASC').addOrderBy('r.entryTime', 'ASC').getMany();
+    const coinciden = await qb.orderBy('r.entryDay', 'ASC').addOrderBy('r.entryTime', 'ASC').getMany();
+    // Después de las que coinciden, las de adentro con una patente parecida (1 o 2 caracteres
+    // distintos), marcadas `parecida`: lo escaneado o escrito puede ser ese auto mal leído al
+    // entrar o al salir, como el «¿Es alguno de estos?» del escaneo.
+    if (toSearchKey(normalizePlate(query)).length < 5) return coinciden;
+    const ya = new Set(coinciden.map((r) => r.id));
+    const parecidas = (await this.ticketRegistrationRepository.find({ where: { departureTime: IsNull() }, relations: ['ticket'] }))
+      .filter((r) => !ya.has(r.id) && !!r.licensePlateNormalized && patentesParecidas(query, r.licensePlateNormalized))
+      .sort((a, b) => `${a.entryDay} ${a.entryTime}`.localeCompare(`${b.entryDay} ${b.entryTime}`))
+      .slice(0, 5);
+    return [...coinciden, ...parecidas.map((r) => Object.assign(r, { parecida: true }))];
   }
 
   async collectedAmount(registration: TicketRegistration, manager?: EntityManager) {
