@@ -3,6 +3,7 @@ import { Controller, Get, Post, Body, Patch, Param, Query, Delete, UseGuards, Re
 import { AuthenticatedRequest } from 'src/types/request';
 import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate.dto';
 import { DiscountRegistrationDto } from './dto/discount-registration.dto';
+import { PagoParcialDto } from './dto/pago-parcial.dto';
 import { CorregirEntradaDto } from './dto/corregir-entrada.dto';
 import { CorregirDatosEstadiaDto } from './dto/corregir-datos-estadia.dto';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
@@ -242,6 +243,13 @@ export class TicketsController {
   discountRegistration(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: DiscountRegistrationDto) {
     if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
     return this.ticketsService.discountRegistration(id, dto, req.user.userId);
+  }
+
+  // Pago híbrido con QR o alias: primero la parte en efectivo; el QR o el alias piden el resto.
+  @Post('registrations/:id/pago-parcial')
+  pagoParcial(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: PagoParcialDto) {
+    if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    return this.ticketsService.cobrarParteEnEfectivo(id, dto, req.user.userId);
   }
 
   @Patch('registrations/:id/entrada')

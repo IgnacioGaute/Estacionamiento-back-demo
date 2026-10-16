@@ -29,6 +29,8 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     // La patente o el tipo cargados mal, también desde el cobro (ver corregirDatosEstadia).
     'corregirDatos',
     'discountRegistration',
+    // La parte en efectivo de un pago híbrido con QR o alias (ver cobrarParteEnEfectivo).
+    'pagoParcial',
     'closeRegistrationByPlate',
     'getFrequentCustomers',
     'getPlateHistory',
@@ -126,6 +128,7 @@ export const SUSPENDED_ENDPOINTS: Record<string, readonly string[]> = {
     'getCloseSummary',
     'corregirEntrada',
     'corregirDatos',
+    'pagoParcial',
     'closeRegistrationByPlate',
     'issueParkingReceipt',
     'findOne',

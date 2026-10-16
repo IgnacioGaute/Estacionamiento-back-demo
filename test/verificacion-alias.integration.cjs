@@ -293,6 +293,29 @@ test('pagada por otro medio mientras esperaba: no genera otro cobro ni otra sali
   assert.equal(movs[0].metodo, 'CASH');
 });
 
+test('pago híbrido: efectivo primero y el resto al alias; al acreditarse registra la salida', async () => {
+  const ctx = await empresaDePrueba();
+  const r = await estadia(ctx, ctx.playaA);
+  pagosMp = [];
+  const parcial = (dto) => ctx.en(ctx.playaA, () => tickets.cobrarParteEnEfectivo(r.id, { expectedPrice: 1000, expectedCollected: 0, ...dto }, ctx.operador.id));
+  await assert.rejects(parcial({ importe: 1000 }), /menor que lo que falta/);
+  await assert.rejects(parcial({ importe: 400, expectedCollected: 100 }), e => codigo(e) === 'TICKET_PRICE_CHANGED');
+  const resumen = await parcial({ importe: 400 });
+  assert.equal(resumen.saldoACobrar, 600);
+  assert.equal(resumen.totalCollectedSoFar, 400);
+  assert.equal((await repo(Registration).findOneBy({ id: r.id })).departureTime, null, 'el efectivo solo no registra la salida');
+  const inicio = await iniciar(ctx, ctx.playaA, r.id);
+  assert.equal(inicio.importe, 600, 'el alias pide el resto');
+  // Con el alias esperando no se cobra otra parte en efectivo.
+  await assert.rejects(ctx.en(ctx.playaA, () => tickets.cobrarParteEnEfectivo(r.id, { importe: 100, expectedPrice: 1000, expectedCollected: 400 }, ctx.operador.id)), /esperando/);
+  pagosMp = [transferencia(ctx, 600)];
+  const v = await consultar(ctx, ctx.playaA, inicio.id);
+  assert.equal(v.estado, 'CONFIRMADO');
+  assert.equal(v.salidaRegistrada, true);
+  const movs = (await movimientosDe(r.id)).map(m => [m.metodo, m.monto]).sort();
+  assert.deepEqual(movs, [['CASH', 400], ['TRANSFER', 600]]);
+});
+
 test('si la transferencia llega después de pasar de escalón, se cobra lo pedido y la salida queda a la hora del pedido', async () => {
   const ctx = await empresaDePrueba();
   const r = await estadia(ctx, ctx.playaA, 30);

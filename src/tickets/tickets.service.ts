@@ -37,6 +37,7 @@ import { MovimientosService } from 'src/movimientos/movimientos.service';
 import { MovimientoMetodo } from 'src/movimientos/entities/movimiento.entity';
 import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate.dto';
 import { DiscountRegistrationDto } from './dto/discount-registration.dto';
+import { PagoParcialDto } from './dto/pago-parcial.dto';
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
 import { normalizePlate, patentesParecidas, toSearchKey } from './utils/license-plate.util';
@@ -1202,6 +1203,40 @@ async removePriceBracket(id: string) {
       // El descuento no es un cobro ni una devolución: se conserva en el libro sin mover efectivo.
       await this.linkToTodaysBoxList(registration, 0, manager, usuarioId);
       registration.price = summary.previewBracket.price - dto.monto;
+      await repo.save(registration);
+      return this.getCloseSummary(id, manager);
+    });
+    this.ticketGateway.emitNewRegistration(result.registration);
+    return result;
+  }
+
+  /**
+   * La parte en efectivo de un pago híbrido cuyo resto va por QR o alias. Esos cobros piden el
+   * saldo de ese momento y, al acreditarse sin saldo, registran la salida solos; entonces se
+   * registra primero el efectivo —que ya está en la mano— y el QR o el alias piden el resto.
+   * Si después el QR o el alias no se pagan, el efectivo queda cobrado y el resto se cobra con
+   * otro medio. El importe tiene que ser menor que el saldo: todo en efectivo es un cierre común.
+   */
+  async cobrarParteEnEfectivo(id: string, dto: PagoParcialDto, usuarioId: string) {
+    const result = await this.dataSource.transaction(async manager => {
+      const repo = manager.getRepository(TicketRegistration);
+      const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+      if (!registration) throw new NotFoundException('Registro no encontrado.');
+      if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
+      const summary = await this.getCloseSummary(id, manager);
+      if (summary.previewBracket.price !== dto.expectedPrice || summary.totalCollectedSoFar !== dto.expectedCollected) {
+        throw new ConflictException({ code: 'TICKET_PRICE_CHANGED', message: 'El importe cambió. Revisá el resumen actualizado antes de confirmar.' });
+      }
+      if (!Number.isInteger(dto.importe) || dto.importe <= 0 || dto.importe >= summary.saldoACobrar) {
+        throw new BadRequestException('El efectivo tiene que ser menor que lo que falta cobrar: si cubre todo, elegí «Efectivo».');
+      }
+      const [pending] = await manager.query(`SELECT EXISTS (
+        SELECT 1 FROM cobros_mercadopago WHERE "registrationId"=$1 AND tipo='HORA' AND estado='PENDIENTE'
+        UNION ALL SELECT 1 FROM cobros_transferencia WHERE "registrationId"=$1 AND tipo='HORA' AND estado IN ('ESPERANDO','REVISION')
+      ) AS present`, [id]);
+      if (pending.present) throw new ConflictException('Ya hay un QR o una transferencia esperando el pago de esta estadía.');
+      await this.movimientosService.create({ ticketRegistrationId: id, monto: dto.importe, metodo: 'CASH', tipo: 'SALDO', usuarioId }, manager);
+      await this.linkToTodaysBoxList(registration, dto.importe, manager, usuarioId);
       await repo.save(registration);
       return this.getCloseSummary(id, manager);
     });
