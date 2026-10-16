@@ -43,18 +43,39 @@ class LectorTest(unittest.TestCase):
         self.assertEqual(app._confianza(0.93), 0.93)
 
     def test_detector_y_no_fallback(self):
-        caja = SimpleNamespace(x1=80, y1=50, x2=170, y2=90)
-        lectura = SimpleNamespace(detection=SimpleNamespace(bounding_box=caja), ocr=SimpleNamespace(text="ab123cd_", confidence=[0.98, 0.95]))
-        with patch.object(app.alpr, "predict", return_value=[lectura]), patch.object(app.alpr.ocr, "predict") as fallback:
+        deteccion = SimpleNamespace(confidence=0.9, bounding_box=SimpleNamespace(x1=80, y1=50, x2=170, y2=90))
+        ocr = SimpleNamespace(text="ab123cd_", confidence=[0.98, 0.95])
+        with patch.object(app.alpr.detector, "predict", side_effect=[[], [deteccion]]), patch.object(app.alpr.ocr, "predict", return_value=ocr) as lector:
             resultado = self.leer()
         self.assertEqual(resultado["image_width"], 240)
         self.assertEqual(resultado["image_height"], 120)
         self.assertEqual(resultado["results"], [{"plate": "AB123CD", "score": 0.95, "box": {"xmin": 80, "ymin": 50, "xmax": 170, "ymax": 90}}])
-        fallback.assert_not_called()
+        # Una sola lectura, sobre el recuadro detectado: no hubo fallback a la guía.
+        lector.assert_called_once()
+        self.assertEqual(lector.call_args[0][0].shape[:2], (40, 90))
+
+    def test_zona_central(self):
+        # Cuadro vertical 1080x1920: el visor 3:4 deja ver todo el ancho; el cuadrado es de 1080.
+        self.assertEqual(app._zona_central(1080, 1920), (0, 420, 1080, 1500))
+        # Solo la parte visible (1080x1440), como la sube el front: el mismo cuadrado centrado.
+        self.assertEqual(app._zona_central(1080, 1440), (0, 180, 1080, 1260))
+        # Foto horizontal: el cuadrado toma el ancho que se vería en el visor.
+        self.assertEqual(app._zona_central(240, 120), (75, 15, 165, 105))
+
+    def test_detecta_en_el_centro_y_en_la_imagen_entera(self):
+        # En el cuadrado central (75, 15) la patente aparece con coordenadas relativas a ese recorte;
+        # en la imagen entera, la misma patente con menos confianza y otra en una esquina.
+        centro = SimpleNamespace(confidence=0.8, bounding_box=SimpleNamespace(x1=10, y1=30, x2=80, y2=55))
+        misma = SimpleNamespace(confidence=0.35, bounding_box=SimpleNamespace(x1=86, y1=46, x2=154, y2=69))
+        esquina = SimpleNamespace(confidence=0.9, bounding_box=SimpleNamespace(x1=0, y1=0, x2=40, y2=20))
+        with patch.object(app.alpr.detector, "predict", side_effect=[[centro], [misma, esquina]]) as detector:
+            cajas = app._detectar(np.zeros((120, 240, 3), dtype=np.uint8))
+        self.assertEqual([c.args[0].shape[:2] for c in detector.call_args_list], [(90, 90), (120, 240)])
+        self.assertEqual(cajas, [(85, 45, 155, 70), (0, 0, 40, 20)])
 
     def test_fallback_guia(self):
         ocr = SimpleNamespace(text="abc123_", confidence=[0.98, 0.86])
-        with patch.object(app.alpr, "predict", return_value=[]), patch.object(app.alpr.ocr, "predict", return_value=ocr) as fallback:
+        with patch.object(app.alpr.detector, "predict", return_value=[]), patch.object(app.alpr.ocr, "predict", return_value=ocr) as fallback:
             resultado = self.leer()
         x1, y1, x2, y2 = app._zona_guia(240, 120)
         self.assertEqual(fallback.call_args[0][0].shape[:2], (y2-y1, x2-x1))
@@ -62,7 +83,7 @@ class LectorTest(unittest.TestCase):
         self.assertEqual(resultado["results"][0]["score"], 0.86)
 
     def test_no_patente(self):
-        with patch.object(app.alpr, "predict", return_value=[]), patch.object(app.alpr.ocr, "predict", return_value=None):
+        with patch.object(app.alpr.detector, "predict", return_value=[]), patch.object(app.alpr.ocr, "predict", return_value=None):
             self.assertEqual(self.leer()["results"], [])
 
     def test_ocupado_y_libera_si_falla(self):
@@ -73,7 +94,7 @@ class LectorTest(unittest.TestCase):
             self.assertEqual(err.exception.status_code, 429)
         finally:
             app.inferencia.release()
-        with patch.object(app.alpr, "predict", side_effect=RuntimeError("Modelo falló")), self.assertRaises(RuntimeError):
+        with patch.object(app.alpr.detector, "predict", side_effect=RuntimeError("Modelo falló")), self.assertRaises(RuntimeError):
             self.leer()
         self.assertFalse(app.inferencia.locked())
 

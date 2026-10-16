@@ -21,11 +21,16 @@ from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 # Los dos modelos por defecto de fast-alpr: el OCR global incluye los formatos argentinos.
 DETECTOR = "yolo-v9-t-384-license-plate-end2end"
 OCR = "cct-xs-v2-global-model"
+# fast-alpr usa 0,4. Con cámaras de celular mediocres (ruido, poca luz, foco blando) la patente
+# apuntada suele quedar entre 0,3 y 0,4 y se perdía; los recuadros de más que entran con 0,3 se
+# descartan solos: el OCR no les encuentra una patente o el back elige la más centrada.
+UMBRAL_DETECTOR = 0.3
 # El mismo tope que el back: un frame del escáner pesa menos de 1 MB.
 MAX_BYTES = 3 * 1024 * 1024
 # El recuadro guía del escáner del front (src/utils/plate-scan.ts: ASPECTO_VISOR y ANCHO_GUIA): el
 # visor muestra el video recortado a 3:4 y la guía ocupa el 78 % de su ancho, centrada y en 3:1.
-# Si cambian allá, cambiarlos acá.
+# El front sube solo esa parte visible; un cuadro entero (fronts anteriores) da la misma zona,
+# porque todo está centrado. Si cambian allá, cambiarlos acá.
 ASPECTO_VISOR = 3 / 4
 ANCHO_GUIA = 0.78
 
@@ -33,7 +38,7 @@ TOKEN = os.environ.get("ALPR_TOKEN", "")
 
 # Se carga una sola vez al arrancar (los modelos ya vienen bajados en la imagen de Docker).
 alpr = ALPR(
-    detector_model=DETECTOR, ocr_model=OCR, ocr_device="cpu",
+    detector_model=DETECTOR, ocr_model=OCR, ocr_device="cpu", detector_conf_thresh=UMBRAL_DETECTOR,
     detector_providers=["CPUExecutionProvider"], ocr_providers=["CPUExecutionProvider"],
 )
 inferencia = Lock()
@@ -52,6 +57,45 @@ def _zona_guia(ancho: int, alto: int) -> tuple[int, int, int, int]:
     x = (ancho - w) / 2
     y = (alto - h) / 2
     return int(x), int(y), int(x + w), int(y + h)
+
+
+def _zona_central(ancho: int, alto: int) -> tuple[int, int, int, int]:
+    # El cuadrado centrado de lado igual al ancho visible del visor: contiene la guía y algo del
+    # paragolpes alrededor, que el detector usa para reconocer una patente.
+    lado = min(ancho, alto * ASPECTO_VISOR)
+    x = (ancho - lado) / 2
+    y = (alto - lado) / 2
+    return int(x), int(y), int(x + lado), int(y + lado)
+
+
+def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    ancho = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+    alto = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    interseccion = ancho * alto
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - interseccion
+    return interseccion / union if union > 0 else 0.0
+
+
+def _detectar(frame: np.ndarray) -> list[tuple[int, int, int, int]]:
+    # El detector achica toda la imagen a 384 px de lado. En el cuadro vertical del celular
+    # (1080x1920) la patente apuntada le llega cinco veces más chica y, con poca luz o foco blando,
+    # no la encuentra. Se busca primero en el cuadrado central, donde está la guía: ahí le llega
+    # casi al doble de tamaño. La imagen entera se revisa igual, para fotos con la patente corrida.
+    alto, ancho = frame.shape[:2]
+    cajas: list[tuple[tuple[int, int, int, int], float]] = []
+    for zx1, zy1, zx2, zy2 in (_zona_central(ancho, alto), (0, 0, ancho, alto)):
+        for deteccion in alpr.detector.predict(frame[zy1:zy2, zx1:zx2]):
+            b = deteccion.bounding_box
+            caja = (max(b.x1 + zx1, 0), max(b.y1 + zy1, 0), min(b.x2 + zx1, ancho), min(b.y2 + zy1, alto))
+            if caja[2] - caja[0] < 3 or caja[3] - caja[1] < 3:
+                continue
+            # La misma patente vista en las dos pasadas: queda la detección más segura.
+            repetida = next((i for i, (otra, _) in enumerate(cajas) if _iou(caja, otra) > 0.5), None)
+            if repetida is None:
+                cajas.append((caja, deteccion.confidence))
+            elif deteccion.confidence > cajas[repetida][1]:
+                cajas[repetida] = (caja, deteccion.confidence)
+    return [caja for caja, _ in cajas]
 
 
 def _confianza(confianza: float | list[float]) -> float:
@@ -92,15 +136,15 @@ def leer(imagen: UploadFile = File(...), authorization: str = Header(default="")
 
 def _leer_frame(frame: np.ndarray) -> dict:
     lecturas = []
-    for resultado in alpr.predict(frame):
-        if resultado.ocr is None or not resultado.ocr.text:
+    for x1, y1, x2, y2 in _detectar(frame):
+        ocr = alpr.ocr.predict(frame[y1:y2, x1:x2])
+        if ocr is None or not ocr.text:
             continue
-        caja = resultado.detection.bounding_box
         lecturas.append(
             {
-                "plate": resultado.ocr.text.replace("_", "").upper(),
-                "score": round(_confianza(resultado.ocr.confidence), 4),
-                "box": {"xmin": caja.x1, "ymin": caja.y1, "xmax": caja.x2, "ymax": caja.y2},
+                "plate": ocr.text.replace("_", "").upper(),
+                "score": round(_confianza(ocr.confidence), 4),
+                "box": {"xmin": x1, "ymin": y1, "xmax": x2, "ymax": y2},
             }
         )
     alto, ancho = frame.shape[:2]
