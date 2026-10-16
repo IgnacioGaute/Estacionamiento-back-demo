@@ -30,6 +30,7 @@ import { TicketPriceBracket } from './entities/ticket-price-bracket.entity';
 import { CreateTicketPriceBracketDto } from './dto/create-ticket-price-bracket.dto';
 import { UpdateTicketPriceBracketDto } from './dto/update-ticket-price-bracket.dto';
 import { AdvancePaymentTicketRegistrationDto } from './dto/advance-payment-ticket-registration.dto';
+import { CorregirDatosEstadiaDto } from './dto/corregir-datos-estadia.dto';
 import { TicketScheduleSettings } from './entities/ticket-schedule-settings.entity';
 import { UpdateTicketScheduleDto } from './dto/update-ticket-schedule.dto';
 import { MovimientosService } from 'src/movimientos/movimientos.service';
@@ -1250,6 +1251,70 @@ async removePriceBracket(id: string) {
         patente: registration.licensePlateOriginal || registration.codeBarTicket || '',
         entradaAnterior: actual.format('DD/MM HH:mm'),
         entrada: nueva.format('DD/MM HH:mm'),
+      };
+    });
+    this.ticketGateway.emitNewRegistration(result.summary.registration);
+    return result;
+  }
+
+  /**
+   * Corrige la patente o el tipo de vehículo de una estadía abierta, desde el cobro: se cargó
+   * Auto y era Camioneta, o la patente con un carácter mal. Con otro tipo la estadía pasa a las
+   * tarifas de ese tipo, conservando el horario y las opciones que tenía al entrar (la copia de
+   * tarifas es de un solo tipo). Lo cobrado y los descuentos se conservan; el saldo se recalcula.
+   * No se toca con un QR o alias esperando el pago: el importe pedido dejaría de coincidir.
+   */
+  async corregirDatosEstadia(id: string, dto: CorregirDatosEstadiaDto, _usuarioId: string) {
+    const result = await this.dataSource.transaction(async manager => {
+      const repo = manager.getRepository(TicketRegistration);
+      const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+      if (!registration) throw new NotFoundException('Registro no encontrado.');
+      if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
+      const conTicket = await repo.findOne({ where: { id }, relations: ['ticket'] });
+      const tipoAnterior = registration.vehicleType ?? conTicket?.ticket?.vehicleType ?? null;
+      const patenteAnterior = registration.licensePlateOriginal || null;
+      const [pending] = await manager.query(`SELECT EXISTS (
+        SELECT 1 FROM cobros_mercadopago WHERE "registrationId"=$1 AND tipo='HORA' AND estado='PENDIENTE'
+        UNION ALL SELECT 1 FROM cobros_transferencia WHERE "registrationId"=$1 AND tipo='HORA' AND estado IN ('ESPERANDO','REVISION')
+      ) AS present`, [id]);
+      if (pending.present) throw new ConflictException('Cancelá el cobro pendiente antes de corregir la estadía.');
+
+      if (dto.licensePlate !== undefined) {
+        if (conTicket?.ticket || registration.entryMode === 'BARCODE') throw new BadRequestException('Es una estadía de tarjeta: no tiene patente para corregir.');
+        const original = dto.licensePlate.trim().toUpperCase();
+        const normalized = normalizePlate(original);
+        if (!normalized) throw new BadRequestException('La patente debe contener letras o números.');
+        if (normalized !== registration.licensePlateNormalized) {
+          const otra = await repo.findOne({ where: { licensePlateNormalized: normalized, departureTime: IsNull() } });
+          if (otra && otra.id !== id) throw new ConflictException({ code: 'DUPLICATE_ACTIVE_PLATE', message: 'Esa patente ya está adentro en otra estadía.', existingRegistrationId: otra.id });
+          Object.assign(registration, { licensePlateOriginal: original, licensePlateNormalized: normalized, licensePlateSearch: toSearchKey(normalized), noPlate: false });
+        }
+      }
+
+      if (dto.vehicleType && dto.vehicleType !== tipoAnterior) {
+        await this.assertVehicleType(dto.vehicleType, manager);
+        if (registration.pricingSnapshot) {
+          await manager.query('SELECT pg_advisory_xact_lock_shared(718903)');
+          const brackets = await manager.getRepository(TicketPriceBracket).find({ where: { vehicleType: dto.vehicleType as any } });
+          const snapshot: PricingSnapshot = { ...registration.pricingSnapshot, brackets };
+          // Que el tipo nuevo tenga precio, con la misma regla que al entrar (capturePricing).
+          assertPricingCoverage(snapshot, dto.vehicleType, resolveDayType(snapshot.schedule, dayjs().tz('America/Argentina/Buenos_Aires').hour()));
+          if (snapshot.schedule.pricingDayTypeBasis === 'EXIT' || snapshot.schedule.pricingOptions?.crossing.enabled) {
+            assertPricingCoverage(snapshot, dto.vehicleType, 'DAY');
+            assertPricingCoverage(snapshot, dto.vehicleType, 'NIGHT');
+          }
+          registration.pricingSnapshot = snapshot;
+        }
+        registration.vehicleType = dto.vehicleType as any;
+      }
+      await repo.save(registration);
+      return {
+        summary: await this.getCloseSummary(id, manager),
+        // Para la Actividad (AuditInterceptor copia estos de la respuesta).
+        patente: registration.licensePlateOriginal || registration.codeBarTicket || '',
+        patenteAnterior,
+        tipo: registration.vehicleType ?? tipoAnterior,
+        tipoAnterior,
       };
     });
     this.ticketGateway.emitNewRegistration(result.summary.registration);

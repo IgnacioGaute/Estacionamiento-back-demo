@@ -4,6 +4,7 @@ import { AuthenticatedRequest } from 'src/types/request';
 import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate.dto';
 import { DiscountRegistrationDto } from './dto/discount-registration.dto';
 import { CorregirEntradaDto } from './dto/corregir-entrada.dto';
+import { CorregirDatosEstadiaDto } from './dto/corregir-datos-estadia.dto';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
 import { PreviewPriceDto, SimulatePriceDto } from './dto/preview-price.dto';
 import { TicketsService } from './tickets.service';
@@ -247,6 +248,13 @@ export class TicketsController {
   corregirEntrada(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: CorregirEntradaDto) {
     if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
     return this.ticketsService.corregirEntradaOlvidada(id, dto.entrada, req.user.userId);
+  }
+
+  // La patente o el tipo de vehículo cargados mal al entrar, desde el cobro (ver corregirDatosEstadia).
+  @Patch('registrations/:id/datos')
+  corregirDatos(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: CorregirDatosEstadiaDto) {
+    if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    return this.ticketsService.corregirDatosEstadia(id, dto, req.user.userId);
   }
 
   @Patch('registrations/:id/close')

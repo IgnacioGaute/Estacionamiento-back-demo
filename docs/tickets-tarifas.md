@@ -89,3 +89,7 @@ Registrar entrada reúne patente y búsqueda de clientes frecuentes en un campo.
 con consultas demoradas 250 ms y descarte de respuestas obsoletas. La coincidencia exacta carga los datos guardados;
 apellido, teléfono y vehículo siguen editables antes de confirmar. Los botones de vehículo usan la configuración
 de la playa y solo ofrecen tipos habilitados.
+
+## Corregir patente o tipo al cobrar
+
+En Cobrar salida, «Editar patente o tipo» (`PATCH /tickets/registrations/:id/datos`, operador incluido) corrige una estadía abierta que se cargó mal. La patente se guarda en sus tres columnas (`normalizePlate`/`toSearchKey`) y no puede quedar igual a otra estadía adentro (`DUPLICATE_ACTIVE_PLATE`). Con otro tipo de vehículo la copia de tarifas de la estadía pasa a las franjas actuales de ese tipo, conservando el horario y las opciones que tenía al entrar (la copia es de un solo tipo); se exige que el tipo esté habilitado y tenga precio con la misma regla que al entrar. Lo cobrado y los descuentos se conservan y el saldo se recalcula. No se permite con un QR o alias esperando el pago ni en estadías de tarjeta (solo el tipo). Queda en la Actividad como `ESTADIA_DATOS_CORREGIDOS`.

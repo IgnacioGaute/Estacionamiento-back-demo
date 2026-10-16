@@ -150,6 +150,12 @@ export const AUDIT_RULES: Record<string, Record<string, AuditRule>> = {
       entidad: 'estadía',
       respuesta: ['patente', 'entradaAnterior', 'entrada'],
     },
+    // También cambia lo que se cobra: otro tipo de vehículo, otras tarifas.
+    corregirDatos: {
+      accion: 'ESTADIA_DATOS_CORREGIDOS',
+      entidad: 'estadía',
+      respuesta: ['patente', 'patenteAnterior', 'tipo', 'tipoAnterior'],
+    },
     update: { accion: 'TICKET_EDITADO', entidad: 'tarjeta de código de barras' },
     remove: {
       accion: 'TICKET_ELIMINADO',

@@ -801,3 +801,26 @@ test('entrada olvidada: no adelanta, no pasa de 24 h, no toca estadías viejas n
   const bien = await tickets.corregirEntradaOlvidada(otra.id, dayjs().subtract(20, 'minute').toISOString(), user.id);
   assert.ok(bien.summary.elapsedMinutes >= 19);
 });
+
+test('corregir datos al cobrar: otro tipo pasa a sus tarifas y la patente se normaliza', async () => {
+  if (!(await tickets.getVehicleTypes()).some(t => t.code === 'CAMIONETA')) await tickets.createVehicleType({ code: 'CAMIONETA', name: 'Camioneta' });
+  await tickets.createPriceBracket({ vehicleType: 'CAMIONETA', label: 'Hora camioneta', uptoMinutes: 60, price: 2500 });
+  await tickets.createPriceBracket({ vehicleType: 'CAMIONETA', label: 'Extra camioneta', price: 2500, recurringUnitMinutes: 60, recurringPriceMode: 'FIXED' });
+  const r = await openPlate();
+  const otra = await openPlate();
+  try {
+    assert.equal((await tickets.getCloseSummary(r.id)).previewBracket.price, 1000);
+    const res = await tickets.corregirDatosEstadia(r.id, { vehicleType: 'CAMIONETA', licensePlate: 'cz 123 zz' }, user.id);
+    assert.equal(res.summary.previewBracket.price, 2500, 'se cobra con la tarifa de camioneta');
+    assert.deepEqual([res.tipoAnterior, res.tipo, res.patente], ['AUTO', 'CAMIONETA', 'CZ 123 ZZ']);
+    const guardada = await ds.getRepository(Registration).findOneBy({ id: r.id });
+    assert.deepEqual([guardada.licensePlateNormalized, guardada.vehicleType], ['CZ123ZZ', 'CAMIONETA']);
+    assert.ok(guardada.pricingSnapshot.brackets.every(b => b.vehicleType === 'CAMIONETA'), 'la copia de tarifas es la del tipo nuevo');
+    await assert.rejects(tickets.corregirDatosEstadia(otra.id, { licensePlate: 'CZ123ZZ' }, user.id), /ya está adentro/);
+    await assert.rejects(tickets.corregirDatosEstadia(r.id, { vehicleType: 'NOEXISTE' }, user.id), /no existe o está desactivado/);
+  } finally {
+    await tickets.closeRegistrationByPlate(r.id, await payload(r.id), user.id);
+    await tickets.closeRegistrationByPlate(otra.id, await payload(otra.id), user.id);
+  }
+  await assert.rejects(tickets.corregirDatosEstadia(r.id, { vehicleType: 'AUTO' }, user.id), /ya está cerrado/);
+});
