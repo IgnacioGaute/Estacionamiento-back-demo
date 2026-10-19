@@ -156,6 +156,12 @@ export const AUDIT_RULES: Record<string, Record<string, AuditRule>> = {
       entidad: 'estadía',
       respuesta: ['patente', 'patenteAnterior', 'tipo', 'tipoAnterior'],
     },
+    // Baja lo que se cobra: la salida con la hora en que el auto se fue, no la de ahora.
+    registrarSalidaAnterior: {
+      accion: 'SALIDA_CON_HORA_ANTERIOR',
+      entidad: 'estadía',
+      respuesta: ['patente', 'entrada', 'salida', 'importe', 'importeAhora'],
+    },
     update: { accion: 'TICKET_EDITADO', entidad: 'tarjeta de código de barras' },
     remove: {
       accion: 'TICKET_ELIMINADO',

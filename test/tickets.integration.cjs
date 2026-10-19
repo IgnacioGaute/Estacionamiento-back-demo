@@ -214,6 +214,34 @@ test('importe desactualizado exige volver a confirmar sin cobrar', async () => {
   assert.equal(await movements.sumByRegistration(registration.id), 0);
 });
 
+test('se fue antes: ofrece las tarifas que ya pasó y registra la salida con la elegida', async () => {
+  const registration = await age(await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'ANTES' + (++counter) }), 5 * 60);
+  // Lleva cinco horas ($ 5.000): la primera hora y cada hora extra que ya pasó, con su importe.
+  const { ahora, cobrado, opciones } = await tickets.opcionesSalidaAnterior(registration.id);
+  assert.equal(ahora, 5000);
+  assert.equal(cobrado, 0);
+  assert.deepEqual(opciones.map(o => [o.etiqueta, o.precio]), [['Hora', 1000], ['Hora + 1 × Extra', 2000], ['Hora + 2 × Extra', 3000], ['Hora + 3 × Extra', 4000]]);
+  const [primera] = opciones;
+  const salida = dayjs(primera.salidaEn).tz('America/Argentina/Buenos_Aires');
+  const dto = { closeType: 'PAYMENT', metodo: 'CASH', expectedPrice: primera.precio, expectedCollected: 0, salidaEn: primera.salidaEn };
+  await assert.rejects(tickets.registrarSalidaAnterior(registration.id, { ...dto, salidaEn: dayjs().add(10, 'minute').toISOString() }, user.id), /posterior a ahora/);
+  await assert.rejects(tickets.registrarSalidaAnterior(registration.id, { ...dto, salidaEn: dayjs().subtract(6, 'hour').toISOString() }, user.id), /posterior a la entrada/);
+  // Con el importe de ahora no cierra: se cobra el de la tarifa elegida.
+  await assert.rejects(tickets.registrarSalidaAnterior(registration.id, { ...dto, expectedPrice: 5000 }, user.id), /importe cambió/);
+  const before = await totalBox();
+  const result = await tickets.registrarSalidaAnterior(registration.id, dto, user.id);
+  assert.equal(result.importe, 1000);
+  assert.equal(result.importeAhora, 5000);
+  assert.equal(await totalBox(), before + 1000);
+  assert.equal(await movements.sumByRegistration(registration.id), 1000);
+  const saved = await ds.getRepository(Registration).findOneBy({ id: registration.id });
+  assert.equal(saved.departureDay, salida.format('YYYY-MM-DD'));
+  assert.equal(saved.departureTime, salida.format('HH:mm:ss'));
+  assert.equal(saved.price, 1000);
+  await assert.rejects(tickets.registrarSalidaAnterior(registration.id, dto, user.id), /ya tiene la salida/);
+  assert.equal(await movements.sumByRegistration(registration.id), 1000);
+});
+
 test('saldo histórico se conserva sin inventar movimientos y admite ajustes posteriores', async () => {
   const registration = await openPlate();
   await ds.getRepository(Registration).update(registration.id, { pricingSnapshot: null, advancePaidAmount: 800 });

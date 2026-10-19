@@ -41,9 +41,10 @@ import { DiscountRegistrationDto } from './dto/discount-registration.dto';
 import { PagoParcialDto } from './dto/pago-parcial.dto';
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
+import { SalidaAnteriorDto } from './dto/salida-anterior.dto';
 import { normalizePlate, patentesParecidas, toSearchKey } from './utils/license-plate.util';
 import { Brackets } from 'typeorm';
-import { resolveDayType, validateBracket } from './pricing/pricing';
+import { resolveDayType, selectBrackets, validateBracket } from './pricing/pricing';
 import { PricingSnapshot } from './pricing/pricing.types';
 import { CreateTicketRegistrationForDayDto, UpdateTicketStatusDto } from './dto/create-ticket-registration-for-day.dto';
 
@@ -1379,6 +1380,100 @@ async removePriceBracket(id: string) {
     const saved = await this.dataSource.transaction(manager => this.cerrarEnTransaccion(manager, id, dto, usuarioId));
     this.ticketGateway.emitNewRegistration(saved);
     return saved;
+  }
+
+  /**
+   * Las tarifas que pudo haber pagado un auto que se fue antes («Se fue antes»): cada franja del
+   * vehículo que la estadía ya pasó y, después de la última, una opción por cada unidad de la franja
+   * que se repite («Hora + 2 × Hora extra»). No hace falta la hora exacta: cada opción lleva la hora
+   * en que esa tarifa terminaba, y su importe sale del mismo cálculo del cobro a esa hora (tarifas
+   * guardadas de la estadía, descuentos aplicados). Solo las que cuestan menos que ahora; con cobro
+   * por unidad, una opción por unidad.
+   */
+  async opcionesSalidaAnterior(id: string) {
+    const registration = await this.ticketRegistrationRepository.findOne({ where: { id }, relations: ['ticket'] });
+    if (!registration) throw new NotFoundException('Registro no encontrado.');
+    if (registration.departureTime) throw new BadRequestException({ code: 'ESTADIA_CERRADA', message: 'Esta estadía ya tiene la salida registrada.' });
+    const vehicle = registration.vehicleType ?? registration.ticket?.vehicleType;
+    if (!vehicle) throw new BadRequestException('El registro no tiene tipo de vehículo.');
+    const snapshot = registration.pricingSnapshot ?? await this.capturePricing(vehicle, undefined, false);
+    const entrada = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', 'America/Argentina/Buenos_Aires');
+    const transcurridos = dayjs().diff(entrada, 'minute');
+    const opcionesTarifa = snapshot.schedule.pricingOptions ?? defaultPricingOptions();
+    // Las que se repiten se cortan acá: más allá, una estadía tan larga ya no «se fue antes».
+    const MAX_REPETICIONES = 12;
+    const candidatas: { etiqueta: string; minutos: number }[] = [];
+    if (opcionesTarifa.charging.enabled) {
+      const unidad = opcionesTarifa.charging.unitMinutes;
+      for (let n = 1; n * unidad < transcurridos && n <= MAX_REPETICIONES * 2; n++) candidatas.push({ etiqueta: `${n} × ${unidad} min`, minutos: n * unidad });
+    } else {
+      const franjas = selectBrackets(snapshot.brackets, vehicle, resolveDayType(snapshot.schedule, entrada.hour()));
+      const finitas = franjas.filter(b => b.uptoMinutes !== null);
+      for (const franja of finitas) if (franja.uptoMinutes! < transcurridos) candidatas.push({ etiqueta: franja.label, minutos: franja.uptoMinutes! });
+      const abierta = franjas.find(b => b.uptoMinutes === null);
+      const ultima = finitas[finitas.length - 1];
+      if (abierta?.recurringUnitMinutes) {
+        const base = ultima?.uptoMinutes ?? 0;
+        for (let n = 1; base + n * abierta.recurringUnitMinutes < transcurridos && n <= MAX_REPETICIONES; n++)
+          candidatas.push({ etiqueta: `${ultima ? `${ultima.label} + ` : ''}${n} × ${abierta.label}`, minutos: base + n * abierta.recurringUnitMinutes });
+      }
+    }
+    const ahora = await this.priceRegistration(registration);
+    const opciones: { etiqueta: string; minutos: number; salidaEn: string; precio: number }[] = [];
+    for (const candidata of candidatas) {
+      const salida = entrada.add(candidata.minutos, 'minute');
+      const { price } = await this.priceRegistration(registration, undefined, salida.toDate());
+      // Misma plata con otro nombre (la tolerancia entre franjas): queda la primera.
+      if (price >= ahora.price || opciones.some(o => o.precio === price)) continue;
+      opciones.push({ etiqueta: candidata.etiqueta, minutos: candidata.minutos, salidaEn: salida.toISOString(), precio: price });
+    }
+    return { ahora: ahora.price, cobrado: await this.collectedAmount(registration), opciones };
+  }
+
+  // La hora informada tiene que caer entre la entrada y ahora (un minuto de margen por relojes).
+  private validarSalidaAnterior(registration: TicketRegistration, salidaEn: Date) {
+    if (Number.isNaN(salidaEn.getTime())) throw new BadRequestException({ code: 'SALIDA_INVALIDA', message: 'Indicá a qué hora se fue.' });
+    if (salidaEn.getTime() > Date.now() + 60_000) throw new BadRequestException({ code: 'SALIDA_FUTURA', message: 'La hora en que se fue no puede ser posterior a ahora.' });
+    const entrada = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', 'America/Argentina/Buenos_Aires');
+    if (!dayjs(salidaEn).isAfter(entrada)) throw new BadRequestException({ code: 'SALIDA_ANTES_DE_ENTRADA', message: 'La hora en que se fue tiene que ser posterior a la entrada.' });
+  }
+
+  /**
+   * «Se fue antes»: el auto se fue a `salidaEn` y nadie registró la salida, así que el sistema
+   * siguió contando. Se cobra lo que correspondía a esa hora —el mismo cálculo y las mismas tarifas
+   * guardadas que el cobro normal— y la salida queda con esa hora, en un solo paso y en la misma
+   * transacción que el cobro. El pago entra ahora, en el turno de quien lo registra: casi siempre es
+   * el efectivo que ya estaba en el cajón y daba sobrante al contar. Queda en la Actividad con la
+   * hora informada y lo que se hubiera cobrado ahora (audit-policy), porque baja el importe.
+   */
+  async registrarSalidaAnterior(id: string, dto: SalidaAnteriorDto, usuarioId: string) {
+    const salidaEn = new Date(dto.salidaEn);
+    const resultado = await this.dataSource.transaction(async manager => {
+      const registration = await manager.getRepository(TicketRegistration).findOne({ where: { id }, relations: ['ticket'] });
+      if (!registration) throw new NotFoundException('Registro no encontrado.');
+      if (registration.departureTime) throw new BadRequestException({ code: 'ESTADIA_CERRADA', message: 'Esta estadía ya tiene la salida registrada.' });
+      this.validarSalidaAnterior(registration, salidaEn);
+      // Un QR o un alias esperando el pago cobraría otro importe sobre la misma estadía.
+      const [enCurso] = await manager.query(
+        `SELECT (SELECT count(*) FROM cobros_mercadopago WHERE "registrationId" = $1 AND estado = 'PENDIENTE')
+              + (SELECT count(*) FROM cobros_transferencia WHERE "registrationId" = $1 AND estado IN ('ESPERANDO', 'REVISION')) AS n`,
+        [id],
+      );
+      if (Number(enCurso?.n ?? 0) > 0)
+        throw new BadRequestException({ code: 'COBRO_EN_CURSO', message: 'Hay un cobro con QR o al alias esperando el pago: cancelalo antes de registrar la salida.' });
+      const ahora = await this.priceRegistration(registration, manager);
+      const saved = await this.cerrarEnTransaccion(manager, id, dto, usuarioId, salidaEn);
+      return {
+        registration: saved,
+        patente: saved.licensePlateOriginal || saved.codeBarTicket || saved.lastNameCustomer || null,
+        entrada: `${saved.entryDay} ${saved.entryTime?.slice(0, 5)}`,
+        salida: `${saved.departureDay} ${saved.departureTime?.slice(0, 5)}`,
+        importe: saved.price,
+        importeAhora: ahora.price,
+      };
+    });
+    this.ticketGateway.emitNewRegistration(resultado.registration);
+    return resultado;
   }
 
   /**

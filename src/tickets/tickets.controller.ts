@@ -7,6 +7,7 @@ import { PagoParcialDto } from './dto/pago-parcial.dto';
 import { CorregirEntradaDto } from './dto/corregir-entrada.dto';
 import { CorregirDatosEstadiaDto } from './dto/corregir-datos-estadia.dto';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
+import { SalidaAnteriorDto } from './dto/salida-anterior.dto';
 import { PreviewPriceDto, SimulatePriceDto } from './dto/preview-price.dto';
 import { TicketsService } from './tickets.service';
 import { TariffPlanService } from './tariff-plan.service';
@@ -239,6 +240,12 @@ export class TicketsController {
     return this.ticketsService.getCloseSummary(id);
   }
 
+  // Las tarifas que pudo haber pagado si se fue antes, con su importe (ver opcionesSalidaAnterior).
+  @Get('registrations/:id/salida-anterior')
+  opcionesSalidaAnterior(@Param('id') id: string) {
+    return this.ticketsService.opcionesSalidaAnterior(id);
+  }
+
   @Post('registrations/:id/discount')
   discountRegistration(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: DiscountRegistrationDto) {
     if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
@@ -275,6 +282,14 @@ export class TicketsController {
       throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
     }
     return this.ticketsService.closeRegistrationByPlate(id, dto, req.user.userId);
+  }
+
+  // «Se fue antes»: cobra lo que correspondía a la hora en que se fue y registra la salida con esa
+  // hora (ver registrarSalidaAnterior). Operador incluido; queda en la Actividad (audit-policy).
+  @Post('registrations/:id/salida-anterior')
+  registrarSalidaAnterior(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: SalidaAnteriorDto) {
+    if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    return this.ticketsService.registrarSalidaAnterior(id, dto, req.user.userId);
   }
 
   // Una estadía abierta y sin cobros que se cargó por error. Solo el administrador: no está en

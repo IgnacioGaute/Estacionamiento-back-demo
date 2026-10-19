@@ -32,6 +32,9 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     // La parte en efectivo de un pago híbrido con QR o alias (ver cobrarParteEnEfectivo).
     'pagoParcial',
     'closeRegistrationByPlate',
+    // «Se fue antes»: las tarifas posibles y la salida con la tarifa elegida (ver registrarSalidaAnterior).
+    'opcionesSalidaAnterior',
+    'registrarSalidaAnterior',
     'getFrequentCustomers',
     'getPlateHistory',
     'findOne',
@@ -130,6 +133,8 @@ export const SUSPENDED_ENDPOINTS: Record<string, readonly string[]> = {
     'corregirDatos',
     'pagoParcial',
     'closeRegistrationByPlate',
+    'opcionesSalidaAnterior',
+    'registrarSalidaAnterior',
     'issueParkingReceipt',
     'findOne',
   ],
