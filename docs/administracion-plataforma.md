@@ -62,3 +62,11 @@ un formulario para crear playas; SUPER_ADMIN lo hace desde la administración.
 - Las integraciones usan clústeres PostgreSQL temporales; no leen `.env` del proyecto.
 - Frontend: TypeScript, build aislado y revisión de usuarios/tickets en escritorio y móvil.
 - Para ejecutar el compilado con aliases: `node scripts/start-compiled.cjs`.
+
+## Modalidad de operación
+
+En la ficha de la empresa, pestaña Playas, la columna Modalidad cambia una playa entre Con cobro y
+Gratuito. Es exclusiva del super admin, no depende del plan y queda en la Actividad
+(`PLAYA_MODALIDAD`). El diálogo muestra el alcance, los pendientes que bloquean el paso a gratuita
+(turnos y cajas abiertos, vehículos con cobro adentro, Día/Sem/Mes sin retirar, cobros QR o alias en
+espera) y los avisos. Detalle en `docs/modalidad-gratuita.md`.

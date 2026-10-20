@@ -4,7 +4,9 @@ import { DataSource } from 'typeorm';
 // `suspendida`: la empresa está suspendida y solo puede terminar lo que quedó abierto (ver
 // SUSPENDED_ENDPOINTS). Los servicios que abren algo nuevo por un camino compartido con un cierre
 // (el escáner) lo miran acá.
-export interface TenantScope { empresaId: string; playaId: string; userId: string; role?: string; platform?: boolean; suspendida?: boolean }
+// `modalidad`: la de la playa al resolver la solicitud (ver modalidad.ts). Sirve para el corte de
+// endpoints; las escrituras la vuelven a leer dentro de su transacción.
+export interface TenantScope { empresaId: string; playaId: string; userId: string; role?: string; platform?: boolean; suspendida?: boolean; modalidad?: 'CON_COBRO' | 'GRATUITO' }
 export const tenantContext = new AsyncLocalStorage<TenantScope>();
 
 /** Every QueryRunner owns one pool connection. Set its scope before its first query,

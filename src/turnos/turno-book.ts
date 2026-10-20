@@ -7,6 +7,7 @@ import timezone from 'dayjs/plugin/timezone';
 import { Turno } from './entities/turno.entity';
 import { TurnoPayment } from './entities/turno-payment.entity';
 import { tenantContext } from 'src/tenancy/tenant-context';
+import { exigirCobro } from 'src/tenancy/modalidad';
 dayjs.extend(utc);
 dayjs.extend(timezone);
 export const SHIFT_TZ = 'America/Argentina/Buenos_Aires';
@@ -116,6 +117,8 @@ export async function operatorShift(m: EntityManager, userId = tenantContext.get
 export async function recordDigital(m: EntityManager, amount: number, method: string | null | undefined,
   reference: string, userId?: string | null, turnoId?: string | null) {
   if (!amount || !method || method === 'CASH') return;
+  // Ingreso digital (o su reversión): en una playa gratuita no hay cobros que registrar.
+  await exigirCobro(m);
   const shift = turnoId === undefined ? await paymentShift(m, userId ?? undefined) : null;
   await m.getRepository(TurnoPayment).save({ amount, medio: externalPayment.getStore()?.medio ?? (method === 'MERCADOPAGO' ? 'QR' : method),
     referencia: reference, turnoId: turnoId === undefined ? shift?.id ?? null : turnoId });

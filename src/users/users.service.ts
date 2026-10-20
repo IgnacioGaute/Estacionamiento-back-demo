@@ -1,11 +1,11 @@
-import { tenantContext } from '../tenancy/tenant-context';
+import { tenantContext, TenantScope } from '../tenancy/tenant-context';
 import { UsuarioPlaya } from '../tenancy/entities/usuario-playa.entity';
 import { BadRequestException, ForbiddenException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { User } from './entities/user.entity';
+import { User, UserRole } from './entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { FilterOperator, paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
 import { UpdatePasswordDto } from './dto/update-password.dto';
@@ -107,7 +107,8 @@ export class UsersService {
 
       if (user.role === 'SUPER_ADMIN') throw new ForbiddenException('Esta cuenta se administra fuera del panel de usuarios de empresa.');
 
-      const fieldsToUpdate = Object.entries(updateUserDto).reduce(
+      const { playaId, ...cambios } = updateUserDto;
+      const fieldsToUpdate = Object.entries(cambios).reduce(
         (acc, [key, value]) => {
           if (value !== undefined && value !== user[key]) {
             acc[key] = value;
@@ -130,6 +131,7 @@ export class UsersService {
         }
       }
 
+      const nuevoRol = fieldsToUpdate.role;
       const updatedUser = this.userRepository.merge(user, fieldsToUpdate);
 
       if (updateUserDto.password) {
@@ -137,7 +139,21 @@ export class UsersService {
         updatedUser.password = hashedPassword;
       }
 
-      const result = await this.userRepository.save(updatedUser);
+      // usuario_playas y turnos se filtran por la playa actual (RLS): con ese scope no se verían
+      // las asignaciones ni los turnos de las otras playas. El cambio de rol corre fuera del scope,
+      // como las asignaciones de TenantAccessService, y cada consulta queda atada a la empresa de
+      // la cuenta, que el findOne de arriba (con RLS) ya confirmó que es la de quien la cambia.
+      const scope = tenantContext.getStore();
+      const result = nuevoRol
+        ? await tenantContext.exit(() => this.userRepository.manager.transaction(async (m) => {
+            await this.cambiarRol(m, scope, user.id, user.empresaId, nuevoRol, playaId);
+            const guardado = await m.getRepository(User).save(updatedUser);
+            // El rol viaja en la sesión del frontend (menús, rutas): se cierran sus sesiones para
+            // que vuelva a entrar con el rol nuevo. El backend ya lo lee de la base en cada pedido.
+            await m.query('UPDATE users SET "authVersion" = "authVersion" + 1 WHERE id = $1', [user.id]);
+            return guardado;
+          }))
+        : await this.userRepository.save(updatedUser);
 
       this.logger.log(`User "${result.email}" updated successfully`);
       const { password, ...publicUser } = result;
@@ -146,13 +162,74 @@ export class UsersService {
       if (
         !(
           error instanceof NotFoundException ||
-          error instanceof BadRequestException
+          error instanceof BadRequestException ||
+          error instanceof ConflictException ||
+          error instanceof ForbiddenException
         )
       ) {
         this.logger.error(error.message, error.stack);
       }
       throw error;
     }
+  }
+
+  // Pasar de operador a administrador o al revés. Se bloquean todos los administradores de la
+  // empresa (y la cuenta) para que dos administradores que se bajan el rol a la vez no dejen la
+  // empresa sin ninguno, y se relee todo dentro de la transacción.
+  private async cambiarRol(m: EntityManager, scope: TenantScope | undefined, id: string, empresaId: string | null, nuevoRol: UserRole, playaId?: string) {
+    if (scope?.userId === id)
+      throw new ConflictException({ code: 'ROL_PROPIO', message: 'No podés cambiar tu propio rol: pedíselo a otro administrador.' });
+    if (!empresaId || (!scope?.platform && scope?.empresaId !== empresaId))
+      throw new ForbiddenException('Esta cuenta se administra fuera del panel de usuarios de empresa.');
+
+    const admins: { id: string }[] = await m.query(
+      `SELECT id FROM users WHERE "empresaId" = $1 AND role = 'ADMIN' AND "deletedAt" IS NULL ORDER BY id FOR UPDATE`,
+      [empresaId],
+    );
+    const [cuenta] = await m.query(
+      'SELECT role FROM users WHERE id = $1 AND "empresaId" = $2 AND "deletedAt" IS NULL FOR UPDATE',
+      [id, empresaId],
+    );
+    if (!cuenta) throw new NotFoundException('User not found');
+    // Otro administrador le pudo haber sacado el rol a quien hace el cambio mientras tanto.
+    if (scope?.role === 'ADMIN' && !admins.some((a) => a.id === scope.userId))
+      throw new ForbiddenException('Ya no sos administrador de esta empresa.');
+
+    if (nuevoRol === 'ADMIN') {
+      // Mismo rol por playa que al crear un administrador; conserva las playas que ya tenía.
+      await m.query(`UPDATE usuario_playas SET "rolPlaya" = 'ENCARGADO' WHERE "usuarioId" = $1`, [id]);
+      return;
+    }
+
+    if (cuenta.role === 'ADMIN' && !admins.some((a) => a.id !== id))
+      throw new ConflictException({ code: 'ULTIMO_ADMIN', message: 'La empresa tiene que tener al menos un administrador.' });
+
+    // El operador entra a una sola playa: la elegida, la única que ya tenía o la única de la empresa.
+    let destino = playaId;
+    if (destino) {
+      const [playa] = await m.query('SELECT id FROM playas WHERE id = $1 AND "empresaId" = $2', [destino, empresaId]);
+      if (!playa) throw new ForbiddenException('La playa no pertenece a la empresa del usuario.');
+    } else {
+      const propias: { playaId: string }[] = await m.query(
+        `SELECT up."playaId" FROM usuario_playas up JOIN playas p ON p.id = up."playaId" AND p."empresaId" = $2 WHERE up."usuarioId" = $1`,
+        [id, empresaId],
+      );
+      const empresa: { id: string }[] = await m.query('SELECT id FROM playas WHERE "empresaId" = $1', [empresaId]);
+      destino = propias.length === 1 ? propias[0].playaId : empresa.length === 1 ? empresa[0].id : undefined;
+      if (!destino)
+        throw new BadRequestException({ code: 'PLAYA_REQUERIDA', message: 'Elegí la playa en la que va a operar.' });
+    }
+
+    // Un turno abierto en otra playa quedaría sin poder cerrarse: el operador solo ve la suya.
+    const [turno] = await m.query(
+      `SELECT count(*)::int AS n FROM turnos WHERE "usuarioAperturaId" = $1 AND estado = 'ABIERTO' AND "playaId" IS DISTINCT FROM $2`,
+      [id, destino],
+    );
+    if (turno.n > 0)
+      throw new ConflictException({ code: 'TURNO_ABIERTO', message: 'Tiene un turno abierto en otra playa: tiene que cerrarlo antes de pasar a operador.' });
+
+    await m.query('DELETE FROM usuario_playas WHERE "usuarioId" = $1', [id]);
+    await m.query(`INSERT INTO usuario_playas ("usuarioId", "playaId", "rolPlaya") VALUES ($1, $2, 'OPERADOR')`, [id, destino]);
   }
 
   async remove(id: string) {

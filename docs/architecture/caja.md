@@ -50,3 +50,11 @@ later links to another box. The planilla uses these daily entries, with legacy f
 movements or pricing snapshots. Box lookups (`findBoxByDate`/`findOne`) eagerly load a deep relation graph
 (receipts → customers → parkingOwners/parkingRenters → payment history) — extend carefully, this is already a
 heavy query.
+
+### Salida gratuita
+
+A stay that entered in a GRATUITO playa has `modalidad = 'GRATUITO'`, no `pricingSnapshot`, and leaves through
+`PATCH /tickets/registrations/:id/salida` (`registrarSalidaGratuita`): no price, `Movimiento`, cortesía, `cash_entries`
+or `BoxList`; the card is unlinked; retries return the same row. `priceRegistration` rejects these stays with
+`ESTADIA_GRATUITA`, so no charging path can price them. `applyTicketPayment`, `MovimientosService.create`, turno opening
+and QR/alias creation call `exigirCobro` after taking 718904. See `docs/modalidad-gratuita.md`.

@@ -30,7 +30,7 @@ Consequences for new code:
   with an explicit destination, or it runs unscoped.
 - A new table holding tenant data needs a `playaId` column plus its index, policy and triggers created in a
   migration — `synchronize` does not do RLS.
-- Sockets: all three gateways go through `TenantSocketAccess` (`src/tenancy/tenant-socket.ts`), which verifies the
+- Sockets: all gateways (tickets, notes, interest and `PlayaConfigGateway`) go through `TenantSocketAccess` (`src/tenancy/tenant-socket.ts`), which verifies the
   handshake JWT, joins `playa:<id>`, and **revalidates account, `authVersion`, expiry and playa access before
   every emit**, disconnecting revoked clients.
 - `TenancyController` (`/tenancy/...`: empresas, playas, usuarios, asignaciones) is `SuperAdminGuard`-only and
@@ -58,7 +58,14 @@ Consequences for new code:
     charging exits, receipts, MercadoPago QR, turnos, reading the caja), answering `EMPRESA_SUSPENDIDA` otherwise.
     The scanner stays reachable for the second scan; `TicketsService.createRegistration` rejects the opening one
     via `tenantContext` `suspendida`;
-  - restricts `UsersController` to ADMIN/SUPER_ADMIN, except a user reading or re-passwording themselves;
+  - restricts `UsersController` to ADMIN/SUPER_ADMIN, except a user reading or re-passwording themselves.
+    A role change (`PATCH /users/:id { role, playaId? }`, `UsersService.cambiarRol`) runs outside the playa
+    scope (like operator assignments: `usuario_playas` and `turnos` are filtered by the current playa) with every
+    query bound to the account's empresa. It locks the empresa's admins, rejects changing one's own role
+    (`ROL_PROPIO`), leaving no admin (`ULTIMO_ADMIN`, also against two admins demoting each other), a demotion
+    without a determinable playa (`PLAYA_REQUERIDA`) or with an open turno in another playa (`TURNO_ABIERTO`),
+    rewrites `usuario_playas` (one `OPERADOR` row, or `ENCARGADO` on promotion) and bumps `authVersion` so the
+    account signs in again with the new role;
   - allows role `USER` only the handlers listed in `src/tenancy/endpoint-policy.ts`.
 - `OPERATOR_ENDPOINTS` is an allowlist keyed by **controller class + handler name** (not URL spelling, so casing
   or a trailing slash cannot bypass it). A new handler is administrator-only until it is added there.
@@ -68,3 +75,11 @@ Consequences for new code:
 - Endpoints that write money still need a real user on top of all this:
   `if (!req.user?.userId) throw new UnauthorizedException(...)` (see `TicketsController.closeRegistrationByPlate`,
   `requireUserId` in `TurnosController`) — `Movimiento.usuario` is not nullable.
+
+### Modalidad de operación (con cobro / gratuito)
+
+`playas.modalidad` is set only by the super admin (`PATCH /tenancy/playas/:id/modalidad`; `parking_scoped` only reads
+`playas`). `TenantScope.modalidad` carries it; `TenantInterceptor` answers `403 MODALIDAD_GRATUITA` to the handlers in
+`FREE_MODE_BLOCKED` (`endpoint-policy.ts`, class + handler like the other lists) when the playa is GRATUITO, for every
+role. A new money or receipt handler must be added there; `endpoint-policy.spec.ts` checks the names. Money funnels
+re-check inside their transaction with `exigirCobro` (`src/tenancy/modalidad.ts`). See `docs/modalidad-gratuita.md`.

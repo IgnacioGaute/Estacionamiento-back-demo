@@ -19,6 +19,8 @@ export interface ParkingReceiptSnapshot {
   total: number | null;
   collected: number | null;
   operatorName?: string | null;
+  // Ausente en constancias anteriores (= con cobro). Gratuita: sin importes (total/collected null).
+  modalidad?: 'CON_COBRO' | 'GRATUITO';
 }
 
 // El recibo de un pago de inquilino (cuenta corriente). Documenta la plata recibida, no la

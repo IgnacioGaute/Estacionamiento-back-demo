@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
-import { OPERATOR_ENDPOINTS, SUSPENDED_ENDPOINTS } from './endpoint-policy';
+import { FREE_MODE_BLOCKED, OPERATOR_ENDPOINTS, SUSPENDED_ENDPOINTS } from './endpoint-policy';
 
 // Las listas de permisos nombran clase y método como texto. Si alguien renombra un handler o
 // escribe mal un nombre, nada falla al compilar: el operador empieza a recibir 403 (o la empresa
@@ -20,7 +20,7 @@ for (const ruta of archivos(join(__dirname, '..'))) {
   for (const [, clase] of readFileSync(ruta, 'utf8').matchAll(/export class (\w+Controller)\b/g)) ubicacion.set(clase, ruta);
 }
 
-const politicas = { OPERATOR_ENDPOINTS, SUSPENDED_ENDPOINTS };
+const politicas = { OPERATOR_ENDPOINTS, SUSPENDED_ENDPOINTS, FREE_MODE_BLOCKED };
 const casos = Object.entries(politicas).flatMap(([politica, lista]) =>
   Object.entries(lista).map(([controlador, handlers]) => [politica, controlador, handlers] as const),
 );
