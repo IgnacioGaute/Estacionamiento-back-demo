@@ -16,6 +16,7 @@ import { TicketType } from './ticket.constants';
 import { BoxList } from 'src/box-lists/entities/box-list.entity';
 import { PricingSnapshot, PricingDayType, PricingLine } from '../pricing/pricing.types';
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
+import type { Modalidad } from 'src/tenancy/modalidad';
 @Entity({ name: 'ticket_registrations' })
 export class TicketRegistration {
   @Column('uuid', { nullable: true }) exitTurnoId: string | null;
@@ -45,6 +46,10 @@ export class TicketRegistration {
 
   @Column('varchar', { nullable: true })
   entryMode: 'BARCODE' | 'PLATE' | null;
+
+  // La modalidad de la playa cuando ingresó; con ella sale. Las filas anteriores son CON_COBRO.
+  @Column('varchar', { length: 20, default: 'CON_COBRO' })
+  modalidad: Modalidad;
 
   
   @Column('varchar', { length: 255 })

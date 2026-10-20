@@ -33,6 +33,7 @@ import {
   esTransferenciaRecibida,
 } from './coincidencias';
 import { tenantContext } from 'src/tenancy/tenant-context';
+import { exigirCobro } from 'src/tenancy/modalidad';
 
 const API = 'https://api.mercadopago.com';
 const TIEMPO_LIMITE_MS = 12_000;
@@ -294,8 +295,10 @@ export class VerificacionAliasService {
       throw new BadRequestException('No queda saldo por cobrar.');
     const ahora = Date.now();
     try {
-      const nuevo = await this.intentos.save(
-        this.intentos.create({
+      // Con la modalidad vigente y el bloqueo de caja, como el QR (ver CobrosService.crear).
+      const nuevo = await this.intentos.manager.transaction(async (m) => {
+        await exigirCobro(m);
+        return m.save(this.intentos.create({
           empresaId,
           playaId,
           registrationId,
@@ -309,8 +312,8 @@ export class VerificacionAliasService {
           ventanaMinutos: VENTANA_INICIAL_MIN,
           venceEl: new Date(ahora + ESPERA_MS),
           creadoPor: userId,
-        }),
-      );
+        }));
+      });
       return this.consultar(nuevo.id);
     } catch (error: any) {
       // Dos toques seguidos: el índice único deja uno solo abierto por estadía.

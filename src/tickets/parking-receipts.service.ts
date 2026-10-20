@@ -15,6 +15,7 @@ import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import { TicketsService } from './tickets.service';
+import { esGratuita } from '../tenancy/modalidad';
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
@@ -72,6 +73,7 @@ export class ParkingReceiptsService {
       const departure = dayRegistration?.retiredAt
         ? dayjs(dayRegistration.retiredAt).tz('America/Argentina/Buenos_Aires')
         : null;
+      const gratuita = esGratuita(registration?.modalidad);
       if (!receipt)
         receipt = await repository.save(
           repository.create({
@@ -108,12 +110,14 @@ export class ParkingReceiptsService {
                     departure?.format('HH:mm:ss') ??
                     null)
                   : null,
+              // Una estadía gratuita no tiene importes: la constancia no muestra ni un $0.
+              modalidad: gratuita ? 'GRATUITO' : 'CON_COBRO',
               total:
-                kind === 'EXIT'
+                kind === 'EXIT' && !gratuita
                   ? (registration?.price ?? dayRegistration?.price ?? 0)
                   : null,
               collected:
-                kind === 'EXIT'
+                kind === 'EXIT' && !gratuita
                   ? registration
                     ? await this.tickets.collectedAmount(registration, manager)
                     : dayRegistration?.paid

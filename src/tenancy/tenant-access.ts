@@ -17,7 +17,8 @@ import { DataSource } from 'typeorm';
 import { Observable } from 'rxjs';
 import { JwtAuthGuard } from '../utils/guards/auth.guard';
 import { tenantContext, TenantScope } from './tenant-context';
-import { OPERATOR_ENDPOINTS, SUSPENDED_ENDPOINTS } from './endpoint-policy';
+import { FREE_MODE_BLOCKED, OPERATOR_ENDPOINTS, SUSPENDED_ENDPOINTS } from './endpoint-policy';
+import { esGratuita, modalidadGratuita } from './modalidad';
 import { SuscripcionesService } from '../saas/suscripciones.service';
 import { limitLogin } from '../auth/login-limiter';
 import { alprConfigurado } from '../plate-recognition/alpr';
@@ -49,7 +50,7 @@ export class TenantAccessService {
         user,
         empresa: null,
         playas: await this.ds.query(
-          `SELECT id, nombre, "empresaId", modulos, ${reconocimientoPatentes()} FROM playas p ORDER BY nombre`,
+          `SELECT id, nombre, "empresaId", modulos, modalidad, ${reconocimientoPatentes()} FROM playas p ORDER BY nombre`,
         ),
       };
     // Suspendida sigue resolviendo su playa: TenantGuard ya acotó qué puede hacer.
@@ -60,7 +61,7 @@ export class TenantAccessService {
     if (!empresa)
       throw new ForbiddenException('Tu cuenta no tiene una empresa activa.');
     const playas = await this.ds.query(
-      `SELECT p.id,p.nombre,p."empresaId",p.modulos,${reconocimientoPatentes()} FROM playas p WHERE p."empresaId"=$1 AND ($2='ADMIN' OR EXISTS(SELECT 1 FROM usuario_playas up WHERE up."playaId"=p.id AND up."usuarioId"=$3)) ORDER BY p.nombre,p.id`,
+      `SELECT p.id,p.nombre,p."empresaId",p.modulos,p.modalidad,${reconocimientoPatentes()} FROM playas p WHERE p."empresaId"=$1 AND ($2='ADMIN' OR EXISTS(SELECT 1 FROM usuario_playas up WHERE up."playaId"=p.id AND up."usuarioId"=$3)) ORDER BY p.nombre,p.id`,
       [empresa.id, user.role, user.id],
     );
     return { user, empresa, playas };
@@ -174,6 +175,7 @@ export class TenantAccessService {
       playaId: playa.id,
       platform: context.user.role === 'SUPER_ADMIN',
       suspendida: context.empresa?.estado === 'SUSPENDIDA',
+      modalidad: esGratuita(playa.modalidad) ? 'GRATUITO' : 'CON_COBRO',
     };
   }
 }
@@ -275,6 +277,13 @@ export class TenantInterceptor implements NestInterceptor {
     )
       throw new ForbiddenException('Playa inválida.');
     const scope = await this.access.resolve(req.user.userId, raw);
+    // En una playa gratuita no hay tarifas, cobros ni caja: se corta acá, para todos los roles, con
+    // la misma lista por clase y handler. Las lecturas del historial financiero siguen abiertas.
+    if (
+      scope.modalidad === 'GRATUITO' &&
+      FREE_MODE_BLOCKED[controller]?.includes(context.getHandler().name)
+    )
+      throw modalidadGratuita();
     return new Observable((subscriber) =>
       tenantContext.run(scope, () => {
         const subscription = next.handle().subscribe(subscriber);

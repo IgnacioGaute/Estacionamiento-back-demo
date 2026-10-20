@@ -19,3 +19,11 @@ time. QR/print follow `receiptDelivery`, but WhatsApp is offered whenever the re
 (`telefono` in the response), regardless of the toggle. Renters can also pay by MercadoPago QR (`CobroMercadoPago.tipo = 'INQUILINO'`, `registrationId` = customer id,
 amount/cargos in `detalle`); accreditation posts one PAGO with `metodo: 'MERCADOPAGO'` (outside the cash drawer, not
 anulable). `MERCADOPAGO` exists in the stored payment enums but never in DTOs, so nobody can declare it by hand.
+
+### Modalidad gratuita
+
+A GRATUITO playa issues no receipts: `issueParkingReceipt` and `CuentasController.emitirComprobante` are in
+`FREE_MODE_BLOCKED`, `getSchedule` returns `receiptDelivery` switched off (the stored setting is kept) and
+`updateSchedule` rejects changing it. A stay that entered free and leaves after the playa went back to CON_COBRO gets
+an EXIT snapshot with `modalidad: 'GRATUITO'` and `total`/`collected` null; comprobantes and the frontend omit the
+amounts block for it.

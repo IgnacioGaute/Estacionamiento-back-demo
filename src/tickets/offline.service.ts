@@ -4,6 +4,7 @@ import { DataSource, In, IsNull, MoreThanOrEqual } from 'typeorm';
 import { createHash } from 'crypto';
 import dayjs from 'dayjs';
 import { tenantContext } from 'src/tenancy/tenant-context';
+import { esGratuita, leerModalidad } from 'src/tenancy/modalidad';
 import { OfflineSession } from './entities/offline-session.entity';
 import { TicketRegistration } from './entities/ticket-registration.entity';
 import { TicketRegistrationForDay } from './entities/ticket-registration-for-day.entity';
@@ -31,6 +32,10 @@ export class OfflineService {
     return this.ds.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      // La contingencia calcula y cobra salidas con tarifas en el navegador: en una playa gratuita
+      // no hay nada de eso, y todavía no tiene un circuito propio sin importes.
+      if ((await leerModalidad(manager, scope.playaId)) === 'GRATUITO')
+        throw new ConflictException({ code: 'OFFLINE_NO_DISPONIBLE_GRATUITO', message: 'El modo sin conexión no está disponible en la modalidad gratuita.' });
       await rolloverShifts(manager);
       const schedule = await this.tickets.getSchedule(manager);
       const shift = schedule.shiftsEnabled
@@ -87,7 +92,7 @@ export class OfflineService {
           ];
         }),
       ];
-      const snapshot = { version: 2, userId: scope.userId, playaId: scope.playaId, operatorName, shift: shift ? { id: shift.id, name: shift.nombre } : null, shiftsEnabled: schedule.shiftsEnabled === true, business, receiptDelivery: schedule.receiptDelivery, capturedAt: now.toISOString(), expiresAt: now.getTime() + 86400000, pricing, types: types.map(t => ({ code: t.code, name: t.name })), vehicles, receipts };
+      const snapshot = { version: 2, modalidad: 'CON_COBRO' as const, userId: scope.userId, playaId: scope.playaId, operatorName, shift: shift ? { id: shift.id, name: shift.nombre } : null, shiftsEnabled: schedule.shiftsEnabled === true, business, receiptDelivery: schedule.receiptDelivery, capturedAt: now.toISOString(), expiresAt: now.getTime() + 86400000, pricing, types: types.map(t => ({ code: t.code, name: t.name })), vehicles, receipts };
       const session = await repo.save(repo.create({ playaId: scope.playaId, userId: scope.userId, deviceId, createdAt: now, expiresAt: new Date(snapshot.expiresAt), active: true, snapshot, processed: {} }));
       return { ...snapshot, sessionId: session.id, processedIds: [] };
     });
@@ -105,6 +110,11 @@ export class OfflineService {
       const previous = session.processed[dto.id];
       if (previous) { if (previous.fingerprint !== fingerprint) throw new ConflictException('El identificador ya fue utilizado con otros datos.'); return { id: previous.registrationId }; }
       if (!session.active) throw new ConflictException('La contingencia fue finalizada. Conservá la operación para revisión.');
+      // Las contingencias solo se preparan con cobro. Si la playa pasó a gratuita en el medio, la
+      // entrada nacería con tarifas que nadie puede cobrar y la salida movería una caja que ya no
+      // existe: queda pendiente para revisión, igual que un cambio de turnos.
+      if ((await leerModalidad(manager, scope.playaId)) === 'GRATUITO')
+        throw new ConflictException({ code: 'MODALIDAD_CAMBIADA', message: 'La playa pasó a modalidad gratuita durante esta contingencia. La operación sigue pendiente para revisión.' });
       const time = Date.parse(dto.occurredAt);
       if (time < session.createdAt.getTime() - 120000 || time > session.expiresAt.getTime() || time > Date.now() + 120000) throw new ConflictException('La fecha de la operación está fuera del período autorizado.');
       const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
@@ -137,6 +147,7 @@ export class OfflineService {
         if (!registration || registration.departureTime) throw new ConflictException('Otro operador ya registró esta salida. No se volvió a cobrar.');
         const withTicket = await repo.findOne({ where: { id: dto.registrationId }, relations: ['ticket'] });
         registration.ticket = withTicket.ticket;
+        if (esGratuita(registration.modalidad)) throw new ConflictException({ code: 'ESTADIA_GRATUITA', message: 'Esta estadía ingresó en modalidad gratuita: su salida se registra con conexión, sin cobro.' });
         if (!registration.pricingSnapshot) throw new ConflictException('La estadía no tiene una copia de tarifas. Requiere revisión online.');
         const entry = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, TZ).toDate();
         if (time < entry.getTime()) throw new BadRequestException('La salida no puede ser anterior a la entrada.');

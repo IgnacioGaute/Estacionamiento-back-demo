@@ -35,6 +35,10 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     // «Se fue antes»: las tarifas posibles y la salida con la tarifa elegida (ver registrarSalidaAnterior).
     'opcionesSalidaAnterior',
     'registrarSalidaAnterior',
+    // La salida de una estadía que ingresó gratis (ver registrarSalidaGratuita).
+    'registrarSalida',
+    // Planilla de vehículos: entradas, salidas y permanencia, sin importes.
+    'planillaVehiculos',
     'getFrequentCustomers',
     'getPlateHistory',
     'findOne',
@@ -135,6 +139,7 @@ export const SUSPENDED_ENDPOINTS: Record<string, readonly string[]> = {
     'closeRegistrationByPlate',
     'opcionesSalidaAnterior',
     'registrarSalidaAnterior',
+    'registrarSalida',
     'issueParkingReceipt',
     'findOne',
   ],
@@ -155,4 +160,73 @@ export const SUSPENDED_ENDPOINTS: Record<string, readonly string[]> = {
   ],
   TurnosController:['open', 'close', 'getCashContext', 'getMyOpenTurno', 'estadiasAbiertas'],
   BoxListsController: ['findOne', 'findBoxByDate'],
+};
+
+// Lo que una playa en modalidad gratuita no puede hacer, cualquiera sea el rol (ver
+// src/tenancy/modalidad.ts): tarifas y simuladores, cobros, anticipos, descuentos, cortesías y
+// devoluciones, caja, turnos, comisiones, cuentas corrientes, recibos de clientes y cobros con
+// MercadoPago, y la entrega de comprobantes. Las lecturas no están: el administrador conserva el historial financiero previo.
+// Mismo criterio que las listas de arriba: clase y handler. Los embudos de dinero vuelven a
+// comprobarlo dentro de su transacción (exigirCobro), así que esta lista es la primera barrera,
+// no la única. La facturación SaaS (MiPlan, Suscripciones) no depende de la modalidad.
+export const FREE_MODE_BLOCKED: Record<string, readonly string[]> = {
+  TicketsController: [
+    'updateTariffPlan',
+    'simulateTariffPlan',
+    'createTicketPrice',
+    'updateTicketPrice',
+    'removeTicketPrice',
+    'simulatePrice',
+    'previewPrice',
+    'createPriceBracket',
+    'updatePriceBracket',
+    'removePriceBracket',
+    'previewPlannedPrice',
+    'addAdvancePayment',
+    'discountRegistration',
+    'pagoParcial',
+    'closeRegistrationByPlate',
+    'opcionesSalidaAnterior',
+    'registrarSalidaAnterior',
+    'createRegistrationForDay',
+    'retireRegistrationsForDay',
+    'updateTicketStatus',
+    'removeRegistrationForDay',
+    // Una playa gratuita no entrega comprobantes de entrada ni de salida.
+    'issueParkingReceipt',
+  ],
+  TurnosController: ['open', 'close', 'createCaja', 'updateCaja', 'addCashMovement'],
+  BoxListsController: [
+    'configurarComisiones',
+    'createBox',
+    'updateBoxByDate',
+    'updateBox',
+    'createOtherPayment',
+    'updateOtherPayment',
+    'removeOtherPayment',
+  ],
+  CuentasController: [
+    'previsualizarAbonos',
+    'registrarPago',
+    'registrarSaldoInicial',
+    'registrarAjuste',
+    'registrarDevolucion',
+    'anular',
+    'cargarAbonos',
+    'emitirComprobante',
+  ],
+  // Clientes mensuales: el alta y los cambios generan recibos y precios de cochera.
+  CustomersController: ['create', 'update', 'remove', 'softDelete', 'restoredCustomer', 'createInterest'],
+  ReceiptsController: ['updateByOwner', 'cancelReceiptByOwner', 'generateReceiptsManual', 'deleteReceipt'],
+  ParkingOwnersController: ['createOwnerParkingType', 'updateOwnerParkingType', 'removeOwnerParkingType'],
+  ParkingRentersController: ['updateAmount', 'createRenterParkingType', 'updateRenterParkingType', 'removeRenterParkingType'],
+  CobrosMercadoPagoController: ['crearCobro'],
+  VerificacionAliasController: ['iniciarCobro', 'asignarTransferencia', 'ampliarBusqueda'],
+  MercadoPagoController: [
+    'crearCajaQrConUbicacion',
+    'crearCajaQr',
+    'configurarVerificacionAlias',
+    'conectar',
+    'aceptarCondiciones',
+  ],
 };

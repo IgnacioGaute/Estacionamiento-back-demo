@@ -235,9 +235,33 @@ export class TicketsController {
     return this.ticketsService.searchActiveRegistrations(q);
   }
 
+  // Lleva `modalidad`: una estadía gratuita vuelve sin importes y sale por PATCH …/salida.
   @Get('registrations/:id/close-summary')
   getCloseSummary(@Param('id') id: string) {
-    return this.ticketsService.getCloseSummary(id);
+    return this.ticketsService.getResumenSalida(id);
+  }
+
+  // Planilla de vehículos (entradas, salidas, presentes, permanencia y operador; sin importes).
+  // Declarada antes de `registrations/:id` para que «planilla» no se lea como un id.
+  @Get('registrations/planilla')
+  planillaVehiculos(
+    @Query('desde') desde?: string,
+    @Query('hasta') hasta?: string,
+    @Query('estado') estado?: string,
+    @Query('operador') operador?: string,
+    @Query('tipo') tipo?: string,
+    @Query('q') q?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.ticketsService.planillaVehiculos({ desde, hasta, estado, operador, tipo, q }, listPagination(page, limit));
+  }
+
+  // La salida de una estadía que ingresó en modalidad gratuita: sin importes, medio de pago ni caja.
+  @Patch('registrations/:id/salida')
+  registrarSalida(@Req() req: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    return this.ticketsService.registrarSalidaGratuita(id, req.user.userId);
   }
 
   // Las tarifas que pudo haber pagado si se fue antes, con su importe (ver opcionesSalidaAnterior).
