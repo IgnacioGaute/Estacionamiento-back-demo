@@ -548,6 +548,63 @@ test('ADMIN y SUPER_ADMIN asignan una única playa; el operador no puede elegirl
   );
 });
 
+test('cambio de rol: permisos, playa del operador fuera del scope, turno abierto, último admin y sesiones', async () => {
+  const rol = (who, scope, id, body) =>
+    request(app.getHttpServer()).patch(`/users/${id}`).set('Authorization', 'Bearer ' + token(who)).set('X-Playa-Id', scope.playaId).send(body);
+  const fresco = (id) => ds.getRepository(User).findOneBy({ id });
+  const asignaciones = async (id) =>
+    (await ds.query('SELECT "playaId","rolPlaya" FROM usuario_playas WHERE "usuarioId"=$1 ORDER BY "playaId"', [id]));
+  let op = await ds.getRepository(User).findOneBy({ username: 'opA' });
+
+  await rol(op, a, op.id, { role: 'ADMIN' }).expect(403);
+  assert.equal((await rol(adminA, a, adminA.id, { role: 'USER' }).expect(409)).body.code, 'ROL_PROPIO');
+  await rol(adminB, b, op.id, { role: 'ADMIN' }).expect(404);
+
+  // Ascenso: ve todas las playas de la empresa, queda ENCARGADO y su sesión anterior deja de valer.
+  await rol(adminA, a, op.id, { role: 'ADMIN' }).expect(200);
+  await request(app.getHttpServer()).get('/tenant/context').set('Authorization', 'Bearer ' + token(op)).expect(401);
+  op = await fresco(op.id);
+  assert.equal(op.role, 'ADMIN');
+  assert.deepEqual((await asignaciones(op.id)).map((r) => r.rolPlaya), ['ENCARGADO']);
+  const ctx = (await request(app.getHttpServer()).get('/tenant/context').set('Authorization', 'Bearer ' + token(op)).expect(200)).body;
+  assert.deepEqual(ctx.playas.map((p) => p.id).sort(), [a.playaId, a2.playaId].sort());
+
+  // Desde A1 se lo baja a operador de A2: la asignación de A1 (que el scope de A1 sí ve) y la nueva
+  // de A2 (que no ve) se escriben fuera del scope. Playa ajena y playa ambigua se rechazan.
+  await rol(adminA, a, op.id, { role: 'USER', playaId: b.playaId }).expect(403);
+  await ds.query('INSERT INTO usuario_playas ("usuarioId","playaId","rolPlaya") VALUES ($1,$2,\'ENCARGADO\')', [op.id, a2.playaId]);
+  assert.equal((await rol(adminA, a, op.id, { role: 'USER' }).expect(400)).body.code, 'PLAYA_REQUERIDA');
+  const abierto = await ds.getRepository(Turno).save({ playaId: a.playaId, usuarioApertura: { id: op.id }, fondoInicial: 0, estado: 'ABIERTO' });
+  assert.equal((await rol(adminA, a, op.id, { role: 'USER', playaId: a2.playaId }).expect(409)).body.code, 'TURNO_ABIERTO');
+  assert.equal((await fresco(op.id)).role, 'ADMIN');
+  await ds.getRepository(Turno).update(abierto.id, { estado: 'CERRADO', fechaCierre: new Date() });
+  await rol(adminA, a, op.id, { role: 'USER', playaId: a2.playaId }).expect(200);
+  assert.deepEqual(await asignaciones(op.id), [{ playaId: a2.playaId, rolPlaya: 'OPERADOR' }]);
+
+  // Con una sola playa posible (la única que tenía) no hace falta elegirla.
+  await rol(adminA, a, op.id, { role: 'ADMIN' }).expect(200);
+  await rol(adminA, a, op.id, { role: 'USER' }).expect(200);
+  assert.deepEqual(await asignaciones(op.id), [{ playaId: a2.playaId, rolPlaya: 'OPERADOR' }]);
+  // Vuelve a quedar como al principio para las pruebas siguientes.
+  await request(app.getHttpServer()).patch(`/tenant/operators/${op.id}/playa`).set('Authorization', 'Bearer ' + token(adminA)).send({ playaId: a.playaId }).expect(200);
+  op = await fresco(op.id);
+  assert.equal(op.role, 'USER');
+  assert.deepEqual((await request(app.getHttpServer()).get('/tenant/context').set('Authorization', 'Bearer ' + token(op)).expect(200)).body.playas.map((p) => p.id), [a.playaId]);
+
+  // Dos administradores que se bajan el rol mutuamente a la vez: gana uno, nunca quedan cero.
+  const empresa = await ds.getRepository(Empresa).save({ nombre: 'Empresa roles' });
+  const playa = await ds.getRepository(Playa).save({ nombre: 'R1', empresaId: empresa.id });
+  const c = { empresaId: empresa.id, playaId: playa.id };
+  const [x, y] = await Promise.all(['x', 'y'].map((n) => ds.getRepository(User).save({ username: 'rol-' + n, email: `rol-${n}@example.test`, firstName: n, lastName: 'Admin', role: 'ADMIN', empresaId: empresa.id })));
+  const resultados = await Promise.all([rol(x, c, y.id, { role: 'USER' }), rol(y, c, x.id, { role: 'USER' })]);
+  assert.deepEqual(resultados.map((r) => r.status).filter((s) => s === 200), [200]);
+  assert.ok(resultados.every((r) => [200, 401, 403].includes(r.status)), resultados.map((r) => r.status).join());
+  const quedan = await ds.query(`SELECT id FROM users WHERE "empresaId"=$1 AND role='ADMIN'`, [empresa.id]);
+  assert.equal(quedan.length, 1);
+  // Y el super admin tampoco puede dejarla sin administradores.
+  assert.equal((await rol(superUser, c, quedan[0].id, { role: 'USER' }).expect(409)).body.code, 'ULTIMO_ADMIN');
+});
+
 test('tickets: misma patente en empresas diferentes, precios y cobros separados', async () => {
   const service = app.get(TicketsService);
   const registrations = [];
@@ -1375,4 +1432,58 @@ test('avisos automáticos: creación, búsqueda y lectura quedan aisladas por pl
     await assert.rejects(service.markRead(note.id, b.userId), /not found/);
     assert.ok(!(await service.unread(b.userId)).includes(note.id));
   });
+});
+
+test('avisos: filtros por estado, origen, período y autor, con conteos por estado', async () => {
+  const Note = load('notes/entities/note.entity', 'Note');
+  const { publishAutomaticNote } = require('../dist/notes/automatic-note');
+  // Empresa propia: las pruebas anteriores dan de baja cuentas compartidas (adminA, en sockets).
+  const empresa = await ds.getRepository(Empresa).save({ nombre: 'Empresa avisos' });
+  const playa = await ds.getRepository(Playa).save({ nombre: 'N1', empresaId: empresa.id });
+  const adminA = await ds.getRepository(User).save({ username: 'avisos-admin', email: 'avisos-admin@example.test', firstName: 'Ana', lastName: 'Admin', role: 'ADMIN', empresaId: empresa.id });
+  const op = await ds.getRepository(User).save({ username: 'avisos-op', email: 'avisos-op@example.test', firstName: 'Omar', lastName: 'Operador', role: 'USER', empresaId: empresa.id });
+  await ds.query(`INSERT INTO usuario_playas ("usuarioId","playaId","rolPlaya") VALUES ($1,$2,'OPERADOR')`, [op.id, playa.id]);
+  const a = { empresaId: empresa.id, playaId: playa.id, userId: adminA.id };
+  const marca = 'filtro' + require('node:crypto').randomUUID().slice(0, 8);
+  const listar = (who, params = '') => request(app.getHttpServer()).get(`/notes?search=${marca}${params}`)
+    .set('Authorization', 'Bearer ' + token(who)).set('X-Playa-Id', a.playaId);
+  await request(app.getHttpServer()).post(`/notes/users/${op.id}`).set('Authorization', 'Bearer ' + token(op)).set('X-Playa-Id', a.playaId)
+    .send({ description: `${marca} equipo` }).expect(201);
+  const opScope = { ...a, userId: op.id };
+  await scoped(opScope, () => ds.transaction(m => publishAutomaticNote(m, { sourceKey: `${marca}:t`, origin: 'Descuento de vehículo', sourceType: 'TICKET', sourceId: op.id, description: `${marca} ticket` })));
+  await scoped(a, () => ds.transaction(m => publishAutomaticNote(m, { sourceKey: `${marca}:c`, origin: 'Retiro de caja', sourceType: 'CAJA', sourceId: op.id, description: `${marca} caja` })));
+  await scoped(opScope, () => ds.getRepository(Note).save({ description: `${marca} viejo`, user: { id: op.id }, date: '2026-01-05', hours: '10:00:00' }));
+
+  // Para el admin: tres pendientes (los del operador) y uno propio, que nunca queda pendiente.
+  let r = (await listar(adminA).expect(200)).body;
+  assert.deepEqual(r.conteos, { todos: 4, sinLeer: 3, leidos: 1 });
+  assert.equal(r.data.length, 4);
+  assert.ok(['total', 'sinLeer', 'hoy'].every((k) => typeof r.resumen[k] === 'number'));
+  assert.ok(r.autores.some((u) => u.id === op.id) && r.autores.some((u) => u.id === adminA.id));
+  const cuenta = async (params) => (await listar(adminA, params).expect(200)).body.data.map((n) => n.description.replace(marca + ' ', '')).sort();
+  assert.deepEqual(await cuenta('&estado=SIN_LEER'), ['equipo', 'ticket', 'viejo']);
+  assert.deepEqual(await cuenta('&estado=LEIDOS'), ['caja']);
+  assert.deepEqual(await cuenta('&origen=EQUIPO'), ['equipo', 'viejo']);
+  assert.deepEqual(await cuenta('&origen=VEHICULOS'), ['ticket']);
+  assert.deepEqual(await cuenta('&origen=CAJA'), ['caja']);
+  assert.deepEqual(await cuenta('&origen=CLIENTES'), []);
+  assert.deepEqual(await cuenta('&desde=2026-01-01&hasta=2026-01-31'), ['viejo']);
+  assert.deepEqual(await cuenta(`&autor=${adminA.id}`), ['caja']);
+
+  // Leer uno lo pasa de estado; los conteos lo siguen.
+  const ticket = r.data.find((n) => n.description.endsWith('ticket'));
+  await request(app.getHttpServer()).post(`/notes/${ticket.id}/read`).set('Authorization', 'Bearer ' + token(adminA)).set('X-Playa-Id', a.playaId).expect(201);
+  r = (await listar(adminA, '&origen=VEHICULOS').expect(200)).body;
+  assert.deepEqual(r.conteos, { todos: 1, sinLeer: 0, leidos: 1 });
+  // El operador ve pendiente solo el aviso del admin, y la página dice cuál es.
+  r = (await listar(op).expect(200)).body;
+  assert.deepEqual(r.conteos, { todos: 4, sinLeer: 1, leidos: 3 });
+  assert.deepEqual(r.pendientes, [r.data.find((n) => n.description.endsWith('caja')).id]);
+  // Marcar todo: deja al día a quien lo pide y a nadie más.
+  await request(app.getHttpServer()).post('/notes/read-all').set('Authorization', 'Bearer ' + token(op)).set('X-Playa-Id', a.playaId).expect(201);
+  assert.deepEqual((await listar(op).expect(200)).body.conteos, { todos: 4, sinLeer: 0, leidos: 4 });
+  assert.equal((await listar(adminA).expect(200)).body.conteos.sinLeer, 2);
+
+  for (const malo of ['&estado=NUEVO', '&origen=OTRO', '&desde=2026-13-01', '&desde=2026-02-01&hasta=2026-01-01', '&autor=yo'])
+    assert.equal((await listar(adminA, malo).expect(400)).body.code, 'FILTRO_INVALIDO', malo);
 });

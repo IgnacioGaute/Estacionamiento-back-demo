@@ -1,10 +1,9 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, Req, UseGuards, ForbiddenException, Query } from '@nestjs/common';
 import { listPagination } from 'src/utils/list-pagination';
-import { NotesService } from './notes.service';
+import { FiltrosAvisos, NotesService } from './notes.service';
 import { CreateNoteDto } from './dto/create-note.dto';
 import { UpdateNoteDto } from './dto/update-note.dto';
-import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
-import { Note } from './entities/note.entity';
+import { Paginate, PaginateQuery } from 'nestjs-paginate';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
 
 @Controller('notes')
@@ -19,12 +18,25 @@ export class NotesController {
   }
 
   @Get()
-  findAll(@Paginate() query: PaginateQuery, @Req() req: any): Promise<Paginated<Note>> {
-    return this.notesService.findAll(query, req.user.userId);
+  findAll(
+    @Paginate() query: PaginateQuery,
+    @Req() req: any,
+    @Query('estado') estado?: FiltrosAvisos['estado'],
+    @Query('origen') origen?: FiltrosAvisos['origen'],
+    @Query('desde') desde?: string,
+    @Query('hasta') hasta?: string,
+    @Query('autor') autor?: string,
+  ) {
+    return this.notesService.findAll(query, req.user.userId, { estado, origen, desde, hasta, autor });
   }
   @Get('unread')
   unread(@Req() req: any) {
     return this.notesService.unread(req.user.userId);
+  }
+
+  @Post('read-all')
+  markAllRead(@Req() req: any) {
+    return this.notesService.markAllRead(req.user.userId);
   }
 
   @Post(':id/read')

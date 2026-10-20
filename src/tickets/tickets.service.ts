@@ -8,6 +8,7 @@ import { assertPricingCoverage, calculateStayPrice, validatePricingOptions } fro
 import { defaultPricingOptions, PricingOptions } from './pricing/pricing.types';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { tenantContext } from 'src/tenancy/tenant-context';
+import { esGratuita, estadiaConCobro, estadiaGratuita, leerModalidad, modalidadGratuita, modalidadParaIngreso } from 'src/tenancy/modalidad';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { Ticket } from './entities/ticket.entity';
@@ -215,12 +216,23 @@ async removeTicketPrice(id: string) {
     const storedOptions = latest?.pricingOptions ?? defaultPricingOptions();
     // La permanencia se retiró de la configuración actual. Las copias guardadas en
     // estadías abiertas siguen intactas; ninguna entrada nueva usa reglas ocultas.
-    return { ...(latest ?? this.defaultTicketSchedule), receiptDelivery: latest?.receiptDelivery ?? { whatsapp: false, qr: false, print: false, paperWidth: 80 as const }, pricingOptions: { ...storedOptions, stay: { ...storedOptions.stay, enabled: false } } };
+    const receiptDelivery = latest?.receiptDelivery ?? { whatsapp: false, qr: false, print: false, paperWidth: 80 as const };
+    // Una playa gratuita no entrega comprobantes: la entrega efectiva queda apagada (lo guardado se
+    // conserva para cuando vuelva a cobrar).
+    const entrega = esGratuita(scope?.modalidad) ? { ...receiptDelivery, whatsapp: false, qr: false, print: false } : receiptDelivery;
+    return { ...(latest ?? this.defaultTicketSchedule), receiptDelivery: entrega, pricingOptions: { ...storedOptions, stay: { ...storedOptions.stay, enabled: false } } };
   }
 
   async updateSchedule(dto: UpdateTicketScheduleDto) {
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
+      // En una playa gratuita solo se configuran las tarjetas físicas. Horarios de tarifa, forma de
+      // cobro, turnos, sueldos y la entrega de comprobantes quedan como estaban para cuando vuelva a
+      // cobrar.
+      const playaId = tenantContext.getStore()?.playaId;
+      if (playaId && (await leerModalidad(manager, playaId)) === 'GRATUITO'
+        && Object.entries(dto).some(([campo, valor]) => valor !== undefined && campo !== 'barcodeTicketsEnabled'))
+        throw modalidadGratuita();
       if (dto.shiftsEnabled === false) {
         await manager.query('SELECT pg_advisory_xact_lock(718904)');
         const open = await manager.query(`SELECT id FROM turnos WHERE estado = 'ABIERTO' LIMIT 1`);
@@ -278,6 +290,21 @@ async removeTicketPrice(id: string) {
     return snapshot;
   }
 
+  /**
+   * Con qué nace una estadía. Con cobro, la copia de tarifas de siempre (y sin tarifas aplicables
+   * no entra). Gratuita, ninguna tarifa: solo se valida que el tipo de vehículo esté habilitado. La
+   * modalidad queda en la estadía y define su salida aunque después cambie la de la playa.
+   */
+  private async condicionesDeIngreso(vehicleType: string, manager: EntityManager) {
+    const modalidad = await modalidadParaIngreso(manager);
+    if (modalidad === 'GRATUITO') {
+      await this.assertVehicleType(vehicleType, manager);
+      return { modalidad, pricingSnapshot: null, capturedAt: new Date().toISOString() };
+    }
+    const pricingSnapshot = await this.capturePricing(vehicleType, manager);
+    return { modalidad, pricingSnapshot, capturedAt: pricingSnapshot.capturedAt };
+  }
+
   // Pasar las estadías que siguen adentro a las tarifas recién aplicadas (lo pide el administrador
   // al aplicar). Se recalcula toda la estadía, desde la entrada; lo ya cobrado sigue descontándose y
   // un pago de más se devuelve al cerrar. Corre en la transacción de updatePlan, que ya tiene el
@@ -308,7 +335,11 @@ async removeTicketPrice(id: string) {
     return manager.getRepository(TicketRegistration).count({ where: { departureTime: IsNull() } });
   }
 
+  // Todo importe de una estadía sale de acá (resumen, cierre, descuentos, QR/alias, «Se fue antes»):
+  // una estadía que ingresó gratis no tiene tarifa, y calcularle una con la configuración actual
+  // sería simular un cobro.
   private async priceRegistration(registration: TicketRegistration, manager?: EntityManager, salida: Date = new Date()) {
+    if (esGratuita(registration.modalidad)) throw estadiaGratuita();
     const vehicle = registration.vehicleType ?? registration.ticket?.vehicleType;
     if (!vehicle) throw new BadRequestException('El registro no tiene tipo de vehículo.');
     const snapshot = registration.pricingSnapshot ?? await this.capturePricing(vehicle, manager, false);
@@ -462,14 +493,14 @@ async removeTicketPrice(id: string) {
           code: 'EMPRESA_SUSPENDIDA',
           message: 'La cuenta está suspendida: solo se pueden registrar salidas.',
         });
-      const pricingSnapshot = await this.capturePricing(ticket.vehicleType, manager);
+      const { modalidad, pricingSnapshot, capturedAt } = await this.condicionesDeIngreso(ticket.vehicleType, manager);
       const entryOperatorName = userId ? await this.operatorName(userId, manager) : null;
-      const now = dayjs(pricingSnapshot.capturedAt).tz('America/Argentina/Buenos_Aires');
+      const now = dayjs(capturedAt).tz('America/Argentina/Buenos_Aires');
       const registration = await repository.save(repository.create({
         description: `Registro de ticket para vehículo tipo ${ticket.vehicleType}`, price: 0,
         entryDay: now.format('YYYY-MM-DD'), entryTime: now.format('HH:mm:ss'),
         ticket, vehicleType: ticket.vehicleType as any, codeBarTicket: ticket.codeBar,
-        pricingSnapshot, entryMode: 'BARCODE',
+        pricingSnapshot, modalidad, entryMode: 'BARCODE',
         entryOperatorName,
       }));
       return { registration, requiresClose: false };
@@ -727,6 +758,7 @@ async addAdvancePayment(id: string, dto: AdvancePaymentTicketRegistrationDto, us
     const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
     if (!registration) throw new NotFoundException('Registro no encontrado.');
     if (registration.departureTime) throw new BadRequestException('El ticket ya está cerrado.');
+    if (esGratuita(registration.modalidad)) throw estadiaGratuita();
     const collected = await this.collectedAmount(registration, manager);
     if (dto.chargeFullPlannedStay && dto.advancePaidAmount !== undefined) {
       throw new BadRequestException('El importe de la tarifa se calcula automáticamente.');
@@ -759,6 +791,7 @@ async addAdvancePayment(id: string, dto: AdvancePaymentTicketRegistrationDto, us
 }
 
   private async plannedPriceForRegistration(registration: TicketRegistration, minutes?: number | null, manager?: EntityManager) {
+    if (esGratuita(registration.modalidad)) throw estadiaGratuita();
     if (!Number.isInteger(minutes) || minutes! < 1 || minutes! > 5256000) {
       throw new BadRequestException('Elegí una duración válida para calcular la tarifa.');
     }
@@ -1033,12 +1066,12 @@ async removePriceBracket(id: string) {
         }
       }
 
-      const pricingSnapshot = await this.capturePricing(dto.vehicleType, manager);
+      const { modalidad, pricingSnapshot, capturedAt } = await this.condicionesDeIngreso(dto.vehicleType, manager);
       const entryOperatorName = userId ? await this.operatorName(userId, manager) : null;
-      const argentinaTime = dayjs(pricingSnapshot.capturedAt).tz('America/Argentina/Buenos_Aires');
+      const argentinaTime = dayjs(capturedAt).tz('America/Argentina/Buenos_Aires');
       const registration = repository.create({
         entryOperatorName,
-        pricingSnapshot, entryMode: 'PLATE',
+        pricingSnapshot, modalidad, entryMode: 'PLATE',
         description: `Registro por patente para vehículo tipo ${dto.vehicleType}`,
         price: 0,
         entryDay: argentinaTime.format('YYYY-MM-DD'),
@@ -1134,6 +1167,21 @@ async removePriceBracket(id: string) {
     if (registration.pricingSnapshot) return amount;
     registration.legacyCollectedOffset ??= Math.max(0, (registration.advancePaidAmount ?? 0) - amount);
     return amount + registration.legacyCollectedOffset;
+  }
+
+  /**
+   * Lo que muestra el panel de salida. Una estadía gratuita no tiene importes: solo el vehículo y su
+   * permanencia, y sale con registrarSalidaGratuita. Las demás llevan el resumen de cobro de siempre.
+   * Los servicios que necesitan importes (QR, alias, descuentos) siguen usando getCloseSummary, que
+   * rechaza las gratuitas.
+   */
+  async getResumenSalida(id: string, manager?: EntityManager) {
+    const registration = await (manager ? manager.getRepository(TicketRegistration) : this.ticketRegistrationRepository).findOne({ where: { id }, relations: ['ticket'] });
+    if (!registration) throw new NotFoundException('Registro no encontrado.');
+    if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
+    if (!esGratuita(registration.modalidad)) return { ...(await this.getCloseSummary(id, manager)), modalidad: registration.modalidad };
+    const entrada = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', 'America/Argentina/Buenos_Aires');
+    return { registration, modalidad: registration.modalidad, elapsedMinutes: Math.max(0, dayjs().diff(entrada, 'minute')) };
   }
 
   async getCloseSummary(id: string, manager?: EntityManager) {
@@ -1300,7 +1348,7 @@ async removePriceBracket(id: string) {
       registration.entryTime = nueva.format('HH:mm:ss');
       await repo.save(registration);
       return {
-        summary: await this.getCloseSummary(id, manager),
+        summary: await this.getResumenSalida(id, manager),
         // Para la Actividad (AuditInterceptor copia estos tres de la respuesta).
         patente: registration.licensePlateOriginal || registration.codeBarTicket || '',
         entradaAnterior: actual.format('DD/MM HH:mm'),
@@ -1363,7 +1411,7 @@ async removePriceBracket(id: string) {
       }
       await repo.save(registration);
       return {
-        summary: await this.getCloseSummary(id, manager),
+        summary: await this.getResumenSalida(id, manager),
         // Para la Actividad (AuditInterceptor copia estos de la respuesta).
         patente: registration.licensePlateOriginal || registration.codeBarTicket || '',
         patenteAnterior,
@@ -1373,6 +1421,42 @@ async removePriceBracket(id: string) {
     });
     this.ticketGateway.emitNewRegistration(result.summary.registration);
     return result;
+  }
+
+  /**
+   * La salida de una estadía que ingresó gratis, por patente o por tarjeta: sin tarifa, movimientos,
+   * cortesía, cash_entries ni caja (no es un cierre con cobro en $0). Vale aunque la playa ya haya
+   * vuelto a «Con cobro»: sale como ingresó. Una estadía con cobro se rechaza; esa sale por
+   * closeRegistrationByPlate. Reintentar devuelve la misma salida sin repetir nada. No exige turno:
+   * si el operador tiene uno abierto, la salida se le atribuye como cualquier otra.
+   */
+  async registrarSalidaGratuita(id: string, usuarioId: string) {
+    const saved = await this.dataSource.transaction(async manager => {
+      const repository = manager.getRepository(TicketRegistration);
+      // Siempre dentro de la playa del pedido: con el alcance de plataforma (super admin) la RLS deja
+      // ver todas, y la salida (y su aviso por socket) quedaría en la playa equivocada.
+      const playaId = tenantContext.getStore()?.playaId;
+      const registration = await repository.findOne({ where: { id, ...(playaId ? { playaId } : {}) }, lock: { mode: 'pessimistic_write' } });
+      if (!registration) throw new NotFoundException('Registro no encontrado.');
+      if (!esGratuita(registration.modalidad)) throw estadiaConCobro();
+      if (registration.departureTime) return { registration, repetida: true };
+      const withTicket = await repository.findOne({ where: { id }, relations: ['ticket'] });
+      const ticket = withTicket!.ticket;
+      const now = dayjs().tz('America/Argentina/Buenos_Aires');
+      registration.entryMode ??= ticket ? 'BARCODE' : 'PLATE';
+      registration.vehicleType ??= ticket?.vehicleType as any;
+      registration.codeBarTicket = ticket?.codeBar ?? registration.codeBarTicket;
+      registration.departureDay = now.format('YYYY-MM-DD');
+      registration.departureTime = now.format('HH:mm:ss');
+      registration.exitTurnoId = (await operatorShift(manager, usuarioId))?.id ?? null;
+      registration.exitOperatorName = await this.operatorName(usuarioId, manager);
+      registration.description = `${registration.entryMode === 'BARCODE' ? 'Ticket: ' + registration.codeBarTicket : 'Patente: ' + (registration.licensePlateOriginal ?? 'sin patente')}, Ent: ${registration.entryTime}, Sal: ${registration.departureTime}`;
+      // Libera la tarjeta física para el próximo vehículo, igual que el cierre con cobro.
+      registration.ticket = null;
+      return { registration: await repository.save(registration), repetida: false };
+    });
+    if (!saved.repetida) this.ticketGateway.emitNewRegistration(saved.registration);
+    return saved.registration;
   }
 
   // Ambas identificaciones usan una operación atómica; reintentar un cierre no vuelve a cobrar.
@@ -1500,6 +1584,7 @@ async removePriceBracket(id: string) {
     const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
     if (!registration) throw new NotFoundException('Registro no encontrado.');
     if (registration.departureTime) return { yaCerrada: true as const };
+    if (esGratuita(registration.modalidad)) throw estadiaGratuita();
     await this.movimientosService.create({ ticketRegistrationId: id, monto, metodo, tipo: 'ANTICIPO', referencia, usuarioId }, manager);
     await this.linkToTodaysBoxList(registration, metodo === 'CASH' ? monto : 0, manager, usuarioId);
     registration.advancePaidAmount = await this.collectedAmount(registration, manager);
@@ -1541,6 +1626,7 @@ async removePriceBracket(id: string) {
     const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
     if (!registration) throw new NotFoundException('Registro no encontrado.');
     if (registration.departureTime) return { yaCerrada: true as const };
+    if (esGratuita(registration.modalidad)) throw estadiaGratuita();
     await this.movimientosService.create({ ticketRegistrationId: id, monto, metodo, tipo: 'ANTICIPO', referencia, usuarioId }, manager);
     await this.linkToTodaysBoxList(registration, metodo === 'CASH' ? monto : 0, manager, usuarioId);
     registration.advancePaidAmount = await this.collectedAmount(registration, manager);
@@ -1784,5 +1870,80 @@ async removePriceBracket(id: string) {
       skip: (pagination.page - 1) * pagination.limit, take: pagination.limit,
     });
     return listResult(data, total, pagination);
+  }
+
+  /**
+   * Planilla operativa de vehículos: entradas, salidas y los que siguen adentro, con permanencia y
+   * operador de cada movimiento. Sin importes: sirve igual en playas gratuitas y con cobro. Las
+   * fechas son días de Buenos Aires (como se guardan); la permanencia de los que siguen adentro se
+   * cuenta hasta ahora. `estado`: TODAS (entró o salió en el rango), ENTRADAS, SALIDAS o PRESENTES
+   * (adentro ahora, sin mirar el rango). El operador filtra por quien registró ese movimiento.
+   */
+  async planillaVehiculos(filtros: { desde?: string; hasta?: string; estado?: string; operador?: string; tipo?: string; q?: string }, pagination: ListPagination) {
+    // Un día que existe (un «2026-13-01» tiene la forma pero no es una fecha).
+    const dia = (valor: string) => /^\d{4}-\d{2}-\d{2}$/.test(valor) && dayjs(valor).format('YYYY-MM-DD') === valor;
+    const hoy = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+    const desde = filtros.desde ?? hoy;
+    const hasta = filtros.hasta ?? desde;
+    if (!dia(desde) || !dia(hasta) || desde > hasta) throw new BadRequestException({ code: 'RANGO_INVALIDO', message: 'Elegí un rango de fechas válido.' });
+    const estado = (filtros.estado ?? 'TODAS').toUpperCase();
+    if (!['TODAS', 'ENTRADAS', 'SALIDAS', 'PRESENTES'].includes(estado)) throw new BadRequestException({ code: 'ESTADO_INVALIDO', message: 'Elegí entradas, salidas, presentes o todas.' });
+    // La playa del pedido, explícita: con el alcance de plataforma (super admin) la RLS deja ver todas.
+    const playaId = tenantContext.getStore()?.playaId;
+    if (!playaId) throw new BadRequestException({ code: 'PLAYA_REQUERIDA', message: 'Elegí una playa para ver su planilla.' });
+    const qb = this.ticketRegistrationRepository.createQueryBuilder('r').leftJoin('r.ticket', 't').where('r.playaId = :playaId', { playaId });
+    if (estado === 'PRESENTES') qb.andWhere('r.departureTime IS NULL');
+    else if (estado === 'ENTRADAS') qb.andWhere('r.entryDay BETWEEN :desde AND :hasta');
+    else if (estado === 'SALIDAS') qb.andWhere('r.departureDay BETWEEN :desde AND :hasta');
+    else qb.andWhere('(r.entryDay BETWEEN :desde AND :hasta OR r.departureDay BETWEEN :desde AND :hasta)');
+    qb.setParameters({ desde, hasta });
+    const operador = filtros.operador?.trim();
+    if (operador) {
+      if (estado === 'ENTRADAS' || estado === 'PRESENTES') qb.andWhere('r.entryOperatorName = :operador', { operador });
+      else if (estado === 'SALIDAS') qb.andWhere('r.exitOperatorName = :operador', { operador });
+      else qb.andWhere('(r.entryOperatorName = :operador OR r.exitOperatorName = :operador)', { operador });
+    }
+    if (filtros.tipo?.trim()) qb.andWhere('COALESCE(r.vehicleType, t.vehicleType) = :tipo', { tipo: filtros.tipo.trim() });
+    const q = filtros.q?.trim() ?? '';
+    if (q.length >= 2) {
+      qb.andWhere(new Brackets(b => b
+        .where('r.licensePlateSearch ILIKE :plate', { plate: `%${toSearchKey(normalizePlate(q))}%` })
+        .orWhere('COALESCE(r.codeBarTicket, t.codeBar) ILIKE :raw', { raw: `%${q}%` })
+        .orWhere('r.lastNameCustomer ILIKE :raw', { raw: `%${q}%` })));
+    }
+    const total = await qb.getCount();
+    const permanencia = `FLOOR(EXTRACT(EPOCH FROM (COALESCE(r."departureDay" + r."departureTime", (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')) - (r."entryDay" + COALESCE(r."entryTime", '00:00'::time)))) / 60)`;
+    const rows = await qb.clone()
+      .select('r.id', 'id')
+      .addSelect(`COALESCE(NULLIF(r.licensePlateOriginal, ''), r.codeBarTicket, t.codeBar, r.lastNameCustomer, 'Sin patente')`, 'vehiculo')
+      .addSelect('COALESCE(r.vehicleType, t.vehicleType)', 'tipo')
+      .addSelect(`COALESCE(r.entryMode, CASE WHEN t.id IS NULL THEN 'PLATE' ELSE 'BARCODE' END)`, 'origen')
+      .addSelect('r.modalidad', 'modalidad')
+      .addSelect('r.entryDay', 'entradaDia').addSelect('r.entryTime', 'entradaHora')
+      .addSelect('r.departureDay', 'salidaDia').addSelect('r.departureTime', 'salidaHora')
+      .addSelect(permanencia, 'permanenciaMinutos')
+      .addSelect('r.entryOperatorName', 'operadorEntrada').addSelect('r.exitOperatorName', 'operadorSalida')
+      .orderBy('r.entryDay', 'DESC').addOrderBy('r.entryTime', 'DESC').addOrderBy('r.id', 'DESC')
+      .offset((pagination.page - 1) * pagination.limit).limit(pagination.limit)
+      .getRawMany();
+    const data = rows.map(row => ({ ...row, permanenciaMinutos: row.permanenciaMinutos == null ? null : Math.max(0, Number(row.permanenciaMinutos)) }));
+    // Quiénes registraron movimientos en el rango, para el filtro (sin aplicar el propio filtro).
+    const operadores = await this.dataSource.query(
+      `SELECT nombre FROM (
+         SELECT "entryOperatorName" AS nombre FROM ticket_registrations WHERE "playaId" = $3 AND ("entryDay" BETWEEN $1 AND $2 OR "departureTime" IS NULL)
+         UNION SELECT "exitOperatorName" FROM ticket_registrations WHERE "playaId" = $3 AND "departureDay" BETWEEN $1 AND $2
+       ) o WHERE nombre IS NOT NULL ORDER BY nombre`,
+      [desde, hasta, playaId],
+    );
+    const [resumen] = await this.dataSource.query(
+      `SELECT (SELECT count(*) FROM ticket_registrations WHERE "playaId" = $3 AND "entryDay" BETWEEN $1 AND $2)::int AS entradas,
+              (SELECT count(*) FROM ticket_registrations WHERE "playaId" = $3 AND "departureDay" BETWEEN $1 AND $2)::int AS salidas,
+              (SELECT count(*) FROM ticket_registrations WHERE "playaId" = $3 AND "departureTime" IS NULL)::int AS presentes,
+              -- Permanencia típica: la mediana de las salidas del rango (un auto que quedó días no la mueve como un promedio).
+              (SELECT round(percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (("departureDay" + "departureTime") - ("entryDay" + COALESCE("entryTime", '00:00'::time)))) / 60))
+                 FROM ticket_registrations WHERE "playaId" = $3 AND "departureDay" BETWEEN $1 AND $2 AND "entryDay" IS NOT NULL)::int AS "permanenciaMediana"`,
+      [desde, hasta, playaId],
+    );
+    return { ...listResult(data, total, pagination), desde, hasta, estado, operadores: operadores.map((o: { nombre: string }) => o.nombre), resumen };
   }
 }

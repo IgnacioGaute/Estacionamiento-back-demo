@@ -17,6 +17,7 @@ import { CloseTurnoDto } from './dto/close-turno.dto';
 import { User, UserRole } from 'src/users/entities/user.entity';
 import { tenantContext } from 'src/tenancy/tenant-context';
 import dayjs from 'dayjs';
+import { exigirCobro } from 'src/tenancy/modalidad';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 
@@ -139,6 +140,7 @@ export class TurnosService {
   async saveCaja(dto: CajaDto, id?: string) {
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      await exigirCobro(manager);
       const repo = manager.getRepository(CashRegister);
       const cajas = await this.ensureCajas(manager);
       const caja = id ? await repo.findOneBy({ id }) : repo.create({ principal: false, activa: true });
@@ -161,6 +163,7 @@ export class TurnosService {
     if (rol !== 'ADMIN') throw new ForbiddenException('Sólo el administrador puede registrar retiros o aportes de efectivo.');
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      await exigirCobro(manager);
       const session = await manager.getRepository(CashSession).findOneBy({ id: sesionId, estado: 'ABIERTO' });
       if (!session) throw new ConflictException('La caja ya está cerrada.');
       const expected = await this.sessionTotal(sesionId, manager);
@@ -178,6 +181,8 @@ export class TurnosService {
   async open(usuarioId: string, dto: OpenTurnoDto): Promise<Turno> {
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      // Una playa gratuita no tiene caja ni turnos de caja (y el cambio a gratuita exige cerrarlos).
+      await exigirCobro(manager);
       const repo = manager.getRepository(Turno);
       if (await repo.exists({ where: { usuarioApertura: { id: usuarioId }, estado: 'ABIERTO' } })) throw new ConflictException('Ya tenés un turno abierto. Cerralo antes de abrir otro.');
       await rolloverShifts(manager);

@@ -1,4 +1,5 @@
 import { TenantSocketAccess } from './tenant-socket';
+import { PlayaConfigGateway } from './playa-config.gateway';
 import { TenantAccessService, TenantContextController } from './tenant-access';
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -26,7 +27,7 @@ import { PlateRecognizerCuentasModule } from 'src/plate-recognition/plate-recogn
     PlateRecognizerCuentasModule,
   ],
   controllers: [TenancyController, TenantContextController],
-  providers: [TenancyService, TenantAccessService, TenantSocketAccess],
+  providers: [TenancyService, TenantAccessService, TenantSocketAccess, PlayaConfigGateway],
   exports: [TypeOrmModule, TenancyService, TenantAccessService, TenantSocketAccess],
 })
 export class TenancyModule {}

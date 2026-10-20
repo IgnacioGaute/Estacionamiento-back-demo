@@ -17,14 +17,18 @@ function repoDeCobros() {
   let n = 0;
   const coincide = (f: any, where: any) =>
     Object.entries(where).every(([k, v]) => f[k] === v);
+  const save = async (d: any) => {
+    d.id ??= `cobro-${++n}`;
+    filas.set(d.id, { ...filas.get(d.id), ...d });
+    return filas.get(d.id);
+  };
   return {
     filas,
     create: (d: any) => ({ ...d }),
-    save: async (d: any) => {
-      d.id ??= `cobro-${++n}`;
-      filas.set(d.id, { ...filas.get(d.id), ...d });
-      return filas.get(d.id);
-    },
+    save,
+    // El cobro nuevo se guarda en una transacción que antes revisa la modalidad de la playa
+    // (exigirCobro). Sin playa en el scope no consulta nada.
+    manager: { transaction: (fn: (m: any) => Promise<any>) => fn({ query: async () => [], save }) },
     findOneBy: async (where: any) =>
       [...filas.values()].find((f) => coincide(f, where)) ?? null,
     findBy: async (where: any) =>

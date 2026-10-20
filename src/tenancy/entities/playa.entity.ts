@@ -9,6 +9,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { Empresa } from './empresa.entity';
+import type { Modalidad } from '../modalidad';
 
 export type ModulosPlaya = { inquilinos?: boolean };
 
@@ -36,6 +37,11 @@ export class Playa {
   // Secciones opcionales que el super admin prende por playa. Ausente = apagada.
   @Column('jsonb', { default: () => "'{}'::jsonb" })
   modulos: ModulosPlaya;
+
+  // Con cobro o gratuito (ver src/tenancy/modalidad.ts). Solo la cambia el super admin con
+  // TenancyService.cambiarModalidad, que valida pendientes; nunca por updatePlaya.
+  @Column('varchar', { length: 20, default: 'CON_COBRO' })
+  modalidad: Modalidad;
 
   @CreateDateColumn()
   createdAt: Date;

@@ -79,6 +79,7 @@ Leer solo las filas relevantes; estas rutas no se importan automáticamente.
 | Clientes y cocheras | docs/architecture/clientes.md |
 | Asistente Gemini | docs/architecture/asistente.md; src/assistant/README.md |
 | Offline | docs/pwa-offline.md |
+| Modalidad gratuita (con cobro / gratuito por playa) | docs/modalidad-gratuita.md |
 | Herramientas de Claude y trabajo entre repos | docs/claude-workflow.md |
 
 El código y sus pruebas describen el comportamiento vigente. Si una referencia los contradice,

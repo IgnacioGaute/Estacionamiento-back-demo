@@ -15,6 +15,7 @@ import { CajasQrService } from './cajas-qr.service';
 import { TicketsService } from '../tickets/tickets.service';
 import { CuentasService } from '../cuentas/cuentas.service';
 import { tenantContext } from '../tenancy/tenant-context';
+import { exigirCobro } from '../tenancy/modalidad';
 
 // Cuántos minutos vale el importe que se le mostró al cliente. La tarifa sigue corriendo mientras
 // él paga: si tarda más que esto, el cajero regenera el QR. Y si paga igual después, la plata
@@ -90,9 +91,12 @@ export class CobrosMercadoPagoService {
     );
 
     const expiraEl = new Date(Date.now() + MINUTOS_DE_VIGENCIA * 60 * 1000);
-    // Se guarda primero para tener el id que viaja como referencia a MercadoPago.
-    const cobro = await this.cobros.save(
-      this.cobros.create({
+    // Se guarda primero para tener el id que viaja como referencia a MercadoPago. Con el bloqueo
+    // de caja y la modalidad vigente: un QR pendiente en una playa que pasó a gratuita no se
+    // podría acreditar (y el cambio de modalidad se niega mientras haya uno).
+    const cobro = await this.cobros.manager.transaction(async (m) => {
+      await exigirCobro(m);
+      return m.save(this.cobros.create({
         playaId,
         registrationId,
         tipo,
@@ -113,8 +117,8 @@ export class CobrosMercadoPagoService {
         initPoint: '',
         expiraEl,
         creadoPor: usuarioId,
-      }),
-    );
+      }));
+    });
 
     const descripcion =
       tipo === 'INQUILINO'

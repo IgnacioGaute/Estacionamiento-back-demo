@@ -4,6 +4,7 @@ import { DataSource, In, IsNull, MoreThanOrEqual } from 'typeorm';
 import { createHash } from 'crypto';
 import dayjs from 'dayjs';
 import { tenantContext } from 'src/tenancy/tenant-context';
+import { esGratuita, leerModalidad } from 'src/tenancy/modalidad';
 import { OfflineSession } from './entities/offline-session.entity';
 import { TicketRegistration } from './entities/ticket-registration.entity';
 import { TicketRegistrationForDay } from './entities/ticket-registration-for-day.entity';
@@ -31,24 +32,26 @@ export class OfflineService {
     return this.ds.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
-      await rolloverShifts(manager);
+      const modalidad = await leerModalidad(manager, scope.playaId);
+      const gratuita = esGratuita(modalidad);
+      if (!gratuita) await rolloverShifts(manager);
       const schedule = await this.tickets.getSchedule(manager);
-      const shift = schedule.shiftsEnabled
+      const shift = !gratuita && schedule.shiftsEnabled
         ? await manager.getRepository(Turno).findOne({ where: { usuarioApertura: { id: scope.userId }, estado: 'ABIERTO', cashVersion: 2 } })
         : null;
       const repo = manager.getRepository(OfflineSession);
       const active = await repo.findOne({ where: { playaId: scope.playaId, userId: scope.userId, deviceId, active: true }, order: { createdAt: 'DESC' } });
-      if (active && !refresh) {
+      if (active && !refresh && (active.snapshot.modalidad ?? 'CON_COBRO') === modalidad) {
         return { ...active.snapshot, sessionId: active.id, processedIds: Object.keys(active.processed) };
       }
       const now = new Date();
-      const pricing: PricingSnapshot = { version: 1, capturedAt: now.toISOString(), schedule: { ...schedule, pricingDayTypeBasis: schedule.pricingDayTypeBasis ?? 'EXIT' }, brackets: await manager.getRepository(TicketPriceBracket).find() };
+      const pricing: PricingSnapshot | null = gratuita ? null : { version: 1, capturedAt: now.toISOString(), schedule: { ...schedule, pricingDayTypeBasis: schedule.pricingDayTypeBasis ?? 'EXIT' }, brackets: await manager.getRepository(TicketPriceBracket).find() };
       const types = await manager.getRepository(VehicleTypeEntity).find({ where: { enabled: true } });
       const operator = await manager.getRepository(User).findOne({ where: { id: scope.userId }, withDeleted: true });
       const operatorName = operator ? (`${operator.firstName} ${operator.lastName}`.trim() || operator.username) : 'Operador no disponible';
       const vehicles = [];
       for (const r of await manager.getRepository(TicketRegistration).find({ where: { playaId: scope.playaId, departureTime: IsNull() }, relations: ['ticket'] })) {
-        vehicles.push({ id: r.id, plate: r.licensePlateOriginal || r.codeBarTicket || r.ticket?.codeBar || 'Sin patente', vehicleType: r.vehicleType || r.ticket?.vehicleType, entry: dayjs.tz(`${r.entryDay} ${r.entryTime}`, TZ).toISOString(), pricing: r.pricingSnapshot, collected: await this.tickets.collectedAmount(r, manager), eligible: !!r.pricingSnapshot });
+        vehicles.push({ id: r.id, modalidad: r.modalidad, plate: r.licensePlateOriginal || r.codeBarTicket || r.ticket?.codeBar || 'Sin patente', vehicleType: r.vehicleType || r.ticket?.vehicleType, entry: dayjs.tz(`${r.entryDay} ${r.entryTime}`, TZ).toISOString(), pricing: r.pricingSnapshot, collected: esGratuita(r.modalidad) ? 0 : await this.tickets.collectedAmount(r, manager), eligible: esGratuita(r.modalidad) || !!r.pricingSnapshot });
       }
       const playa = await manager.getRepository(Playa).findOneBy({ id: scope.playaId });
       const business = { name: playa?.nombre, address: playa?.direccion };
@@ -69,7 +72,7 @@ export class OfflineService {
       const tokens = new Map(issued.map(r => [`${r.registrationId}:${r.kind}`, r.token]));
       const receipts = [
         ...recentHourly.flatMap(r => {
-          if (!r.entryDay || !r.entryTime || !r.departureDay || !r.departureTime) return [];
+          if (esGratuita(r.modalidad) || !r.entryDay || !r.entryTime || !r.departureDay || !r.departureTime) return [];
           const entry = dayjs.tz(`${r.entryDay} ${r.entryTime}`, TZ).toISOString();
           const departure = dayjs.tz(`${r.departureDay} ${r.departureTime}`, TZ).toISOString();
           const base = { registrationId: r.id, plate: r.licensePlateOriginal || r.codeBarTicket || r.ticket?.codeBar || 'Sin patente', vehicleType: r.vehicleType || r.ticket?.vehicleType || '', entry, business, historical: true, synced: true };
@@ -87,7 +90,7 @@ export class OfflineService {
           ];
         }),
       ];
-      const snapshot = { version: 2, userId: scope.userId, playaId: scope.playaId, operatorName, shift: shift ? { id: shift.id, name: shift.nombre } : null, shiftsEnabled: schedule.shiftsEnabled === true, business, receiptDelivery: schedule.receiptDelivery, capturedAt: now.toISOString(), expiresAt: now.getTime() + 86400000, pricing, types: types.map(t => ({ code: t.code, name: t.name })), vehicles, receipts };
+      const snapshot = { version: 2, modalidad, userId: scope.userId, playaId: scope.playaId, operatorName, shift: shift ? { id: shift.id, name: shift.nombre } : null, shiftsEnabled: !gratuita && schedule.shiftsEnabled === true, business, receiptDelivery: gratuita ? null : schedule.receiptDelivery, capturedAt: now.toISOString(), expiresAt: now.getTime() + 86400000, pricing, types: types.map(t => ({ code: t.code, name: t.name })), vehicles, receipts: gratuita ? [] : receipts };
       const session = await repo.save(repo.create({ playaId: scope.playaId, userId: scope.userId, deviceId, createdAt: now, expiresAt: new Date(snapshot.expiresAt), active: true, snapshot, processed: {} }));
       return { ...snapshot, sessionId: session.id, processedIds: [] };
     });
@@ -105,17 +108,13 @@ export class OfflineService {
       const previous = session.processed[dto.id];
       if (previous) { if (previous.fingerprint !== fingerprint) throw new ConflictException('El identificador ya fue utilizado con otros datos.'); return { id: previous.registrationId }; }
       if (!session.active) throw new ConflictException('La contingencia fue finalizada. Conservá la operación para revisión.');
+      // No reinterpretar ingresos ni cobros pendientes si cambió la modalidad durante el corte.
+      const modalidad = session.snapshot.modalidad ?? 'CON_COBRO';
+      const gratuita = esGratuita(modalidad);
+      if ((await leerModalidad(manager, scope.playaId)) !== modalidad)
+        throw new ConflictException({ code: 'MODALIDAD_CAMBIADA', message: 'Cambió la modalidad de la playa durante esta contingencia. La operación sigue pendiente para revisión.' });
       const time = Date.parse(dto.occurredAt);
       if (time < session.createdAt.getTime() - 120000 || time > session.expiresAt.getTime() || time > Date.now() + 120000) throw new ConflictException('La fecha de la operación está fuera del período autorizado.');
-      const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
-      let shiftId = session.snapshot.shiftsEnabled === true ? session.snapshot.shift?.id as string | undefined : undefined;
-      if (dto.kind === 'EXIT' && shiftId) {
-        if (!settings?.shiftsEnabled) throw new ConflictException('Cambió la configuración de turnos. Conservá la operación pendiente para revisión.');
-        const shift = await offlineShift(manager, shiftId, scope.userId, new Date(time));
-        shiftId = shift.id;
-      } else if (dto.kind === 'EXIT' && session.snapshot.shiftsEnabled !== true && settings?.shiftsEnabled === true) {
-        throw new ConflictException('Los turnos se activaron durante esta contingencia. La operación sigue pendiente para revisión.');
-      }
       const repo = manager.getRepository(TicketRegistration);
       const operator = await manager.getRepository(User).findOne({ where: { id: scope.userId }, withDeleted: true });
       const operatorName = operator ? (`${operator.firstName} ${operator.lastName}`.trim() || operator.username) : 'Operador no disponible';
@@ -125,10 +124,12 @@ export class OfflineService {
         if (!plate || !session.snapshot.types.some(t => t.code === dto.vehicleType)) throw new BadRequestException('Patente o tipo de vehículo inválido.');
         await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`plate:${plate}`]);
         if (await repo.exists({ where: { id: dto.registrationId } }) || await repo.exists({ where: { licensePlateNormalized: plate, departureTime: IsNull() } })) throw new ConflictException('La patente ya tiene un ingreso activo. Revisá el conflicto; no se duplicó la entrada.');
-        const pricing = session.snapshot.pricing as PricingSnapshot;
-        assertPricingCoverage(pricing, dto.vehicleType, 'DAY'); assertPricingCoverage(pricing, dto.vehicleType, 'NIGHT');
+        const pricing = session.snapshot.pricing as PricingSnapshot | null;
+        if (!gratuita) {
+          assertPricingCoverage(pricing, dto.vehicleType, 'DAY'); assertPricingCoverage(pricing, dto.vehicleType, 'NIGHT');
+        }
         const date = dayjs(time).tz(TZ);
-        registration = await repo.save(repo.create({ id: dto.registrationId, playaId: scope.playaId, description: `Entrada offline ${dto.id}`, price: 0, entryMode: 'PLATE', vehicleType: dto.vehicleType as any, licensePlateOriginal: dto.plate.trim().toUpperCase(), licensePlateNormalized: plate, licensePlateSearch: plate, entryDay: date.format('YYYY-MM-DD'), entryTime: date.format('HH:mm:ss'), pricingSnapshot: pricing, noPlate: false, entryOperatorName: operatorName }));
+        registration = await repo.save(repo.create({ id: dto.registrationId, playaId: scope.playaId, modalidad, description: `Entrada offline ${dto.id}`, price: 0, entryMode: 'PLATE', vehicleType: dto.vehicleType as any, licensePlateOriginal: dto.plate.trim().toUpperCase(), licensePlateNormalized: plate, licensePlateSearch: plate, entryDay: date.format('YYYY-MM-DD'), entryTime: date.format('HH:mm:ss'), pricingSnapshot: gratuita ? null : pricing, noPlate: false, entryOperatorName: operatorName }));
       } else {
         const known = session.snapshot.vehicles.find(v => v.id === dto.registrationId);
         const ownEntry = Object.values(session.processed).some(p => p.registrationId === dto.registrationId);
@@ -137,26 +138,40 @@ export class OfflineService {
         if (!registration || registration.departureTime) throw new ConflictException('Otro operador ya registró esta salida. No se volvió a cobrar.');
         const withTicket = await repo.findOne({ where: { id: dto.registrationId }, relations: ['ticket'] });
         registration.ticket = withTicket.ticket;
-        if (!registration.pricingSnapshot) throw new ConflictException('La estadía no tiene una copia de tarifas. Requiere revisión online.');
         const entry = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, TZ).toDate();
         if (time < entry.getTime()) throw new BadRequestException('La salida no puede ser anterior a la entrada.');
         const vehicle = registration.vehicleType || registration.ticket?.vehicleType;
-        const preview = calculateStayPrice(registration.pricingSnapshot, vehicle, entry, new Date(time));
-        const [discount] = await manager.query("SELECT EXISTS(SELECT 1 FROM movimientos WHERE \"ticketRegistrationId\"=$1 AND tipo='DESCUENTO') AS present", [registration.id]);
-        if (discount.present) throw new ConflictException('Esta estadía tiene un descuento registrado. Revisá el cierre con conexión.');
-        const collected = await this.tickets.collectedAmount(registration, manager);
-        if (preview.price !== dto.expectedPrice || collected !== dto.expectedCollected) throw new ConflictException('Cambió el importe o los anticipos. Conservá el cobro pendiente para revisión.');
-        if (collected > preview.price) throw new ConflictException('La devolución de anticipos requiere revisión online.');
-        if (!dto.method) throw new BadRequestException('Falta el medio de pago.');
-        const amount = preview.price - collected;
-        const capturedShiftId = session.snapshot.shiftsEnabled === true ? shiftId ?? null : undefined;
-        if (amount > 0) await this.movements.create({ ticketRegistrationId: registration.id, usuarioId: scope.userId, monto: amount, metodo: dto.method, tipo: 'SALDO', referencia: `Offline ${dto.id}; fecha ${dto.occurredAt}` }, manager, capturedShiftId, new Date(time));
         const date = dayjs(time).tz(TZ);
-        const box = await this.boxes.applyTicketPayment(date.format('YYYY-MM-DD'), dto.method === 'CASH' ? amount : 0, manager, capturedShiftId, scope.userId, 'COBRO', new Date(time));
-        Object.assign(registration, { exitTurnoId: capturedShiftId ?? null, departureDay: date.format('YYYY-MM-DD'), departureTime: date.format('HH:mm:ss'), dateNow: date.format('YYYY-MM-DD'), price: preview.price, pricingBreakdown: preview.breakdown, priceBracketLabel: preview.label, priceBracketFallbackUsed: preview.usedFallback, boxList: { id: box.id }, codeBarTicket: registration.ticket?.codeBar ?? registration.codeBarTicket, vehicleType: vehicle, entryMode: registration.entryMode ?? (registration.ticket ? 'BARCODE' : 'PLATE'), ticket: null, description: `Salida offline ${dto.id}; ${dto.occurredAt}`, exitOperatorName: operatorName });
+        if (esGratuita(registration.modalidad)) {
+          if (dto.method || (dto.expectedPrice ?? 0) !== 0 || (dto.expectedCollected ?? 0) !== 0)
+            throw new BadRequestException({ code: 'ESTADIA_GRATUITA', message: 'La salida gratuita no admite importes ni medio de pago.' });
+          Object.assign(registration, { exitTurnoId: null, departureDay: date.format('YYYY-MM-DD'), departureTime: date.format('HH:mm:ss'), codeBarTicket: registration.ticket?.codeBar ?? registration.codeBarTicket, vehicleType: vehicle, entryMode: registration.entryMode ?? (registration.ticket ? 'BARCODE' : 'PLATE'), ticket: null, description: `Salida offline ${dto.id}; ${dto.occurredAt}`, exitOperatorName: operatorName });
+        } else {
+          if (!registration.pricingSnapshot) throw new ConflictException('La estadía no tiene una copia de tarifas. Requiere revisión online.');
+          const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
+          let shiftId = session.snapshot.shiftsEnabled === true ? session.snapshot.shift?.id as string | undefined : undefined;
+          if (shiftId) {
+            if (!settings?.shiftsEnabled) throw new ConflictException('Cambió la configuración de turnos. Conservá la operación pendiente para revisión.');
+            shiftId = (await offlineShift(manager, shiftId, scope.userId, new Date(time))).id;
+          } else if (session.snapshot.shiftsEnabled !== true && settings?.shiftsEnabled === true) {
+            throw new ConflictException('Los turnos se activaron durante esta contingencia. La operación sigue pendiente para revisión.');
+          }
+          const preview = calculateStayPrice(registration.pricingSnapshot, vehicle, entry, new Date(time));
+          const [discount] = await manager.query("SELECT EXISTS(SELECT 1 FROM movimientos WHERE \"ticketRegistrationId\"=$1 AND tipo='DESCUENTO') AS present", [registration.id]);
+          if (discount.present) throw new ConflictException('Esta estadía tiene un descuento registrado. Revisá el cierre con conexión.');
+          const collected = await this.tickets.collectedAmount(registration, manager);
+          if (preview.price !== dto.expectedPrice || collected !== dto.expectedCollected) throw new ConflictException('Cambió el importe o los anticipos. Conservá el cobro pendiente para revisión.');
+          if (collected > preview.price) throw new ConflictException('La devolución de anticipos requiere revisión online.');
+          if (!dto.method) throw new BadRequestException('Falta el medio de pago.');
+          const amount = preview.price - collected;
+          const capturedShiftId = session.snapshot.shiftsEnabled === true ? shiftId ?? null : undefined;
+          if (amount > 0) await this.movements.create({ ticketRegistrationId: registration.id, usuarioId: scope.userId, monto: amount, metodo: dto.method, tipo: 'SALDO', referencia: `Offline ${dto.id}; fecha ${dto.occurredAt}` }, manager, capturedShiftId, new Date(time));
+          const box = await this.boxes.applyTicketPayment(date.format('YYYY-MM-DD'), dto.method === 'CASH' ? amount : 0, manager, capturedShiftId, scope.userId, 'COBRO', new Date(time));
+          Object.assign(registration, { exitTurnoId: capturedShiftId ?? null, departureDay: date.format('YYYY-MM-DD'), departureTime: date.format('HH:mm:ss'), dateNow: date.format('YYYY-MM-DD'), price: preview.price, pricingBreakdown: preview.breakdown, priceBracketLabel: preview.label, priceBracketFallbackUsed: preview.usedFallback, boxList: { id: box.id }, codeBarTicket: registration.ticket?.codeBar ?? registration.codeBarTicket, vehicleType: vehicle, entryMode: registration.entryMode ?? (registration.ticket ? 'BARCODE' : 'PLATE'), ticket: null, description: `Salida offline ${dto.id}; ${dto.occurredAt}`, exitOperatorName: operatorName });
+        }
         registration = await repo.save(registration);
       }
-      await refreshAutomaticCuts(manager, new Date(time));
+      if (!gratuita) await refreshAutomaticCuts(manager, new Date(time));
       session.processed[dto.id] = { fingerprint, registrationId: registration.id };
       await sessions.save(session);
       return registration;
