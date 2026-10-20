@@ -1938,7 +1938,10 @@ async removePriceBracket(id: string) {
     const [resumen] = await this.dataSource.query(
       `SELECT (SELECT count(*) FROM ticket_registrations WHERE "playaId" = $3 AND "entryDay" BETWEEN $1 AND $2)::int AS entradas,
               (SELECT count(*) FROM ticket_registrations WHERE "playaId" = $3 AND "departureDay" BETWEEN $1 AND $2)::int AS salidas,
-              (SELECT count(*) FROM ticket_registrations WHERE "playaId" = $3 AND "departureTime" IS NULL)::int AS presentes`,
+              (SELECT count(*) FROM ticket_registrations WHERE "playaId" = $3 AND "departureTime" IS NULL)::int AS presentes,
+              -- Permanencia típica: la mediana de las salidas del rango (un auto que quedó días no la mueve como un promedio).
+              (SELECT round(percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (("departureDay" + "departureTime") - ("entryDay" + COALESCE("entryTime", '00:00'::time)))) / 60))
+                 FROM ticket_registrations WHERE "playaId" = $3 AND "departureDay" BETWEEN $1 AND $2 AND "entryDay" IS NOT NULL)::int AS "permanenciaMediana"`,
       [desde, hasta, playaId],
     );
     return { ...listResult(data, total, pagination), desde, hasta, estado, operadores: operadores.map((o: { nombre: string }) => o.nombre), resumen };

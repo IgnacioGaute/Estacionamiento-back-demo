@@ -37,8 +37,6 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     'registrarSalidaAnterior',
     // La salida de una estadía que ingresó gratis (ver registrarSalidaGratuita).
     'registrarSalida',
-    // Planilla de vehículos: entradas, salidas y permanencia, sin importes.
-    'planillaVehiculos',
     'getFrequentCustomers',
     'getPlateHistory',
     'findOne',
@@ -78,6 +76,7 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     'getTodayNotes',
     'unread',
     'markRead',
+    'markAllRead',
   ],
   // estadiasAbiertas: el operador repasa, al cerrar su turno, las entradas suyas que siguen abiertas.
   TurnosController: ['open', 'close', 'getCashContext', 'getMyOpenTurno', 'estadiasAbiertas'],

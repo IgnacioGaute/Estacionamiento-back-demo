@@ -269,9 +269,12 @@ test('en la playa gratuita las operaciones financieras se rechazan, incluso para
   for (const kind of ['ENTRY', 'EXIT'])
     assert.equal((await http('post', `/tickets/registrations/${gratuitaPatente.id}/receipt`, operador).send({ kind }).expect(403)).body.code, 'MODALIDAD_GRATUITA');
   assert.equal(await contar('parking_receipts', gratis.id), 0);
-  // Contingencia sin conexión: no se prepara.
-  const offline = await http('post', '/tickets/offline/prepare', operador).send({ deviceId: '00000000-0000-4000-8000-000000000001' }).expect(409);
-  assert.equal(offline.body.code, 'OFFLINE_NO_DISPONIBLE_GRATUITO');
+  const offline = await http('post', '/tickets/offline/prepare', operador).send({ deviceId: '00000000-0000-4000-8000-000000000001' }).expect(201);
+  assert.equal(offline.body.modalidad, 'GRATUITO');
+  assert.equal(offline.body.pricing, null);
+  assert.equal(offline.body.shiftsEnabled, false);
+  assert.equal(offline.body.receiptDelivery, null);
+  assert.deepEqual(offline.body.receipts, []);
   // Segunda barrera, dentro de la transacción: aunque alguien llegue a la caja por otro camino.
   const boxes = app.get(load('box-lists/box-lists.service', 'BoxListsService'));
   await assert.rejects(scoped({ empresaId: gratis.empresaId, playaId: gratis.id, userId: adminA.id }, () =>
@@ -383,6 +386,68 @@ test('un ingreso en curso termina antes del cambio de modalidad y el cambio lo v
   assert.deepEqual(r.body.bloqueos.map((b) => b.code), ['ESTADIAS_CON_COBRO']);
 });
 
+test('contingencia gratuita: entradas sin tarifas, salidas por patente y tarjeta, reintentos e aislamiento sin caja', async () => {
+  const { randomUUID } = require('node:crypto');
+  const previousReceipts = await contar('parking_receipts', gratis.id);
+  const card = await scoped({ empresaId: gratis.empresaId, playaId: gratis.id, userId: adminA.id }, () => ds.getRepository(Ticket).save({ codeBar: 'OFFLINE-CARD', vehicleType: 'AUTO' }));
+  const existing = (await http('post', '/scanner/start-scanner', operador).send({ barCode: card.codeBar }).expect(201)).body;
+  const deviceId = randomUUID();
+  const snapshot = (await http('post', '/tickets/offline/prepare', operador).send({ deviceId, refresh: true }).expect(201)).body;
+  assert.equal(snapshot.modalidad, 'GRATUITO');
+  assert.ok(snapshot.vehicles.some(v => v.id === existing.registrationId && v.eligible && v.modalidad === 'GRATUITO' && !v.pricing));
+  const sync = payload => http('post', '/tickets/offline/sync', operador).send({ sessionId: snapshot.sessionId, deviceId, ...payload });
+  const entry = { id: randomUUID(), registrationId: randomUUID(), kind: 'ENTRY', occurredAt: new Date().toISOString(), plate: 'OFFGR01', vehicleType: 'AUTO' };
+  await http('post', '/tickets/offline/sync', adminB, otraEmpresa.id).send({ sessionId: snapshot.sessionId, deviceId, ...entry }).expect(403);
+  await sync(entry).expect(201);
+  await sync(entry).expect(201);
+  await sync({ ...entry, plate: 'OTRA01' }).expect(409);
+  await sync({ ...entry, id: randomUUID(), registrationId: randomUUID() }).expect(409);
+  const savedEntry = await ds.getRepository(Registration).findOneByOrFail({ id: entry.registrationId });
+  assert.equal(savedEntry.modalidad, 'GRATUITO');
+  assert.equal(savedEntry.pricingSnapshot, null);
+  for (const registrationId of [entry.registrationId, existing.registrationId]) {
+    const exit = { id: randomUUID(), registrationId, kind: 'EXIT', occurredAt: new Date().toISOString() };
+    const invalid = await sync({ ...exit, expectedPrice: 100, method: 'CASH' }).expect(400);
+    assert.equal(invalid.body.code, 'ESTADIA_GRATUITA');
+    const [first, retry] = await Promise.all([sync(exit), sync(exit)]);
+    assert.equal(first.status, 201);
+    assert.equal(retry.status, 201);
+    await sync({ ...exit, id: randomUUID() }).expect(409);
+    const saved = await ds.getRepository(Registration).findOneOrFail({ where: { id: registrationId }, relations: ['ticket', 'boxList'] });
+    assert.ok(saved.departureTime);
+    assert.equal(saved.exitOperatorName, 'Ana Operadora');
+    assert.equal(saved.price, 0);
+    assert.equal(saved.ticket, null);
+    assert.equal(saved.boxList, null);
+    assert.equal(saved.pricingBreakdown, null);
+  }
+  assert.equal(await ds.getRepository(Registration).countBy({ licensePlateNormalized: 'OFFGR01' }), 1);
+  assert.equal(await contar('parking_receipts', gratis.id), previousReceipts);
+  for (const table of ['movimientos', 'cash_entries', 'box_lists', 'turnos'])
+    assert.equal(await contar(table, gratis.id), 0, table);
+});
+
+test('contingencia gratuita conserva pendientes al volver a cobrar y permite salir gratis desde una nueva sesión con cobro', async () => {
+  const { randomUUID } = require('node:crypto');
+  const previousReceipts = await contar('parking_receipts', gratis.id);
+  const deviceId = randomUUID();
+  const snapshot = (await http('post', '/tickets/offline/prepare', operador).send({ deviceId }).expect(201)).body;
+  const entry = { deviceId, sessionId: snapshot.sessionId, id: randomUUID(), registrationId: randomUUID(), kind: 'ENTRY', occurredAt: new Date().toISOString(), plate: 'OFFGR02', vehicleType: 'AUTO' };
+  await http('post', '/tickets/offline/sync', operador).send(entry).expect(201);
+  await modalidad(gratis.id, 'CON_COBRO').expect(200);
+  const exit = { ...entry, id: randomUUID(), kind: 'EXIT', occurredAt: new Date().toISOString() };
+  const changed = await http('post', '/tickets/offline/sync', operador).send(exit).expect(409);
+  assert.equal(changed.body.code, 'MODALIDAD_CAMBIADA');
+  const fresh = (await http('post', '/tickets/offline/prepare', operador).send({ deviceId }).expect(201)).body;
+  assert.equal(fresh.modalidad, 'CON_COBRO');
+  assert.ok(fresh.vehicles.some(v => v.id === entry.registrationId && v.eligible && v.modalidad === 'GRATUITO'));
+  await http('post', '/tickets/offline/sync', operador).send({ ...exit, sessionId: fresh.sessionId }).expect(201);
+  await modalidad(gratis.id, 'GRATUITO').expect(200);
+  assert.equal(await contar('parking_receipts', gratis.id), previousReceipts);
+  for (const table of ['movimientos', 'cash_entries', 'box_lists'])
+    assert.equal(await contar(table, gratis.id), 0, table);
+});
+
 test('una contingencia preparada con cobro no sincroniza después de pasar a gratuita: queda pendiente', async () => {
   const deviceId = '00000000-0000-4000-8000-000000000002';
   await ds.query(`UPDATE ticket_registrations SET "departureDay" = CURRENT_DATE, "departureTime" = '11:00:00' WHERE "playaId" = $1 AND "departureTime" IS NULL`, [cobra.id]);
@@ -400,7 +465,7 @@ test('una contingencia preparada con cobro no sincroniza después de pasar a gra
 test('planilla de vehículos: entradas, salidas y presentes con permanencia y operador, sin importes', async () => {
   const hoy = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).format(new Date());
   const adentro = (await http('post', '/tickets/registrations/by-plate', operador).send({ licensePlate: 'PLAN01', vehicleType: 'AUTO' }).expect(201)).body;
-  const todas = (await http('get', `/tickets/registrations/planilla?desde=${hoy}&hasta=${hoy}`, operador).expect(200)).body;
+  const todas = (await http('get', `/tickets/registrations/planilla?desde=${hoy}&hasta=${hoy}`, adminA, gratis.id).expect(200)).body;
   assert.ok(todas.meta.totalItems >= 2);
   const fila = todas.data.find((r) => r.id === adentro.id);
   assert.equal(fila.vehiculo, 'PLAN01');
@@ -411,12 +476,15 @@ test('planilla de vehículos: entradas, salidas y presentes con permanencia y op
   for (const r of todas.data) for (const campo of ['price', 'total', 'collected', 'monto']) assert.equal(r[campo], undefined);
   assert.ok(todas.operadores.includes('Ana Operadora'));
   assert.equal(todas.resumen.presentes, 1);
-  const presentes = (await http('get', '/tickets/registrations/planilla?estado=PRESENTES', operador).expect(200)).body;
+  assert.equal(typeof todas.resumen.permanenciaMediana, 'number');
+  const presentes = (await http('get', '/tickets/registrations/planilla?estado=PRESENTES', adminA, gratis.id).expect(200)).body;
   assert.deepEqual(presentes.data.map((r) => r.id), [adentro.id]);
-  const salidas = (await http('get', `/tickets/registrations/planilla?estado=SALIDAS&desde=${hoy}&operador=Ana%20Operadora&q=AA123`, operador).expect(200)).body;
+  const salidas = (await http('get', `/tickets/registrations/planilla?estado=SALIDAS&desde=${hoy}&operador=Ana%20Operadora&q=AA123`, adminA, gratis.id).expect(200)).body;
   assert.deepEqual(salidas.data.map((r) => r.vehiculo), ['aa 123 bb']); // Tal cual la tipeó el operador.
   assert.equal(salidas.data[0].operadorSalida, 'Ana Operadora');
-  await http('get', '/tickets/registrations/planilla?desde=2026-13-01', operador).expect(400);
+  await http('get', '/tickets/registrations/planilla?desde=2026-13-01', adminA, gratis.id).expect(400);
+  // Es de administración: el operador no la consulta.
+  await http('get', '/tickets/registrations/planilla', operador).expect(403);
   // Solo la playa propia: la otra empresa no ve estas filas.
   const ajena = (await http('get', `/tickets/registrations/planilla?desde=${hoy}`, adminB, otraEmpresa.id).expect(200)).body;
   assert.ok(ajena.data.every((r) => r.id !== adentro.id));

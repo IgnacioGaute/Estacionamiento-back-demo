@@ -28,7 +28,7 @@ salida, permanencia, operador responsable, correcciones de patente/tipo/entrada 
 error. Se desactivan tarifas y simuladores, cobros, anticipos, medios de pago, descuentos, cortesías,
 devoluciones, «Se fue antes», caja, planilla de caja, turnos y cajas, ingresos y gastos, comisiones,
 Día/Sem/Mes, Inquilinos y clientes mensuales, cobros QR y por alias, la configuración de MercadoPago,
-los comprobantes de entrada y salida (y su configuración) y el modo sin conexión. La facturación SaaS
+los comprobantes de entrada y salida (y su configuración). La facturación SaaS
 (Mi plan) no cambia.
 
 La salida gratuita (`PATCH /tickets/registrations/:id/salida`, `registrarSalida`) muestra el vehículo y su
@@ -47,7 +47,8 @@ estadías y el resumen de cobro con `modalidad: 'CON_COBRO'` para las demás.
 - `GET /tenant/context` incluye la modalidad de cada playa; `TenantScope.modalidad` la lleva a cada pedido.
 - `FREE_MODE_BLOCKED` (`endpoint-policy.ts`, por clase y handler): el `TenantInterceptor` responde
   `403 MODALIDAD_GRATUITA` a esas escrituras y simuladores en una playa gratuita, para cualquier rol.
-  Las lecturas siguen abiertas: el administrador conserva el historial financiero previo.
+  Las lecturas no se bloquean en el backend; la interfaz no muestra caja ni historial de cobros en
+  una playa gratuita (la historia se conserva y vuelve a verse si la playa vuelve a cobrar).
 - Dentro de la transacción: `exigirCobro` (bloqueo de caja 718904 exclusivo + lectura de la playa) en
   `BoxListsService.applyTicketPayment`, `updateBox`, `removeOtherPayment`, `MovimientosService.create`,
   apertura de turnos, cajas y movimientos de fondo, y en la creación de cobros QR y por alias.
@@ -80,14 +81,16 @@ cargarlas). Turnos, sueldos y tarifas guardados vuelven tal como estaban.
 
 ## Offline, comprobantes y asistente
 
-- `POST /tickets/offline/prepare` en una playa gratuita responde `409 OFFLINE_NO_DISPONIBLE_GRATUITO` y el
-  frontend no la prepara. El snapshot lleva `modalidad`. Si la playa pasó a gratuita durante una
-  contingencia, sincronizar responde `409 MODALIDAD_CAMBIADA` y la operación queda pendiente para
-  revisión (mismo criterio que un cambio de turnos). Una estadía gratuita no se cobra offline.
-  Límite conocido: el servidor no sabe qué tiene un equipo sin sincronizar, y las contingencias se
-  renuevan solas mientras la pantalla está abierta, así que no bloquean el cambio (sería imposible
-  cambiar). El diálogo avisa cuántos equipos tienen una preparada; si alguno registró un cobro sin
-  conexión y sincroniza después, la playa tiene que volver un momento a Con cobro para registrarlo.
+- El modo sin conexión se prepara automáticamente en ambas modalidades. En gratuito permite entradas
+  por patente y salidas sin tarifas, importes, medio de pago, movimientos ni caja. Incluye los vehículos
+  que ya estaban adentro, incluso por tarjeta física; la salida libera su tarjeta. No emite comprobantes.
+  El snapshot conserva la modalidad de la playa y de cada estadía. Una estadía gratuita también puede
+  salir sin cobro desde una contingencia preparada después de volver a Con cobro.
+  Si la modalidad cambia durante la contingencia, sincronizar responde `409 MODALIDAD_CAMBIADA` en
+  ambos sentidos; los pendientes se conservan para revisión y requieren restaurar la modalidad
+  original para sincronizar. Los reintentos siguen siendo atómicos e idempotentes.
+  El servidor no conoce operaciones sin sincronizar: las contingencias preparadas no bloquean el
+  cambio de modalidad y el diálogo avisa cuántos equipos tienen una preparada.
 - Una playa gratuita no emite comprobantes: `issueParkingReceipt` y el recibo de pagos de inquilinos
   (`emitirComprobante`) están en `FREE_MODE_BLOCKED`, y el frontend no ofrece la entrega. Si una estadía
   entró gratis y sale cuando la playa ya volvió a cobrar, su constancia lleva `modalidad: 'GRATUITO'` y
@@ -98,9 +101,12 @@ cargarlas). Turnos, sueldos y tarifas guardados vuelven tal como estaban.
 ## Planilla de vehículos
 
 `GET /tickets/registrations/planilla?desde&hasta&estado=TODAS|ENTRADAS|SALIDAS|PRESENTES&operador&tipo&q&page&limit`
-(operador y administrador, `/vehiculos` en el frontend): entradas, salidas y vehículos adentro con
+(solo administración, `/admin/vehiculos` en el frontend): entradas, salidas y vehículos adentro con
 permanencia (hasta ahora para los que siguen adentro) y operador de cada movimiento, sin importes,
-con exportación a Excel. Sirve en ambas modalidades.
+con exportación a Excel. El `resumen` trae entradas, salidas, presentes y `permanenciaMediana`
+(mediana en minutos de las salidas del rango, `null` si no hubo). Sirve en ambas modalidades.
+La pantalla comparte sus piezas visuales con Frecuentes (`src/components/planilla/planilla-ui.tsx`
+del frontend) para que las dos planillas se vean igual.
 
 ## Pruebas
 
