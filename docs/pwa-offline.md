@@ -1,6 +1,6 @@
 # Modo operativo sin conexión
 
-Reemplaza la interfaz de Consulta sin conexión. Esta entrega admite entradas por patente y salidas/cobros de estadías por hora, en una playa con turnos desactivados. Día/Sem/Mes, cortesías, devoluciones y registros históricos sin snapshot no están habilitados offline.
+Reemplaza la interfaz de Consulta sin conexión. Admite entradas por patente y salidas de estadías por hora en ambas modalidades. En gratuito no requiere tarifas ni registra importes, medios de pago, movimientos, caja o comprobantes. Cada estadía conserva su modalidad, incluso si ingresó gratis y la playa volvió a cobrar. Día/Sem/Mes, cortesías, devoluciones y registros históricos con cobro sin snapshot no están habilitados offline. Si cambia la modalidad de la playa durante el corte, los pendientes se conservan para revisión y la sincronización exige restaurar la modalidad original.
 
 ## Uso
 1. Al abrir la pantalla de operación con sesión e internet, el navegador prepara los datos automáticamente y los renueva cada minuto sin pendientes. No hay botón de activación. Requiere navegador con Service Worker, IndexedDB, Web Crypto y Web Locks.

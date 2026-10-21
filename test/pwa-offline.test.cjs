@@ -169,5 +169,47 @@ test('PWA operativa: entradas, salidas, persistencia offline, cifrado y reintent
     await page.setViewport({ width: 390, height: 844 });
     await page.screenshot({ path: path.resolve(__dirname, '../.tmp/offline-mobile.png'), fullPage: true });
 
+    // La misma pantalla debe operar sin tarifas en gratuito y conservar su cola tras una recarga.
+    await page.evaluate(async () => {
+      const vault = await import('/offline-vault.js');
+      const opened = await vault.openOperations('frase-local-segura-123');
+      const capturedAt = new Date().toISOString();
+      await vault.saveOperations({ ...opened.state, modalidad: 'GRATUITO', capturedAt, pricing: null, receiptDelivery: null, receipts: [], vehicles: [{ id: crypto.randomUUID(), modalidad: 'GRATUITO', plate: 'PREVIO1', vehicleType: 'AUTO', entry: capturedAt, pricing: null, collected: 0, eligible: true }], pending: [] }, 'frase-local-segura-123', opened.revision);
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => document.querySelector('#rows').textContent.includes('PREVIO1'));
+    await page.type('#plate', 'GRATIS1'); await page.click('#entry button');
+    await page.waitForFunction(() => document.querySelector('#pending').textContent.startsWith('1 '));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => document.querySelector('#rows').textContent.includes('GRATIS1'));
+    assert.equal(await page.$eval('#receipts-section', el => el.hidden), true);
+    for (let i = 0; i < 2; i++) {
+      await page.waitForFunction(() => !document.querySelector('#rows button').disabled);
+      await page.click('#rows button');
+      await page.waitForFunction(() => !document.querySelector('#exit').hidden);
+      assert.equal(await page.$eval('#payment-fields', el => el.hidden), true);
+      assert.match(await page.$eval('#amount', el => el.textContent), /Permanencia:.*Salida sin cobro/);
+      assert.doesNotMatch(await page.$eval('#amount', el => el.textContent), /\$/);
+      assert.equal(await page.$eval('#confirm-exit', el => el.textContent), 'Guardar salida pendiente');
+      if (i === 0) {
+        for (const [width, name] of [[390, 'mobile'], [1280, 'desktop']]) {
+          await page.setViewport({ width, height: 900 });
+          await page.screenshot({ path: path.resolve(__dirname, '../.tmp/offline-gratuito-' + name + '.png'), fullPage: true });
+        }
+      }
+      await page.click('#confirm-exit');
+      await page.waitForFunction(n => document.querySelector('#pending').textContent.startsWith(n + ' '), {}, i + 2);
+    }
+    assert.match(await page.$eval('#status', el => el.textContent), /Salida guardada/);
+    for (const width of [320, 390, 1280]) {
+      await page.setViewport({ width, height: 900 });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    }
+    const freeOps = await page.evaluate(async () => (await (await import('/offline-vault.js')).openOperations('frase-local-segura-123')).state.pending);
+    assert.deepEqual(freeOps.map(op => op.kind), ['ENTRY', 'EXIT', 'EXIT']);
+    for (const op of freeOps) for (const key of ['method', 'expectedPrice', 'expectedCollected']) assert.equal(op[key], undefined);
+    disconnected = false; await page.setOfflineMode(false);
+    await page.waitForFunction(() => document.querySelector('#pending').textContent.startsWith('0 '));
+    assert.equal(applied.size, 5);
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 });

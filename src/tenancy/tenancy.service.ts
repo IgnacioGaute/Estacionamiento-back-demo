@@ -11,7 +11,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { esGratuita, Modalidad } from './modalidad';
 import { Empresa } from './entities/empresa.entity';
 import { Playa } from './entities/playa.entity';
 import { UsuarioPlaya } from './entities/usuario-playa.entity';
@@ -263,6 +264,95 @@ export class TenancyService {
     return this.playaRepository.save(playa);
   }
 
+  /**
+   * Qué impide o qué conviene saber antes de pasar la playa a `destino`. Se consulta con la conexión
+   * de plataforma (sin RLS), así que todo filtra por playa explícitamente.
+   *
+   * Bloquean el paso a gratuita lo que después no podría cerrarse ni acreditarse de forma coherente:
+   * turnos y cajas abiertos (la caja desaparece con plata adentro), estadías con cobro que siguen
+   * adentro (habría que cobrarlas sin caja), abonos Día/Sem/Mes sin retirar y cobros por QR o alias
+   * esperando el pago (la acreditación movería una caja que ya no existe). Nunca se resuelven solos:
+   * no se cierran turnos, no se borra historia ni se crean ajustes para permitir el cambio.
+   *
+   * Los avisos no bloquean: saldos de inquilinos y recibos pendientes quedan registrados y
+   * consultables (se pueden cobrar volviendo a «Con cobro»); una contingencia preparada que
+   * sincronice después queda pendiente para revisión.
+   */
+  private async pendientesDeModalidad(manager: EntityManager, playaId: string, destino: Modalidad) {
+    const contar = async (sql: string) => Number((await manager.query(sql, [playaId]))[0]?.n ?? 0);
+    const bloqueos: { code: string; cantidad: number; mensaje: string }[] = [];
+    const avisos: { code: string; cantidad: number; mensaje: string }[] = [];
+    const agregar = (lista: typeof bloqueos, code: string, cantidad: number, mensaje: string) => {
+      if (cantidad > 0) lista.push({ code, cantidad, mensaje });
+    };
+    if (destino === 'GRATUITO') {
+      agregar(bloqueos, 'TURNOS_ABIERTOS', await contar(`SELECT count(*) AS n FROM turnos WHERE "playaId" = $1 AND estado = 'ABIERTO'`),
+        'Turnos de caja abiertos: cada operador tiene que cerrar su turno (el último, con el arqueo) desde Caja → Turnos.');
+      agregar(bloqueos, 'CAJAS_ABIERTAS', await contar(`SELECT count(*) AS n FROM cash_sessions WHERE "playaId" = $1 AND estado = 'ABIERTO'`),
+        'Cajas físicas abiertas: hay que cerrarlas con su arqueo antes de dejar de cobrar.');
+      agregar(bloqueos, 'ESTADIAS_CON_COBRO', await contar(`SELECT count(*) AS n FROM ticket_registrations WHERE "playaId" = $1 AND "departureTime" IS NULL AND modalidad = 'CON_COBRO'`),
+        'Vehículos adentro que ingresaron con cobro: registrá su salida desde Cobrar salida (o esperá a que salgan).');
+      agregar(bloqueos, 'ABONOS_SIN_RETIRAR', await contar(`SELECT count(*) AS n FROM ticket_registration_for_days WHERE "playaId" = $1 AND COALESCE(retired, false) = false`),
+        'Estadías por día, semana o mes sin retirar: registrá su salida (y su cobro si falta) antes del cambio.');
+      agregar(bloqueos, 'COBROS_PENDIENTES', await contar(
+        `SELECT (SELECT count(*) FROM cobros_mercadopago WHERE "playaId" = $1 AND estado = 'PENDIENTE')
+              + (SELECT count(*) FROM cobros_transferencia WHERE "playaId" = $1 AND estado IN ('ESPERANDO', 'REVISION')) AS n`),
+        'Cobros por QR o al alias esperando el pago: esperá que se acrediten o cancelalos desde Cobrar salida.');
+      agregar(avisos, 'SALDOS_INQUILINOS', await contar(
+        `SELECT count(*) AS n FROM (SELECT "customerId" FROM cuenta_movimientos WHERE "playaId" = $1 GROUP BY "customerId" HAVING SUM(importe) <> 0) s`),
+        'Inquilinos con saldo pendiente o a favor: quedan registrados y se pueden consultar, pero no se registran pagos mientras la playa sea gratuita.');
+      agregar(avisos, 'RECIBOS_PENDIENTES', await contar(`SELECT count(*) AS n FROM receipts WHERE "playaId" = $1 AND status = 'PENDING' AND "deletedAt" IS NULL`),
+        'Recibos de clientes mensuales pendientes: quedan como están, sin cobrarse mientras la playa sea gratuita.');
+      agregar(avisos, 'CONTINGENCIAS_ACTIVAS', await contar(`SELECT count(*) AS n FROM offline_sessions WHERE "playaId" = $1 AND active = true AND "expiresAt" > now()`),
+        'Equipos con el modo sin conexión preparado: confirmá que no tengan entradas o cobros sin sincronizar. Lo que sincronicen después del cambio queda pendiente para revisión, y para registrarlo hay que volver un momento a Con cobro.');
+    } else {
+      agregar(avisos, 'ESTADIAS_GRATUITAS', await contar(`SELECT count(*) AS n FROM ticket_registrations WHERE "playaId" = $1 AND "departureTime" IS NULL AND modalidad = 'GRATUITO'`),
+        'Vehículos adentro que ingresaron gratis: van a salir sin cargo, con «Registrar salida».');
+      agregar(avisos, 'TIPOS_SIN_TARIFA', await contar(
+        `SELECT count(*) AS n FROM ticket_vehicle_types v WHERE v."playaId" = $1 AND v.enabled
+           AND NOT EXISTS (SELECT 1 FROM ticket_price_brackets b WHERE b."playaId" = $1 AND b."vehicleType" = v.code)`),
+        'Tipos de vehículo habilitados sin tarifas: sus ingresos se rechazan hasta que el administrador cargue Tarifas.');
+    }
+    return { bloqueos, avisos };
+  }
+
+  async previsualizarModalidad(playaId: string) {
+    const playa = await this.playaRepository.findOne({ where: { id: playaId } });
+    if (!playa) throw new NotFoundException('Playa no encontrada.');
+    const modalidad: Modalidad = esGratuita(playa.modalidad) ? 'GRATUITO' : 'CON_COBRO';
+    const destino: Modalidad = modalidad === 'GRATUITO' ? 'CON_COBRO' : 'GRATUITO';
+    return { modalidad, destino, ...(await this.pendientesDeModalidad(this.dataSource.manager, playaId, destino)) };
+  }
+
+  /**
+   * Cambia la modalidad de una playa. Toma exclusivos los bloqueos de tarifas (718903) y caja
+   * (718904), en el mismo orden que la configuración y la contingencia: los ingresos (que leen la
+   * modalidad con 718903) y toda operación de dinero (que la vuelve a leer con 718904) terminan
+   * antes y el cambio los ve, o empiezan después y ven la modalidad nueva. Así un turno, un cobro o
+   * un ingreso con cobro no se cuela después de verificar los pendientes. Las estadías ya
+   * ingresadas conservan la suya.
+   */
+  async cambiarModalidad(playaId: string, destino: Modalidad) {
+    return this.dataSource.transaction(async (manager) => {
+      await manager.query('SELECT pg_advisory_xact_lock(718903)');
+      await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      const playa = await manager.getRepository(Playa).findOne({ where: { id: playaId }, lock: { mode: 'pessimistic_write' } });
+      if (!playa) throw new NotFoundException('Playa no encontrada.');
+      const anterior: Modalidad = esGratuita(playa.modalidad) ? 'GRATUITO' : 'CON_COBRO';
+      const pendientes = await this.pendientesDeModalidad(manager, playaId, destino);
+      if (anterior === destino) return { playa, anterior, cambio: false, ...pendientes };
+      if (pendientes.bloqueos.length)
+        throw new ConflictException({
+          code: 'MODALIDAD_CON_PENDIENTES',
+          message: `No se puede pasar «${playa.nombre}» a modalidad gratuita todavía: ${pendientes.bloqueos.map((b) => b.mensaje).join(' ')}`,
+          bloqueos: pendientes.bloqueos,
+        });
+      await manager.getRepository(Playa).update({ id: playaId }, { modalidad: destino });
+      playa.modalidad = destino;
+      return { playa, anterior, cambio: true, ...pendientes };
+    });
+  }
+
   // No se borra una playa que ya tiene operación cargada: las FK de tickets, caja y turnos no
   // tienen ON DELETE, así que Postgres lo rechazaría igual, pero con un error ilegible.
   async removePlaya(id: string) {
@@ -499,7 +589,9 @@ export class TenancyService {
           estadiasAbiertas: estadia?.abiertas ?? 0,
           turnosAbiertos: porPlaya(turnos, playa.id)?.abiertos ?? 0,
           // Sin franjas de precio no se puede registrar una entrada: es el aviso más útil del panel.
-          tieneTarifas: (porPlaya(tarifas, playa.id)?.brackets ?? 0) > 0,
+          // Una playa gratuita no las necesita (sus ingresos no capturan tarifas): no se avisa.
+          tieneTarifas: esGratuita(playa.modalidad) || (porPlaya(tarifas, playa.id)?.brackets ?? 0) > 0,
+          modalidad: esGratuita(playa.modalidad) ? 'GRATUITO' : 'CON_COBRO',
           ultimaOperacion: ultima ? ultima.toISOString() : null,
           comprobantes: {
             whatsapp: !!entrega?.whatsapp,

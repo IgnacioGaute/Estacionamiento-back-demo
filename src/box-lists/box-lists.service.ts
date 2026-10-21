@@ -28,6 +28,7 @@ import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import isBetween from 'dayjs/plugin/isBetween'; 
 import { UpdateOtherPaymentDto } from './dto/update-other-payment.dto';
+import { exigirCobro } from 'src/tenancy/modalidad';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -153,6 +154,9 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
   async applyTicketPayment(date: string, amount: number, manager: EntityManager, turnoIdOverride?: string | null, usuarioId?: string, categoria = 'COBRO', occurredAt?: Date) {
     // También protege el caso de la primera caja: bloquear una fila inexistente no alcanza.
     await manager.query('SELECT pg_advisory_xact_lock(718904)');
+    // Todo cobro, devolución, anticipo o movimiento de «Varios» pasa por acá: una playa gratuita no
+    // tiene caja. Se lee con el bloqueo tomado, así que un cambio de modalidad no se cruza.
+    await exigirCobro(manager);
     await rolloverShifts(manager);
     const repository = manager.getRepository(BoxList);
     let box = await repository.findOne({ where: { date }, lock: { mode: 'pessimistic_write' } });
@@ -270,6 +274,7 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
   async updateBox(id: string, dto: UpdateBoxListDto, manager?: EntityManager) {
     const operation = async (tx: EntityManager) => {
       await tx.query('SELECT pg_advisory_xact_lock(718904)');
+      await exigirCobro(tx);
       const repo = tx.getRepository(BoxList);
       const box = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!box) throw new NotFoundException('Caja no encontrada.');
@@ -560,6 +565,7 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
   async removeOtherPayment(id: string) {
     return this.dataSource.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
+      await exigirCobro(manager);
       const repo = manager.getRepository(OtherPayment);
       const payment = await repo.findOne({ where: { id } });
       if (!payment) throw new NotFoundException('Movimiento no encontrado.');

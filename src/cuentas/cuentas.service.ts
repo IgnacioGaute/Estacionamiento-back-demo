@@ -21,6 +21,7 @@ import { Playa } from 'src/tenancy/entities/playa.entity';
 import { randomBytes } from 'node:crypto';
 import { AjusteDto, DevolucionDto, RegistrarPagoDto, SaldoInicialDto } from './dto/cuentas.dto';
 import { contextoAnulacion, reglaAnulacion } from './anulacion';
+import { exigirCobro } from 'src/tenancy/modalidad';
 import {
   asegurarCuenta,
   asentar,
@@ -580,6 +581,7 @@ export class CuentasService {
     const mediosDe = new Map<string, Set<string>>();
     const filas: CuentaMovimiento[] = [];
     for (const { pago, detalle, aFavor: sobra } of reparto) {
+      await exigirCobro(m);
       const fila = await asentar(m, {
         customerId,
         tipo: 'PAGO',
@@ -813,6 +815,7 @@ export class CuentasService {
 
       if (dto.tipo === 'A_FAVOR') {
         if (!dto.importe) throw new BadRequestException('Ingresá el saldo a favor.');
+        await exigirCobro(m);
         await asentar(m, {
           customerId,
           tipo: 'SALDO_INICIAL',
@@ -912,6 +915,7 @@ export class CuentasService {
       const orden = dto.receiptId
         ? [pendientes.find((r) => r.id === dto.receiptId)!, ...pendientes.filter((r) => r.id !== dto.receiptId)]
         : pendientes;
+      await exigirCobro(m);
       const fila = await asentar(m, {
         customerId,
         tipo: 'AJUSTE',
@@ -1027,6 +1031,7 @@ export class CuentasService {
         await deshacerImputaciones(m, fila.id);
       }
 
+      await exigirCobro(m);
       for (const f of filas)
         await asentar(m, {
           customerId: f.customerId,
@@ -1126,6 +1131,7 @@ export class CuentasService {
       const fecha = hoy();
       if (dto.metodo === 'CASH') await this.boxLists.applyTicketPayment(fecha, -dto.importe, m);
       const turno = await operatorShift(m, usuarioId ?? undefined);
+      await exigirCobro(m);
       await asentar(m, {
         customerId,
         tipo: 'DEVOLUCION',

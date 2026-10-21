@@ -28,6 +28,9 @@ import { AsignarPlayasDto } from './dto/asignar-playas.dto';
 import { AuthenticatedRequest } from 'src/types/request';
 import { SuscripcionesService } from 'src/saas/suscripciones.service';
 import { hoyAR } from 'src/saas/estado-cuenta';
+import { ParseUUIDPipe } from '@nestjs/common';
+import { CambiarModalidadDto } from './dto/cambiar-modalidad.dto';
+import { PlayaConfigGateway } from './playa-config.gateway';
 
 // Administración de la plataforma. El guard exige super admin en TODAS las rutas y, a
 // diferencia del resto del backend, no acepta el token estático.
@@ -42,6 +45,7 @@ export class TenancyController {
     private readonly tenancyService: TenancyService,
     private readonly suscripciones: SuscripcionesService,
     private readonly patentes: PlateRecognizerCuentasService,
+    private readonly playaConfig: PlayaConfigGateway,
   ) {}
 
   private actor(req: AuthenticatedRequest) {
@@ -284,6 +288,37 @@ export class TenancyController {
       entidadId: playa.id,
     });
     return playa;
+  }
+
+  // Qué bloquea o conviene saber antes de cambiar la modalidad de la playa (ver cambiarModalidad).
+  @Get('playas/:id/modalidad')
+  previsualizarModalidad(@Param('id', ParseUUIDPipe) id: string) {
+    return this.tenancyService.previsualizarModalidad(id);
+  }
+
+  // Con cobro / Gratuito. Exclusivo del super admin (el guard de la clase) y con su propia ruta:
+  // updatePlaya no la acepta, porque el cambio verifica pendientes y no es una edición de datos.
+  @Patch('playas/:id/modalidad')
+  async cambiarModalidad(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CambiarModalidadDto,
+  ) {
+    const resultado = await this.tenancyService.cambiarModalidad(id, dto.modalidad);
+    if (resultado.cambio) {
+      const nombre = (m: string) => (m === 'GRATUITO' ? 'Gratuito' : 'Con cobro');
+      await this.tenancyService.registrarAuditoria({
+        empresaId: resultado.playa.empresaId,
+        playaId: id,
+        usuarioId: this.actor(req),
+        accion: 'PLAYA_MODALIDAD',
+        entidad: `${resultado.playa.nombre}: ${nombre(resultado.anterior)} → ${nombre(dto.modalidad)}`,
+        entidadId: id,
+      });
+      // Las pantallas abiertas de la playa recargan con la interfaz que corresponde.
+      await this.playaConfig.emitModalidad(resultado.playa, this.actor(req) ?? '').catch(() => undefined);
+    }
+    return { modalidad: resultado.playa.modalidad, avisos: resultado.avisos };
   }
 
   @Delete('playas/:id')

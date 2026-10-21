@@ -6,6 +6,7 @@ import { EntityManager, Repository } from 'typeorm';
 import { Movimiento } from './entities/movimiento.entity';
 import { CreateMovimientoDto } from './dto/create-movimiento.dto';
 import { TurnosService } from 'src/turnos/turnos.service';
+import { exigirCobro } from 'src/tenancy/modalidad';
 
 @Injectable()
 export class MovimientosService {
@@ -33,6 +34,8 @@ export class MovimientosService {
     if (dto.motivo?.trim() && !manager) {
       return this.movimientoRepository.manager.transaction(m => this.create(dto, m, turnoIdOverride, occurredAt));
     }
+    // Una playa gratuita no registra cobros, anticipos, cortesías, descuentos ni ajustes.
+    if (manager) await exigirCobro(manager);
     const turno = turnoIdOverride === undefined ? (manager && externalPayment.getStore() ? await paymentShift(manager, dto.usuarioId) : await this.turnosService.findOpenTurnoOrNull(dto.usuarioId, manager)) : null;
     const repository = manager ? manager.getRepository(Movimiento) : this.movimientoRepository;
 
