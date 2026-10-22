@@ -1,3 +1,4 @@
+import { operationContext, operationNow, operationTransaction } from 'src/common/operation-context';
 import { publishAutomaticNote } from 'src/notes/automatic-note';
 import { usuariosConSueldoConfigurable } from 'src/turnos/sueldos';
 import { externalPayment, operatorShift, recordDigital, reverseDigital } from 'src/turnos/turno-book';
@@ -224,7 +225,7 @@ async removeTicketPrice(id: string) {
   }
 
   async updateSchedule(dto: UpdateTicketScheduleDto) {
-    return this.dataSource.transaction(async manager => {
+    return operationTransaction(this.dataSource, async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
       // En una playa gratuita solo se configuran las tarjetas físicas. Horarios de tarifa, forma de
       // cobro, turnos, sueldos y la entrega de comprobantes quedan como estaban para cuando vuelva a
@@ -271,17 +272,24 @@ async removeTicketPrice(id: string) {
   }
 
   private async capturePricing(vehicleType: string, manager?: EntityManager, opening = true): Promise<PricingSnapshot> {
+    const captured = operationContext.getStore()?.snapshot.pricing as PricingSnapshot | undefined;
+    if (captured) {
+      if (opening) await this.assertVehicleType(vehicleType, manager);
+      assertPricingCoverage(captured, vehicleType, 'DAY');
+      assertPricingCoverage(captured, vehicleType, 'NIGHT');
+      return { ...captured, capturedAt: operationNow().toISOString() };
+    }
     if (manager) await manager.query('SELECT pg_advisory_xact_lock_shared(718903)');
     if (opening) await this.assertVehicleType(vehicleType, manager);
     const schedule = await this.getSchedule(manager);
     const repository = manager ? manager.getRepository(TicketPriceBracket) : this.ticketPriceBracketRepository;
     const brackets = await repository.find({ where: { vehicleType: vehicleType as any } });
     const snapshot: PricingSnapshot = {
-      version: 1, capturedAt: new Date().toISOString(),
+      version: 1, capturedAt: operationNow().toISOString(),
       schedule: { dayStartHour: schedule.dayStartHour, dayEndHour: schedule.dayEndHour, graceMinutes: schedule.graceMinutes, pricingDayTypeBasis: schedule.pricingDayTypeBasis ?? 'EXIT', pricingOptions: schedule.pricingOptions },
       brackets,
     };
-    const dayType = resolveDayType(snapshot.schedule, dayjs().tz('America/Argentina/Buenos_Aires').hour());
+    const dayType = resolveDayType(snapshot.schedule, dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').hour());
     if (opening) assertPricingCoverage(snapshot, vehicleType, dayType);
     if (opening && (snapshot.schedule.pricingDayTypeBasis === 'EXIT' || snapshot.schedule.pricingOptions?.crossing.enabled)) {
       assertPricingCoverage(snapshot, vehicleType, 'DAY');
@@ -299,7 +307,7 @@ async removeTicketPrice(id: string) {
     const modalidad = await modalidadParaIngreso(manager);
     if (modalidad === 'GRATUITO') {
       await this.assertVehicleType(vehicleType, manager);
-      return { modalidad, pricingSnapshot: null, capturedAt: new Date().toISOString() };
+      return { modalidad, pricingSnapshot: null, capturedAt: operationNow().toISOString() };
     }
     const pricingSnapshot = await this.capturePricing(vehicleType, manager);
     return { modalidad, pricingSnapshot, capturedAt: pricingSnapshot.capturedAt };
@@ -338,7 +346,7 @@ async removeTicketPrice(id: string) {
   // Todo importe de una estadía sale de acá (resumen, cierre, descuentos, QR/alias, «Se fue antes»):
   // una estadía que ingresó gratis no tiene tarifa, y calcularle una con la configuración actual
   // sería simular un cobro.
-  private async priceRegistration(registration: TicketRegistration, manager?: EntityManager, salida: Date = new Date()) {
+  private async priceRegistration(registration: TicketRegistration, manager?: EntityManager, salida: Date = operationNow()) {
     if (esGratuita(registration.modalidad)) throw estadiaGratuita();
     const vehicle = registration.vehicleType ?? registration.ticket?.vehicleType;
     if (!vehicle) throw new BadRequestException('El registro no tiene tipo de vehículo.');
@@ -355,7 +363,7 @@ async removeTicketPrice(id: string) {
   }
 
   async previewPrice(vehicleType: string, ticketDayType: 'DAY' | 'NIGHT', elapsedMinutes: number, entryAt?: string, options?: PricingOptions) {
-    return this.dataSource.transaction(async manager => {
+    return operationTransaction(this.dataSource, async manager => {
       const snapshot = await this.capturePricing(vehicleType, manager, false);
       await this.assertVehicleType(vehicleType, manager);
       if (options) {
@@ -364,7 +372,7 @@ async removeTicketPrice(id: string) {
         snapshot.schedule.pricingOptions = liveOptions;
       }
       const hour = ticketDayType === 'NIGHT' ? snapshot.schedule.dayEndHour : snapshot.schedule.dayStartHour;
-      const entry = entryAt ? dayjs(entryAt) : dayjs().tz('America/Argentina/Buenos_Aires').startOf('day').hour(hour);
+      const entry = entryAt ? dayjs(entryAt) : dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').startOf('day').hour(hour);
       return calculateStayPrice(snapshot, vehicleType, entry.toDate(), entry.add(elapsedMinutes, 'minute').toDate());
     });
   }
@@ -379,7 +387,7 @@ async removeTicketPrice(id: string) {
   }
 
   async createVehicleType(dto: CreateVehicleTypeDto) {
-    return this.dataSource.transaction(async manager => {
+    return operationTransaction(this.dataSource, async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
       const repo = manager.getRepository(VehicleTypeEntity);
       if (await repo.exists({ where: { code: dto.code } })) throw new BadRequestException('Ya existe ese código de vehículo.');
@@ -389,7 +397,7 @@ async removeTicketPrice(id: string) {
   }
 
   async updateVehicleType(code: string, dto: UpdateVehicleTypeDto) {
-    return this.dataSource.transaction(async manager => {
+    return operationTransaction(this.dataSource, async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
       const repo = manager.getRepository(VehicleTypeEntity);
       const vehicle = await repo.findOneBy({ code });
@@ -480,7 +488,7 @@ async removeTicketPrice(id: string) {
 
   async createRegistration(ticketId?: string, userId?: string) {
     if (!ticketId) throw new BadRequestException('Falta el identificador del ticket.');
-    const result = await this.dataSource.transaction(async manager => {
+    const result = await operationTransaction(this.dataSource, async manager => {
       const ticket = await manager.getRepository(Ticket).findOne({ where: { id: ticketId }, lock: { mode: 'pessimistic_write' } });
       if (!ticket) throw new NotFoundException('Ticket no encontrado.');
       const repository = manager.getRepository(TicketRegistration);
@@ -497,6 +505,7 @@ async removeTicketPrice(id: string) {
       const entryOperatorName = userId ? await this.operatorName(userId, manager) : null;
       const now = dayjs(capturedAt).tz('America/Argentina/Buenos_Aires');
       const registration = await repository.save(repository.create({
+        ...(operationContext.getStore() ? { id: operationContext.getStore()!.resourceId, createdAt: operationNow() } : {}),
         description: `Registro de ticket para vehículo tipo ${ticket.vehicleType}`, price: 0,
         entryDay: now.format('YYYY-MM-DD'), entryTime: now.format('HH:mm:ss'),
         ticket, vehicleType: ticket.vehicleType as any, codeBarTicket: ticket.codeBar,
@@ -526,7 +535,8 @@ private async getTicketTimePriceOrThrow(
   ticketTimeType: 'DIA' | 'SEMANA' | 'MES',
   vehicleType: string,
 ) {
-  const ticketPrice = await this.ticketPriceRepository.findOne({
+  const context = operationContext.getStore();
+  const ticketPrice = context ? context.snapshot.passPrices.find(p => p.ticketTimeType === ticketTimeType && p.vehicleType === vehicleType) : await this.ticketPriceRepository.findOne({
     where: { ticketTimeType: ticketTimeType as any, vehicleType: vehicleType as any },
   });
   if (!ticketPrice) {
@@ -540,10 +550,11 @@ private async getTicketTimePriceOrThrow(
 
 async createRegistrationForDay(createTicketRegistrationForDayDto: CreateTicketRegistrationForDayDto, userId?: string) {
   await this.assertVehicleType(createTicketRegistrationForDayDto.vehicleType);
-  return this.dataSource.transaction(async manager => {
+  return operationTransaction(this.dataSource, async manager => {
   try {
     const { ticketTimeType, vehicleType, days, weeks, months } = createTicketRegistrationForDayDto;
     const ticket = manager.getRepository(TicketRegistrationForDay).create(createTicketRegistrationForDayDto);
+    if (operationContext.getStore()) Object.assign(ticket, { id: operationContext.getStore()!.resourceId, createdAt: operationNow() });
     ticket.entryOperatorName = userId ? await this.operatorName(userId, manager) : null;
 
     let time = '';
@@ -561,7 +572,7 @@ async createRegistrationForDay(createTicketRegistrationForDayDto: CreateTicketRe
 
     ticket.description = `Tipo: ${vehicleType}, ${this.ticketTimeTypeLabel[ticketTimeType]}, Tiempo: ${time}`;
 
-    const argentinaTime = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day');
+    const argentinaTime = dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').startOf('day');
     const now = argentinaTime.format('YYYY-MM-DD');
     ticket.dateNow = now;
 
@@ -619,7 +630,7 @@ async getRegistrationForDay(id: string) {
 // El DTO de la ruta sólo acepta CASH y TRANSFER: MERCADOPAGO no se elige a mano, lo escribe la
 // acreditación automática del cobro con QR llamando a este método.
 async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMetodo'> & { paymentMetodo?: 'CASH' | 'TRANSFER' | 'MERCADOPAGO' }, userId?: string) {
-    return this.dataSource.transaction(async manager => {
+    return operationTransaction(this.dataSource, async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const repo = manager.getRepository(TicketRegistrationForDay);
       const ticket = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
@@ -629,7 +640,7 @@ async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMe
       const method = dto.paymentMetodo ?? ticket.paymentMetodo;
       const after = paid && this.esEfectivoDeAbono(method) ? ticket.price : 0;
       if (before !== after || paid !== ticket.paid) {
-        const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+        const date = dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
         const box = await this.boxListsService.applyTicketPayment(date, after - before, manager);
         ticket.boxList = { id: box.id } as BoxList;
       }
@@ -641,7 +652,7 @@ async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMe
       if (dto.retired !== undefined) {
         if (dto.retired && !ticket.retired) {
           ticket.exitTurnoId = (await operatorShift(manager, userId))?.id ?? null;
-          ticket.retiredAt = new Date();
+          ticket.retiredAt = operationNow();
           ticket.exitOperatorName = userId ? await this.operatorName(userId, manager) : null;
         }
         if (!dto.retired) {
@@ -661,11 +672,11 @@ async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMe
     if (!ids || ids.length === 0) {
       return { affected: 0 };
     }
-    return this.dataSource.transaction(async manager => {
+    return operationTransaction(this.dataSource, async manager => {
       const shift = await operatorShift(manager, userId);
       const exitOperatorName = userId ? await this.operatorName(userId, manager) : null;
       const result = await manager.getRepository(TicketRegistrationForDay).createQueryBuilder().update()
-        .set({ retired: true, retiredAt: new Date(), exitOperatorName, exitTurnoId: shift?.id ?? null })
+        .set({ retired: true, retiredAt: operationNow(), exitOperatorName, exitTurnoId: shift?.id ?? null })
         .where('id IN (:...ids)', { ids }).andWhere('(retired IS NULL OR retired = false)').execute();
       return { affected: result.affected ?? 0 };
     });
@@ -685,7 +696,7 @@ async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMe
     }
 
     private getDefaultRange() {
-      const argentinaNow = dayjs().tz('America/Argentina/Buenos_Aires');
+      const argentinaNow = dayjs(operationNow()).tz('America/Argentina/Buenos_Aires');
       return {
         from: argentinaNow.startOf('month').format('YYYY-MM-DD'),
         to: argentinaNow.format('YYYY-MM-DD'),
@@ -726,13 +737,13 @@ async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMe
     }
 
   async removeRegistrationForDay(id: string) {
-    return this.dataSource.transaction(async manager => {
+    return operationTransaction(this.dataSource, async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const repo = manager.getRepository(TicketRegistrationForDay);
       const ticket = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!ticket) throw new NotFoundException('Abono no encontrado');
       if (ticket.paid && this.esEfectivoDeAbono(ticket.paymentMetodo)) {
-        const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+        const date = dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
         await this.boxListsService.applyTicketPayment(date, -ticket.price, manager);
       }
       if (ticket.paid && !this.esEfectivoDeAbono(ticket.paymentMetodo)) await reverseDigital(manager, ticket.price, ticket.paymentMetodo, 'Abono ' + id, 'Eliminación abono ' + id);
@@ -743,7 +754,7 @@ async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMe
 
 async createPriceBracket(dto: CreateTicketPriceBracketDto) {
   await this.assertVehicleType(dto.vehicleType);
-  return this.dataSource.transaction(async manager => {
+  return operationTransaction(this.dataSource, async manager => {
     await manager.query('SELECT pg_advisory_xact_lock(718903)');
     const repository = manager.getRepository(TicketPriceBracket);
     const bracket = repository.create({ ...dto, uptoMinutes: dto.uptoMinutes ?? null, ticketDayType: dto.ticketDayType ?? null, recurringUnitMinutes: dto.recurringUnitMinutes ?? null, recurringPriceMode: dto.recurringPriceMode ?? 'FIXED' });
@@ -753,7 +764,7 @@ async createPriceBracket(dto: CreateTicketPriceBracketDto) {
 }
 
 async addAdvancePayment(id: string, dto: AdvancePaymentTicketRegistrationDto, usuarioId: string) {
-  const saved = await this.dataSource.transaction(async manager => {
+  const saved = await operationTransaction(this.dataSource, async manager => {
     const repository = manager.getRepository(TicketRegistration);
     const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
     if (!registration) throw new NotFoundException('Registro no encontrado.');
@@ -828,7 +839,7 @@ async registrarPagoExterno(
   referencia: string,
   usuarioId: string,
 ) {
-  const r = await this.dataSource.transaction(manager => this.acreditarPagoEn(manager, registrationId, monto, metodo, referencia, usuarioId));
+  const r = await operationTransaction(this.dataSource, manager => this.acreditarPagoEn(manager, registrationId, monto, metodo, referencia, usuarioId));
   if (r.yaCerrada) throw new BadRequestException('El ticket ya está cerrado.');
   this.ticketGateway.emitNewRegistration(r.registration);
   return { cerrada: r.cerrada, saldoPendiente: r.saldoPendiente };
@@ -848,7 +859,7 @@ async findAllPriceBrackets(vehicleType?: string) {
 
 async updatePriceBracket(id: string, dto: UpdateTicketPriceBracketDto) {
   if (dto.vehicleType) await this.assertVehicleType(dto.vehicleType);
-  return this.dataSource.transaction(async manager => {
+  return operationTransaction(this.dataSource, async manager => {
     await manager.query('SELECT pg_advisory_xact_lock(718903)');
     const repository = manager.getRepository(TicketPriceBracket);
     const bracket = await repository.findOne({ where: { id } });
@@ -860,7 +871,7 @@ async updatePriceBracket(id: string, dto: UpdateTicketPriceBracketDto) {
 }
 
 async removePriceBracket(id: string) {
-  return this.dataSource.transaction(async manager => {
+  return operationTransaction(this.dataSource, async manager => {
     await manager.query('SELECT pg_advisory_xact_lock(718903)');
     const result = await manager.getRepository(TicketPriceBracket).delete(id);
     if (!result.affected) throw new NotFoundException('Franja de precio no encontrada.');
@@ -943,7 +954,7 @@ async removePriceBracket(id: string) {
   // que ocurrió, para poder graficar los picos de movimiento (mañana/tarde) del día.
   async getHourlyActivity(date?: string) {
     try {
-      const targetDate = date ?? dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+      const targetDate = date ?? dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
 
       // TO_CHAR fuerza que entryDay/departureDay vuelvan como texto plano ('YYYY-MM-DD') — en
       // una query raw, columnas `date` de Postgres vuelven como objeto Date de JS, no string, y
@@ -1022,12 +1033,12 @@ async removePriceBracket(id: string) {
     if (!entryAt.isValid()) {
       throw new BadRequestException('Invalid entryDay/entryTime');
     }
-    const now = dayjs().tz('America/Argentina/Buenos_Aires');
+    const now = dayjs(operationNow()).tz('America/Argentina/Buenos_Aires');
     return now.diff(entryAt, 'minute');
   }
 
   async createRegistrationByPlate(dto: CreateRegistrationByPlateDto, userId?: string) {
-    const saved = await this.dataSource.transaction(async manager => {
+    const saved = await operationTransaction(this.dataSource, async manager => {
       const repository = manager.getRepository(TicketRegistration);
       if (dto.noPlate && !dto.lastNameCustomer?.trim()) {
         throw new BadRequestException('El apellido es obligatorio cuando no hay patente.');
@@ -1070,6 +1081,7 @@ async removePriceBracket(id: string) {
       const entryOperatorName = userId ? await this.operatorName(userId, manager) : null;
       const argentinaTime = dayjs(capturedAt).tz('America/Argentina/Buenos_Aires');
       const registration = repository.create({
+        ...(operationContext.getStore() ? { id: operationContext.getStore()!.resourceId, createdAt: operationNow() } : {}),
         entryOperatorName,
         pricingSnapshot, modalidad, entryMode: 'PLATE',
         description: `Registro por patente para vehículo tipo ${dto.vehicleType}`,
@@ -1181,7 +1193,7 @@ async removePriceBracket(id: string) {
     if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
     if (!esGratuita(registration.modalidad)) return { ...(await this.getCloseSummary(id, manager)), modalidad: registration.modalidad };
     const entrada = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', 'America/Argentina/Buenos_Aires');
-    return { registration, modalidad: registration.modalidad, elapsedMinutes: Math.max(0, dayjs().diff(entrada, 'minute')) };
+    return { registration, modalidad: registration.modalidad, elapsedMinutes: Math.max(0, dayjs(operationNow()).diff(entrada, 'minute')) };
   }
 
   async getCloseSummary(id: string, manager?: EntityManager) {
@@ -1231,14 +1243,14 @@ async removePriceBracket(id: string) {
   // cerrar, o se redujo el anticipo): va con su propia categoría para que el resumen del turno la
   // descuente de lo cobrado en efectivo y no la muestre como un retiro de caja.
   private async linkToTodaysBoxList(registration: TicketRegistration, amount: number, manager: EntityManager, usuarioId?: string) {
-    const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+    const date = dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
     const box = await this.boxListsService.applyTicketPayment(date, amount, manager, undefined, usuarioId, amount < 0 ? 'DEVOLUCION_ANTICIPO' : 'COBRO');
     registration.dateNow = date;
     registration.boxList = { id: box.id } as BoxList;
   }
 
   async discountRegistration(id: string, dto: DiscountRegistrationDto, usuarioId: string) {
-    const result = await this.dataSource.transaction(async manager => {
+    const result = await operationTransaction(this.dataSource, async manager => {
       const repo = manager.getRepository(TicketRegistration);
       const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!registration) throw new NotFoundException('Registro no encontrado.');
@@ -1275,7 +1287,7 @@ async removePriceBracket(id: string) {
    * otro medio. El importe tiene que ser menor que el saldo: todo en efectivo es un cierre común.
    */
   async cobrarParteEnEfectivo(id: string, dto: PagoParcialDto, usuarioId: string) {
-    const result = await this.dataSource.transaction(async manager => {
+    const result = await operationTransaction(this.dataSource, async manager => {
       const repo = manager.getRepository(TicketRegistration);
       const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!registration) throw new NotFoundException('Registro no encontrado.');
@@ -1313,13 +1325,13 @@ async removePriceBracket(id: string) {
    */
   async corregirEntradaOlvidada(id: string, entradaIso: string, _usuarioId: string) {
     const TZ = 'America/Argentina/Buenos_Aires';
-    const result = await this.dataSource.transaction(async manager => {
+    const result = await operationTransaction(this.dataSource, async manager => {
       const repo = manager.getRepository(TicketRegistration);
       const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!registration) throw new NotFoundException('Registro no encontrado.');
       if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
       if (!registration.entryDay || !registration.entryTime) throw new BadRequestException('La estadía no tiene hora de entrada.');
-      const ahora = dayjs().tz(TZ);
+      const ahora = dayjs(operationNow()).tz(TZ);
       const actual = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', TZ);
       if (ahora.diff(actual, 'minute') > 15)
         throw new BadRequestException({ code: 'ENTRADA_NO_CORREGIBLE', message: 'Solo se puede corregir la hora de una entrada recién cargada.' });
@@ -1367,7 +1379,7 @@ async removePriceBracket(id: string) {
    * No se toca con un QR o alias esperando el pago: el importe pedido dejaría de coincidir.
    */
   async corregirDatosEstadia(id: string, dto: CorregirDatosEstadiaDto, _usuarioId: string) {
-    const result = await this.dataSource.transaction(async manager => {
+    const result = await operationTransaction(this.dataSource, async manager => {
       const repo = manager.getRepository(TicketRegistration);
       const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!registration) throw new NotFoundException('Registro no encontrado.');
@@ -1397,10 +1409,10 @@ async removePriceBracket(id: string) {
         await this.assertVehicleType(dto.vehicleType, manager);
         if (registration.pricingSnapshot) {
           await manager.query('SELECT pg_advisory_xact_lock_shared(718903)');
-          const brackets = await manager.getRepository(TicketPriceBracket).find({ where: { vehicleType: dto.vehicleType as any } });
+          const brackets = operationContext.getStore()?.snapshot.pricing?.brackets.filter(b => b.vehicleType === dto.vehicleType) ?? await manager.getRepository(TicketPriceBracket).find({ where: { vehicleType: dto.vehicleType as any } });
           const snapshot: PricingSnapshot = { ...registration.pricingSnapshot, brackets };
           // Que el tipo nuevo tenga precio, con la misma regla que al entrar (capturePricing).
-          assertPricingCoverage(snapshot, dto.vehicleType, resolveDayType(snapshot.schedule, dayjs().tz('America/Argentina/Buenos_Aires').hour()));
+          assertPricingCoverage(snapshot, dto.vehicleType, resolveDayType(snapshot.schedule, dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').hour()));
           if (snapshot.schedule.pricingDayTypeBasis === 'EXIT' || snapshot.schedule.pricingOptions?.crossing.enabled) {
             assertPricingCoverage(snapshot, dto.vehicleType, 'DAY');
             assertPricingCoverage(snapshot, dto.vehicleType, 'NIGHT');
@@ -1431,7 +1443,7 @@ async removePriceBracket(id: string) {
    * si el operador tiene uno abierto, la salida se le atribuye como cualquier otra.
    */
   async registrarSalidaGratuita(id: string, usuarioId: string) {
-    const saved = await this.dataSource.transaction(async manager => {
+    const saved = await operationTransaction(this.dataSource, async manager => {
       const repository = manager.getRepository(TicketRegistration);
       // Siempre dentro de la playa del pedido: con el alcance de plataforma (super admin) la RLS deja
       // ver todas, y la salida (y su aviso por socket) quedaría en la playa equivocada.
@@ -1442,7 +1454,7 @@ async removePriceBracket(id: string) {
       if (registration.departureTime) return { registration, repetida: true };
       const withTicket = await repository.findOne({ where: { id }, relations: ['ticket'] });
       const ticket = withTicket!.ticket;
-      const now = dayjs().tz('America/Argentina/Buenos_Aires');
+      const now = dayjs(operationNow()).tz('America/Argentina/Buenos_Aires');
       registration.entryMode ??= ticket ? 'BARCODE' : 'PLATE';
       registration.vehicleType ??= ticket?.vehicleType as any;
       registration.codeBarTicket = ticket?.codeBar ?? registration.codeBarTicket;
@@ -1461,7 +1473,7 @@ async removePriceBracket(id: string) {
 
   // Ambas identificaciones usan una operación atómica; reintentar un cierre no vuelve a cobrar.
   async closeRegistrationByPlate(id: string, dto: CloseRegistrationDto, usuarioId: string) {
-    const saved = await this.dataSource.transaction(manager => this.cerrarEnTransaccion(manager, id, dto, usuarioId));
+    const saved = await operationTransaction(this.dataSource, manager => this.cerrarEnTransaccion(manager, id, dto, usuarioId));
     this.ticketGateway.emitNewRegistration(saved);
     return saved;
   }
@@ -1482,7 +1494,7 @@ async removePriceBracket(id: string) {
     if (!vehicle) throw new BadRequestException('El registro no tiene tipo de vehículo.');
     const snapshot = registration.pricingSnapshot ?? await this.capturePricing(vehicle, undefined, false);
     const entrada = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', 'America/Argentina/Buenos_Aires');
-    const transcurridos = dayjs().diff(entrada, 'minute');
+    const transcurridos = dayjs(operationNow()).diff(entrada, 'minute');
     const opcionesTarifa = snapshot.schedule.pricingOptions ?? defaultPricingOptions();
     // Las que se repiten se cortan acá: más allá, una estadía tan larga ya no «se fue antes».
     const MAX_REPETICIONES = 12;
@@ -1517,7 +1529,7 @@ async removePriceBracket(id: string) {
   // La hora informada tiene que caer entre la entrada y ahora (un minuto de margen por relojes).
   private validarSalidaAnterior(registration: TicketRegistration, salidaEn: Date) {
     if (Number.isNaN(salidaEn.getTime())) throw new BadRequestException({ code: 'SALIDA_INVALIDA', message: 'Indicá a qué hora se fue.' });
-    if (salidaEn.getTime() > Date.now() + 60_000) throw new BadRequestException({ code: 'SALIDA_FUTURA', message: 'La hora en que se fue no puede ser posterior a ahora.' });
+    if (salidaEn.getTime() > operationNow().getTime() + 60_000) throw new BadRequestException({ code: 'SALIDA_FUTURA', message: 'La hora en que se fue no puede ser posterior a ahora.' });
     const entrada = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', 'America/Argentina/Buenos_Aires');
     if (!dayjs(salidaEn).isAfter(entrada)) throw new BadRequestException({ code: 'SALIDA_ANTES_DE_ENTRADA', message: 'La hora en que se fue tiene que ser posterior a la entrada.' });
   }
@@ -1532,7 +1544,7 @@ async removePriceBracket(id: string) {
    */
   async registrarSalidaAnterior(id: string, dto: SalidaAnteriorDto, usuarioId: string) {
     const salidaEn = new Date(dto.salidaEn);
-    const resultado = await this.dataSource.transaction(async manager => {
+    const resultado = await operationTransaction(this.dataSource, async manager => {
       const registration = await manager.getRepository(TicketRegistration).findOne({ where: { id }, relations: ['ticket'] });
       if (!registration) throw new NotFoundException('Registro no encontrado.');
       if (registration.departureTime) throw new BadRequestException({ code: 'ESTADIA_CERRADA', message: 'Esta estadía ya tiene la salida registrada.' });
@@ -1639,7 +1651,7 @@ async removePriceBracket(id: string) {
 
   /** El anticipo por QR ya acreditado por MercadoPago (ver acreditarAnticipoEn). */
   async registrarAnticipoExterno(registrationId: string, monto: number, metodo: MovimientoMetodo, referencia: string, usuarioId: string, anticipo: { minutos: number; etiqueta?: string | null }) {
-    const r = await this.dataSource.transaction(manager => this.acreditarAnticipoEn(manager, registrationId, monto, metodo, referencia, usuarioId, anticipo));
+    const r = await operationTransaction(this.dataSource, manager => this.acreditarAnticipoEn(manager, registrationId, monto, metodo, referencia, usuarioId, anticipo));
     if (r.yaCerrada) throw new BadRequestException('El ticket ya está cerrado.');
     this.ticketGateway.emitNewRegistration(r.registration);
     return { cerrada: false, saldoPendiente: 0 };
@@ -1656,7 +1668,7 @@ async removePriceBracket(id: string) {
     if (!registration) throw new NotFoundException('Abono no encontrado.');
     if (registration.paid || registration.retired) return { yaCerrada: true as const };
     if (registration.price !== monto) throw new ConflictException('El importe del abono cambió. Cancelá y empezá nuevamente.');
-    const fecha = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+    const fecha = dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
     const box = await this.boxListsService.applyTicketPayment(fecha, 0, manager, undefined, usuarioId);
     registration.boxList = { id: box.id } as BoxList;
     await recordDigital(manager, monto, 'ALIAS', 'Abono ' + id, usuarioId);
@@ -1666,7 +1678,7 @@ async removePriceBracket(id: string) {
     if (retirar) {
       registration.exitTurnoId = (await operatorShift(manager, usuarioId))?.id ?? null;
       registration.retired = true;
-      registration.retiredAt = new Date();
+      registration.retiredAt = operationNow();
       registration.exitOperatorName = await this.operatorName(usuarioId, manager);
     }
     await repo.save(registration);
@@ -1682,7 +1694,7 @@ async removePriceBracket(id: string) {
    * patente y la hora de entrada.
    */
   async eliminarEstadiaPorError(id: string) {
-    const eliminada = await this.dataSource.transaction(async manager => {
+    const eliminada = await operationTransaction(this.dataSource, async manager => {
       const repository = manager.getRepository(TicketRegistration);
       const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!registration) throw new NotFoundException('Registro no encontrado.');
@@ -1775,7 +1787,7 @@ async removePriceBracket(id: string) {
         await this.movimientosService.create({ ticketRegistrationId: id, monto: -refund, metodo: dto.refundMetodo, tipo: 'AJUSTE', motivo: 'Devolución de anticipo excedente al cerrar la estadía', usuarioId }, manager);
         if (dto.refundMetodo === 'CASH') cashDelta -= refund;
       }
-      const now = dayjs(salidaEn ?? new Date()).tz('America/Argentina/Buenos_Aires');
+      const now = dayjs(salidaEn ?? operationNow()).tz('America/Argentina/Buenos_Aires');
       registration.entryMode ??= registration.ticket ? 'BARCODE' : 'PLATE';
       registration.vehicleType ??= registration.ticket?.vehicleType as any;
       registration.codeBarTicket = registration.ticket?.codeBar ?? registration.codeBarTicket;
@@ -1882,7 +1894,7 @@ async removePriceBracket(id: string) {
   async planillaVehiculos(filtros: { desde?: string; hasta?: string; estado?: string; operador?: string; tipo?: string; q?: string }, pagination: ListPagination) {
     // Un día que existe (un «2026-13-01» tiene la forma pero no es una fecha).
     const dia = (valor: string) => /^\d{4}-\d{2}-\d{2}$/.test(valor) && dayjs(valor).format('YYYY-MM-DD') === valor;
-    const hoy = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+    const hoy = dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
     const desde = filtros.desde ?? hoy;
     const hasta = filtros.hasta ?? desde;
     if (!dia(desde) || !dia(hasta) || desde > hasta) throw new BadRequestException({ code: 'RANGO_INVALIDO', message: 'Elegí un rango de fechas válido.' });

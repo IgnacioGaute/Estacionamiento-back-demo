@@ -1,4 +1,5 @@
 import { publishAutomaticNote } from 'src/notes/automatic-note';
+import { operationContext, operationNow } from 'src/common/operation-context';
 import { externalPayment, paymentShift } from 'src/turnos/turno-book';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -27,6 +28,7 @@ export class MovimientosService {
   // vez de bloquear el cobro. Para retomar la exigencia, volver a llamar
   // turnosService.getOpenTurno (que tira NO_OPEN_TURNO) en vez de findOpenTurnoOrNull.
   async create(dto: CreateMovimientoDto & { usuarioId: string }, manager?: EntityManager, turnoIdOverride?: string | null, occurredAt?: Date): Promise<Movimiento> {
+    if (operationContext.getStore()) occurredAt ??= operationNow();
     if ((dto.tipo === 'AJUSTE' || dto.tipo === 'CORTESIA' || dto.tipo === 'DESCUENTO') && !dto.motivo?.trim()) {
       throw new BadRequestException('El motivo es obligatorio para un ajuste o un descuento.');
     }

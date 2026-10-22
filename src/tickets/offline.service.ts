@@ -22,12 +22,14 @@ import { OfflineOperationDto, OfflineFinishDto } from './dto/offline.dto';
 import { Playa } from 'src/tenancy/entities/playa.entity';
 import { User } from 'src/users/entities/user.entity';
 import { Turno } from 'src/turnos/entities/turno.entity';
+import { offlineSnapshotFingerprint } from './offline-snapshot';
+import { OfflineActionsService } from './offline-actions.service';
 const TZ = 'America/Argentina/Buenos_Aires';
 @Injectable()
 export class OfflineService {
-  constructor(private readonly ds: DataSource, private readonly tickets: TicketsService, private readonly boxes: BoxListsService, private readonly movements: MovimientosService, private readonly gateway: TicketGateway) {}
+  constructor(private readonly ds: DataSource, private readonly tickets: TicketsService, private readonly boxes: BoxListsService, private readonly movements: MovimientosService, private readonly gateway: TicketGateway, private readonly actions: OfflineActionsService) {}
   private scope() { const s = tenantContext.getStore(); if (!s?.userId || !s.playaId || !['USER', 'ADMIN'].includes(s.role)) throw new ForbiddenException(); return s; }
-  async prepare(deviceId: string, refresh = false) {
+  async prepare(deviceId: string, refresh = false, knownSessionId?: string) {
     const scope = this.scope();
     return this.ds.transaction(async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
@@ -51,7 +53,11 @@ export class OfflineService {
       const operatorName = operator ? (`${operator.firstName} ${operator.lastName}`.trim() || operator.username) : 'Operador no disponible';
       const vehicles = [];
       for (const r of await manager.getRepository(TicketRegistration).find({ where: { playaId: scope.playaId, departureTime: IsNull() }, relations: ['ticket'] })) {
-        vehicles.push({ id: r.id, modalidad: r.modalidad, plate: r.licensePlateOriginal || r.codeBarTicket || r.ticket?.codeBar || 'Sin patente', vehicleType: r.vehicleType || r.ticket?.vehicleType, entry: dayjs.tz(`${r.entryDay} ${r.entryTime}`, TZ).toISOString(), pricing: r.pricingSnapshot, collected: esGratuita(r.modalidad) ? 0 : await this.tickets.collectedAmount(r, manager), eligible: esGratuita(r.modalidad) || !!r.pricingSnapshot });
+        const [discount] = await manager.query('SELECT COALESCE(SUM(monto),0) AS total FROM movimientos WHERE "ticketRegistrationId"=$1 AND tipo=\'DESCUENTO\'', [r.id]);
+        // Los registros anteriores a los snapshots usan la tarifa vigente descargada, igual
+        // que el cierre normal. El replay fija esa copia para no tomar precios nuevos.
+        const vehiclePricing = r.pricingSnapshot ?? pricing;
+        vehicles.push({ id: r.id, modalidad: r.modalidad, plate: r.licensePlateOriginal || r.codeBarTicket || r.ticket?.codeBar || r.lastNameCustomer || 'Sin patente', vehicleType: r.vehicleType || r.ticket?.vehicleType, entry: dayjs.tz(`${r.entryDay} ${r.entryTime}`, TZ).toISOString(), pricing: vehiclePricing, collected: esGratuita(r.modalidad) ? 0 : await this.tickets.collectedAmount(r, manager), discount: Number(discount.total), entryMode: r.entryMode, noPlate: r.noPlate, lastNameCustomer: r.lastNameCustomer, phoneCustomer: r.phoneCustomer, casilleroNumber: r.casilleroNumber, expectedUptoMinutes: r.expectedUptoMinutes, expectedBracketLabel: r.expectedBracketLabel, eligible: esGratuita(r.modalidad) || !!vehiclePricing });
       }
       const playa = await manager.getRepository(Playa).findOneBy({ id: scope.playaId });
       const business = { name: playa?.nombre, address: playa?.direccion };
@@ -90,13 +96,21 @@ export class OfflineService {
           ];
         }),
       ];
-      const snapshot = { version: 2, modalidad, userId: scope.userId, playaId: scope.playaId, operatorName, shift: shift ? { id: shift.id, name: shift.nombre } : null, shiftsEnabled: !gratuita && schedule.shiftsEnabled === true, business, receiptDelivery: gratuita ? null : schedule.receiptDelivery, capturedAt: now.toISOString(), expiresAt: now.getTime() + 86400000, pricing, types: types.map(t => ({ code: t.code, name: t.name })), vehicles, receipts: gratuita ? [] : receipts };
+      const snapshot = { ...(await this.actions.extras(manager, gratuita)), version: 2, modalidad, userId: scope.userId, playaId: scope.playaId, operatorName, shift: shift ? { id: shift.id, name: shift.nombre } : null, shiftsEnabled: !gratuita && schedule.shiftsEnabled === true, business, receiptDelivery: gratuita ? null : schedule.receiptDelivery, capturedAt: now.toISOString(), expiresAt: now.getTime() + 86400000, pricing, types: types.map(t => ({ code: t.code, name: t.name })), vehicles, receipts: gratuita ? [] : receipts };
+      // La sesión anterior sigue siendo inmutable para las pestañas con pendientes. Si la copia
+      // conocida sigue vigente y su contenido es idéntico, evitamos bajarla y cifrarla otra vez.
+      // Aun sin movimientos se renueva cada hora: quedan al menos 23 h de autorización local.
+      if (knownSessionId && active && active.id === knownSessionId && active.expiresAt.getTime() - now.getTime() > 23 * 3600000 &&
+          Object.keys(active.processed).length === 0 && offlineSnapshotFingerprint(active.snapshot) === offlineSnapshotFingerprint(snapshot)) {
+        return { unchanged: true, sessionId: active.id, expiresAt: active.expiresAt.getTime() };
+      }
       const session = await repo.save(repo.create({ playaId: scope.playaId, userId: scope.userId, deviceId, createdAt: now, expiresAt: new Date(snapshot.expiresAt), active: true, snapshot, processed: {} }));
       return { ...snapshot, sessionId: session.id, processedIds: [] };
     });
   }
   async synchronize(dto: OfflineOperationDto) {
     const scope = this.scope();
+    const afterCommit: (() => void)[] = [];
     const saved = await this.ds.transaction(async manager => {
       // Same ordering as normal pricing/cash operations. The session row serializes retries.
       await manager.query('SELECT pg_advisory_xact_lock(718903)');
@@ -104,7 +118,9 @@ export class OfflineService {
       const sessions = manager.getRepository(OfflineSession);
       const session = await sessions.findOne({ where: { id: dto.sessionId, playaId: scope.playaId, userId: scope.userId, deviceId: dto.deviceId }, lock: { mode: 'pessimistic_write' } });
       if (!session) throw new ForbiddenException('Esta contingencia pertenece a otro usuario o dispositivo.');
-      const fingerprint = createHash('sha256').update(JSON.stringify([dto.kind, dto.registrationId, dto.occurredAt, dto.plate, dto.vehicleType, dto.expectedPrice, dto.expectedCollected, dto.method])).digest('hex');
+      const fingerprint = dto.kind === 'ACTION'
+        ? offlineSnapshotFingerprint({ kind: dto.kind, action: dto.action, registrationId: dto.registrationId, occurredAt: dto.occurredAt, data: dto.data, expectedState: dto.expectedState, shiftId: dto.shiftId, cashSessionId: dto.cashSessionId })
+        : createHash('sha256').update(JSON.stringify([dto.kind, dto.registrationId, dto.occurredAt, dto.plate, dto.vehicleType, dto.expectedPrice, dto.expectedCollected, dto.method])).digest('hex');
       const previous = session.processed[dto.id];
       if (previous) { if (previous.fingerprint !== fingerprint) throw new ConflictException('El identificador ya fue utilizado con otros datos.'); return { id: previous.registrationId }; }
       if (!session.active) throw new ConflictException('La contingencia fue finalizada. Conservá la operación para revisión.');
@@ -115,6 +131,13 @@ export class OfflineService {
         throw new ConflictException({ code: 'MODALIDAD_CAMBIADA', message: 'Cambió la modalidad de la playa durante esta contingencia. La operación sigue pendiente para revisión.' });
       const time = Date.parse(dto.occurredAt);
       if (time < session.createdAt.getTime() - 120000 || time > session.expiresAt.getTime() || time > Date.now() + 120000) throw new ConflictException('La fecha de la operación está fuera del período autorizado.');
+      if (dto.kind === 'ACTION') {
+        const result = await this.actions.execute(manager, session, dto, afterCommit);
+        if (!gratuita) await refreshAutomaticCuts(manager, new Date(time));
+        session.processed[dto.id] = { fingerprint, registrationId: result.id, action: dto.action };
+        await sessions.save(session);
+        return result;
+      }
       const repo = manager.getRepository(TicketRegistration);
       const operator = await manager.getRepository(User).findOne({ where: { id: scope.userId }, withDeleted: true });
       const operatorName = operator ? (`${operator.firstName} ${operator.lastName}`.trim() || operator.username) : 'Operador no disponible';
@@ -176,6 +199,7 @@ export class OfflineService {
       await sessions.save(session);
       return registration;
     });
+    for (const publish of afterCommit) publish();
     if ('entryDay' in saved) this.gateway.emitNewRegistration(saved as TicketRegistration);
     return { status: 'SYNCED', operationId: dto.id, registrationId: saved.id };
   }

@@ -76,6 +76,7 @@ before(async () => {
       ['1790000035000-alias-inquilinos', 'AliasInquilinos1790000035000'],
       ['1790000036000-turnos-diarios', 'TurnosDiarios1790000036000'],
       ['1790000042000-modalidad-operacion', 'ModalidadOperacion1790000042000'],
+      ['1790000043000-superadmin-operativo', 'SuperadminOperativo1790000043000'],
     ]) await new (load('database/migrations/' + file, name))().up(runner);
   } finally { await runner.release(); }
   installTenantConnections(ds);
@@ -275,6 +276,10 @@ test('en la playa gratuita las operaciones financieras se rechazan, incluso para
   assert.equal(offline.body.shiftsEnabled, false);
   assert.equal(offline.body.receiptDelivery, null);
   assert.deepEqual(offline.body.receipts, []);
+  const unchanged = await http('post', '/tickets/offline/prepare', operador).send({ deviceId: '00000000-0000-4000-8000-000000000001', refresh: true, knownSessionId: offline.body.sessionId }).expect(201);
+  assert.equal(unchanged.body.unchanged, true);
+  assert.equal(unchanged.body.sessionId, offline.body.sessionId);
+  assert.equal(unchanged.body.vehicles, undefined);
   // Segunda barrera, dentro de la transacción: aunque alguien llegue a la caja por otro camino.
   const boxes = app.get(load('box-lists/box-lists.service', 'BoxListsService'));
   await assert.rejects(scoped({ empresaId: gratis.empresaId, playaId: gratis.id, userId: adminA.id }, () =>

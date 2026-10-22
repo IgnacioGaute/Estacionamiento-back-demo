@@ -1,4 +1,5 @@
 import { EntityManager } from 'typeorm';
+import { operationContext, operationNow } from 'src/common/operation-context';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ConflictException } from '@nestjs/common';
 import dayjs from 'dayjs';
@@ -109,6 +110,8 @@ export async function offlineShift(m: EntityManager, id: string, userId: string,
 }
 
 export async function operatorShift(m: EntityManager, userId = tenantContext.getStore()?.userId) {
+  const replay = operationContext.getStore();
+  if (replay) return replay.shiftId ? m.getRepository(Turno).findOneBy({ id: replay.shiftId, usuarioApertura: { id: userId } }) : null;
   await rolloverShifts(m);
   if (!userId) return null;
   return m.getRepository(Turno).findOne({ where: { usuarioApertura: { id: userId }, estado: 'ABIERTO' } });
@@ -120,7 +123,7 @@ export async function recordDigital(m: EntityManager, amount: number, method: st
   // Ingreso digital (o su reversión): en una playa gratuita no hay cobros que registrar.
   await exigirCobro(m);
   const shift = turnoId === undefined ? await paymentShift(m, userId ?? undefined) : null;
-  await m.getRepository(TurnoPayment).save({ amount, medio: externalPayment.getStore()?.medio ?? (method === 'MERCADOPAGO' ? 'QR' : method),
+  await m.getRepository(TurnoPayment).save({ ...(operationContext.getStore() ? { createdAt: operationNow() } : {}), amount, medio: externalPayment.getStore()?.medio ?? (method === 'MERCADOPAGO' ? 'QR' : method),
     referencia: reference, turnoId: turnoId === undefined ? shift?.id ?? null : turnoId });
 }
 

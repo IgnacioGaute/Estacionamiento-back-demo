@@ -173,7 +173,8 @@ export class TenantAccessService {
       role: context.user.role,
       empresaId: playa.empresaId,
       playaId: playa.id,
-      platform: context.user.role === 'SUPER_ADMIN',
+      // Elegir una playa no habilita el bypass global de RLS de la consola de plataforma.
+      platform: false,
       suspendida: context.empresa?.estado === 'SUSPENDIDA',
       modalidad: esGratuita(playa.modalidad) ? 'GRATUITO' : 'CON_COBRO',
     };

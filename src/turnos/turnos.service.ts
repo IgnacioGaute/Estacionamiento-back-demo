@@ -1,3 +1,4 @@
+import { operationContext, operationNow, operationTransaction } from 'src/common/operation-context';
 import { publishAutomaticNote } from 'src/notes/automatic-note';
 import { usuariosConSueldoConfigurable } from './sueldos';
 import { exitCount, operatorShift, rolloverShifts, occupancyAt, salaryWithdrawal, shiftSummary, SHIFT_TZ } from './turno-book';
@@ -33,7 +34,9 @@ export class TurnosService {
   ) {}
 
   async findOpenTurnoOrNull(usuarioId: string, manager?: EntityManager): Promise<Turno | null> {
-    if (!manager) return this.dataSource.transaction(m => this.findOpenTurnoOrNull(usuarioId, m));
+    const replay = operationContext.getStore();
+    if (replay) return replay.shiftId ? replay.manager.getRepository(Turno).findOneBy({ id: replay.shiftId, usuarioApertura: { id: usuarioId } }) : null;
+    if (!manager) return operationTransaction(this.dataSource, m => this.findOpenTurnoOrNull(usuarioId, m));
     await rolloverShifts(manager);
     // Mismo orden de locks que cobros y cierre: libro de caja, luego turno del operador.
     if (manager) await manager.query('SELECT pg_advisory_xact_lock(718904)');
@@ -92,7 +95,7 @@ export class TurnosService {
     const operador = responsable ? [responsable.firstName, responsable.lastName].filter(Boolean).join(' ').trim() || responsable.username : entregado?.nombre;
     return { ...caja, session, pending: last, legacyPending: legacy,
       traspaso: { operador: operador && operador !== 'Turno' ? operador : null, fechaCierre: entregado?.fechaCierre ?? last?.fechaCierre ?? null,
-        vehiculosDejados: entregado?.vehiculosFin ?? null, vehiculosActivos: vehiculosActivos ?? await occupancyAt(manager, new Date()) },
+        vehiculosDejados: entregado?.vehiculosFin ?? null, vehiculosActivos: vehiculosActivos ?? await occupancyAt(manager, operationNow()) },
       movimientos: movements.map(m => ({ id: m.id, amount: m.amount, tipo: m.tipo, motivo: m.motivo, operador: m.usuario ? [m.usuario.firstName, m.usuario.lastName].join(' ').trim() : 'Usuario no disponible' })),
       efectivoDisponible: session ? await this.sessionTotal(session.id, manager) : last?.efectivoParaSiguiente ?? legacy?.efectivoParaSiguiente ?? 0,
       operadores: users.map(t => ({ turnoId: t.id, id: t.usuarioApertura?.id, nombre: t.nombre })),
@@ -109,17 +112,17 @@ export class TurnosService {
 
   async getCashContext(usuarioId = tenantContext.getStore()?.userId) {
     if (!usuarioId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
-    return this.dataSource.transaction(async manager => {
+    return operationTransaction(this.dataSource, async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       await rolloverShifts(manager);
       const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
       const registers = await this.ensureCajas(manager);
-      const vehiculosActivos = await occupancyAt(manager, new Date());
+      const vehiculosActivos = await occupancyAt(manager, operationNow());
       const cajas = await Promise.all(registers.filter(c => c.activa && (settings?.multipleShiftsEnabled || c.principal)).map(c => this.cajaContext(c, manager, vehiculosActivos)));
       const repo = manager.getRepository(Turno);
       const own = await repo.findOne({ where: { usuarioApertura: { id: usuarioId }, estado: 'ABIERTO' }, relations: ['usuarioApertura', 'caja'] });
       const active = own ? await this.turnoContext(own, manager) : null;
-      const abiertos = tenantContext.getStore()?.role === 'ADMIN'
+      const abiertos = ['ADMIN', 'SUPER_ADMIN'].includes(tenantContext.getStore()?.role ?? '')
         ? await repo.find({ where: { estado: 'ABIERTO' }, relations: ['usuarioApertura', 'caja'], order: { fechaApertura: 'ASC' } }) : [];
       const openTurnos = await Promise.all(abiertos.map(t => this.turnoContext(t, manager)));
       const legacyOpen = await repo.exists({ where: { estado: 'ABIERTO', cashSessionId: IsNull() } });
@@ -130,7 +133,7 @@ export class TurnosService {
   }
 
   async getConfiguration() {
-    return this.dataSource.transaction(async manager => {
+    return operationTransaction(this.dataSource, async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const cajas = await this.ensureCajas(manager);
       return { cajas, usuarios: await usuariosConSueldoConfigurable(manager), hayTurnosAbiertos: await manager.getRepository(Turno).exists({ where: { estado: 'ABIERTO' } }) };
@@ -138,7 +141,7 @@ export class TurnosService {
   }
 
   async saveCaja(dto: CajaDto, id?: string) {
-    return this.dataSource.transaction(async manager => {
+    return operationTransaction(this.dataSource, async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       await exigirCobro(manager);
       const repo = manager.getRepository(CashRegister);
@@ -160,8 +163,8 @@ export class TurnosService {
   }
 
   async addCashMovement(sesionId: string, usuarioId: string, dto: CashSessionMovementDto, rol?: UserRole) {
-    if (rol !== 'ADMIN') throw new ForbiddenException('Sólo el administrador puede registrar retiros o aportes de efectivo.');
-    return this.dataSource.transaction(async manager => {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(rol ?? '')) throw new ForbiddenException('Sólo el administrador puede registrar retiros o aportes de efectivo.');
+    return operationTransaction(this.dataSource, async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       await exigirCobro(manager);
       const session = await manager.getRepository(CashSession).findOneBy({ id: sesionId, estado: 'ABIERTO' });
@@ -171,7 +174,7 @@ export class TurnosService {
       if (!dto.motivo.trim()) throw new BadRequestException('Indicá el motivo del movimiento.');
       if (dto.tipo === 'RETIRO' && dto.importe > expected) throw new BadRequestException('No podés retirar más efectivo del disponible.');
       const own = await operatorShift(manager, usuarioId);
-      const movement = await manager.getRepository(CashSessionMovement).save({ sesionId, usuarioId, turnoId: own?.cashSessionId === sesionId ? own.id : null, tipo: dto.tipo, amount: dto.tipo === 'RETIRO' ? -dto.importe : dto.importe, motivo: dto.motivo.trim() });
+      const movement = await manager.getRepository(CashSessionMovement).save({ ...(operationContext.getStore() ? { createdAt: operationNow() } : {}), sesionId, usuarioId, turnoId: own?.cashSessionId === sesionId ? own.id : null, tipo: dto.tipo, amount: dto.tipo === 'RETIRO' ? -dto.importe : dto.importe, motivo: dto.motivo.trim() });
       const caja = await manager.getRepository(CashRegister).findOneBy({ id: session.cajaId });
       await publishAutomaticNote(manager, { sourceKey: `caja-movimiento:${movement.id}`, origin: dto.tipo === 'RETIRO' ? 'Retiro de caja' : 'Aporte de caja', sourceType: 'CAJA', sourceId: session.id, usuarioId, description: dto.motivo, context: `${caja?.nombre ?? 'Caja'} · $ ${dto.importe.toLocaleString('es-AR')}` });
       return movement;
@@ -179,7 +182,7 @@ export class TurnosService {
   }
 
   async open(usuarioId: string, dto: OpenTurnoDto): Promise<Turno> {
-    return this.dataSource.transaction(async manager => {
+    return operationTransaction(this.dataSource, async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       // Una playa gratuita no tiene caja ni turnos de caja (y el cambio a gratuita exige cerrarlos).
       await exigirCobro(manager);
@@ -212,12 +215,13 @@ export class TurnosService {
         const expected = ctx.pending?.efectivoParaSiguiente ?? ctx.legacyPending?.efectivoParaSiguiente ?? 0;
         const difference = ctx.pending || ctx.legacyPending ? expected - (dto.fondoInicial - added) : 0;
         if (difference !== 0 && !dto.motivoApertura?.trim()) throw new BadRequestException('Explicá la diferencia entre el fondo esperado y el recibido.');
-        session = await sessions.save(sessions.create({ cajaId: caja.id, fondoInicial: dto.fondoInicial, fondoEsperado: expected, cambioAgregado: added, diferenciaApertura: difference, motivoApertura: dto.motivoApertura?.trim() || null, sesionAnteriorId: ctx.pending?.id ?? null, estado: 'ABIERTO' }));
+        session = await sessions.save(sessions.create({ ...(operationContext.getStore() ? { id: operationContext.getStore()!.cashSessionId, fechaApertura: operationNow() } : {}), cajaId: caja.id, fondoInicial: dto.fondoInicial, fondoEsperado: expected, cambioAgregado: added, diferenciaApertura: difference, motivoApertura: dto.motivoApertura?.trim() || null, sesionAnteriorId: ctx.pending?.id ?? null, estado: 'ABIERTO' }));
       }
       const operator = await manager.getRepository(User).findOneBy({ id: usuarioId });
       if (!operator) throw new NotFoundException('Operador no encontrado.');
       const turno = await repo.save(repo.create({ usuarioApertura: { id: usuarioId }, cajaId: caja.id, cashSessionId: session.id,
-        fechaOperativa: dayjs().tz(SHIFT_TZ).format('YYYY-MM-DD'), sueldoPrevisto: settings.sueldoAutomatico ? settings.sueldosPorUsuario?.find(s => s.usuarioId === usuarioId)?.importe ?? 0 : 0, vehiculosInicio: await occupancyAt(manager, new Date()),
+        ...(operationContext.getStore() ? { id: operationContext.getStore()!.resourceId, fechaApertura: operationNow() } : {}),
+        fechaOperativa: dayjs(operationNow()).tz(SHIFT_TZ).format('YYYY-MM-DD'), sueldoPrevisto: settings.sueldoAutomatico ? settings.sueldosPorUsuario?.find(s => s.usuarioId === usuarioId)?.importe ?? 0 : 0, vehiculosInicio: await occupancyAt(manager, operationNow()),
         fondoInicial: ctx.session ? 0 : dto.fondoInicial, nombre: [operator.firstName, operator.lastName].join(' ').trim() || operator.username,
         duracionPrevistaHoras: null, cashVersion: 2, estado: 'ABIERTO', fondoRecibido: ctx.session ? 0 : dto.fondoInicial - (dto.cambioAgregado ?? 0),
         turnoAnteriorId: ctx.session ? null : dto.turnoAnteriorId ?? ctx.legacyPending?.id ?? null }));
@@ -243,7 +247,7 @@ export class TurnosService {
   async estadiasAbiertas(id: string, usuarioId: string, rol?: UserRole, todas = false) {
     const turno = await this.turnoRepository.findOne({ where: { id }, relations: ['usuarioApertura'] });
     if (!turno) throw new NotFoundException('Turno no encontrado.');
-    if (turno.usuarioApertura?.id !== usuarioId && rol !== 'ADMIN')
+    if (turno.usuarioApertura?.id !== usuarioId && !['ADMIN', 'SUPER_ADMIN'].includes(rol ?? ''))
       throw new ForbiddenException('Solo el responsable del turno o un administrador pueden revisarlo.');
     const u = turno.usuarioApertura;
     const nombre = u ? (`${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || u.username) : null;
@@ -264,7 +268,7 @@ export class TurnosService {
   }
 
   async close(id: string, usuarioId: string, dto: CloseTurnoDto, rol?: UserRole): Promise<Turno> {
-    return this.dataSource.transaction(async manager => {
+    return operationTransaction(this.dataSource, async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const repo = manager.getRepository(Turno);
       await rolloverShifts(manager);
@@ -275,7 +279,7 @@ export class TurnosService {
       // El administrador debe poder cerrar el turno dejando el motivo registrado.
       const esResponsable = owner?.usuarioApertura?.id === usuarioId;
       const forzado = !esResponsable;
-      if (forzado && rol !== 'ADMIN') {
+      if (forzado && !['ADMIN', 'SUPER_ADMIN'].includes(rol ?? '')) {
         throw new ForbiddenException('El cierre debe confirmarlo el operador responsable del turno, o un administrador.');
       }
       // Un cierre ajeno siempre deja escrito por qué, para que el arqueo del operador que no
@@ -293,15 +297,15 @@ export class TurnosService {
       if (turno.sueldoPrevisto > 0 && dto.sueldoEsperado !== salary) throw new ConflictException('Revisá el retiro de sueldo actualizado antes de confirmar.');
       turno.sueldoRetirado = salary;
       turno.alertaSueldo = turno.sueldoPrevisto > 0 && !salary ? `No se retiró el sueldo de $${turno.sueldoPrevisto}: el efectivo no alcanza para preservar el fondo de $${caja?.fondoObjetivo ?? 0}.` : null;
-      turno.vehiculosFin = await occupancyAt(manager, new Date());
+      turno.vehiculosFin = await occupancyAt(manager, operationNow());
       turno.salidasRegistradas = await exitCount(manager, turno.id);
       if (turno.cashSessionId) {
         const count = await repo.count({ where: { cashSessionId: turno.cashSessionId, estado: 'ABIERTO' } });
         if (count > 1) {
           if (dto.cerrarCaja || dto.efectivoContado !== undefined || dto.efectivoParaSiguiente !== undefined) throw new ConflictException('Hay otros operadores en esta caja. Cerrá sólo tu turno; el último realiza el arqueo.');
           if (dto.efectivoEsperado !== await this.cashTotal(turno, manager) && turno.sueldoPrevisto > 0) throw new ConflictException('Cambió el efectivo de la caja. Revisá el cierre.');
-          if (salary) await manager.getRepository(CashSessionMovement).save({ sesionId: turno.cashSessionId, turnoId: turno.id, usuarioId, tipo: 'SUELDO', amount: -salary, motivo: 'Sueldo al finalizar la jornada' });
-          Object.assign(turno, { usuarioCierre: { id: usuarioId }, fechaCierre: new Date(), estado: 'CERRADO', cierreCaja: false,
+          if (salary) await manager.getRepository(CashSessionMovement).save({ ...(operationContext.getStore() ? { createdAt: operationNow() } : {}), sesionId: turno.cashSessionId, turnoId: turno.id, usuarioId, tipo: 'SUELDO', amount: -salary, motivo: 'Sueldo al finalizar la jornada' });
+          Object.assign(turno, { usuarioCierre: { id: usuarioId }, fechaCierre: operationNow(), estado: 'CERRADO', cierreCaja: false,
             cierreForzado: forzado, motivoCierreForzado: forzado ? dto.motivoCierreForzado.trim() : null, observaciones: dto.observaciones ?? null });
           await this.publishClosingNote(manager, turno, usuarioId, caja?.nombre);
           return repo.save(turno);
@@ -313,11 +317,11 @@ export class TurnosService {
       const teorico = await this.cashTotal(turno, manager);
       if (turno.cashVersion === 2 && dto.efectivoEsperado !== teorico) throw new ConflictException('El efectivo esperado cambió. Actualizá el arqueo antes de confirmar.');
       if (teorico !== dto.efectivoContado && !dto.observaciones?.trim()) throw new BadRequestException('Explicá la diferencia entre el efectivo esperado y el contado.');
-      Object.assign(turno, { usuarioCierre: { id: usuarioId }, fechaCierre: new Date(), efectivoContado: dto.efectivoContado,
+      Object.assign(turno, { usuarioCierre: { id: usuarioId }, fechaCierre: operationNow(), efectivoContado: dto.efectivoContado,
         efectivoTeorico: teorico, diferencia: teorico - dto.efectivoContado, efectivoParaSiguiente: paraSiguiente,
         efectivoRetirado: dto.efectivoContado - paraSiguiente, observaciones: dto.observaciones ?? null, estado: 'CERRADO',
         cierreForzado: forzado, motivoCierreForzado: forzado ? dto.motivoCierreForzado.trim() : null });
-      if (salary && turno.cashSessionId) await manager.getRepository(CashSessionMovement).save({ sesionId: turno.cashSessionId, turnoId: turno.id, usuarioId, tipo: 'SUELDO', amount: -salary, motivo: 'Sueldo al finalizar la jornada' });
+      if (salary && turno.cashSessionId) await manager.getRepository(CashSessionMovement).save({ ...(operationContext.getStore() ? { createdAt: operationNow() } : {}), sesionId: turno.cashSessionId, turnoId: turno.id, usuarioId, tipo: 'SUELDO', amount: -salary, motivo: 'Sueldo al finalizar la jornada' });
       if (turno.cashSessionId) {
         turno.cierreCaja = true;
         await manager.getRepository(CashSession).update(turno.cashSessionId, { estado: 'CERRADO', fechaCierre: turno.fechaCierre, usuarioCierreId: usuarioId,
@@ -336,7 +340,7 @@ export class TurnosService {
 
   // El historial permite buscar por cierre; apertura sigue siendo el valor predeterminado.
   async findAll(filtros: { estado?: 'ABIERTO' | 'CERRADO'; desde?: string; hasta?: string; usuarioId?: string; fechaPor?: 'APERTURA' | 'CIERRE'; soloDiferencias?: boolean } = {}, pagination = { page: 1, limit: 25 }) {
-    await this.dataSource.transaction(m => rolloverShifts(m));
+    await operationTransaction(this.dataSource, m => rolloverShifts(m));
     const campoFecha = filtros.fechaPor === 'CIERRE' ? 't.fechaCierre' : 't.fechaApertura';
     const query = this.turnoRepository.createQueryBuilder('t')
       .leftJoinAndSelect('t.usuarioApertura', 'usuarioApertura')

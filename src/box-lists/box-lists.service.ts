@@ -1,4 +1,5 @@
 import { operatorName } from 'src/utils/operator-name';
+import { operationContext, operationNow, operationTransaction } from 'src/common/operation-context';
 import { TicketRegistration } from 'src/tickets/entities/ticket-registration.entity';
 import { TicketRegistrationForDay } from 'src/tickets/entities/ticket-registration-for-day.entity';
 import { recordDigital, rolloverShifts, shiftSummary } from 'src/turnos/turno-book';
@@ -152,6 +153,7 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
 
 
   async applyTicketPayment(date: string, amount: number, manager: EntityManager, turnoIdOverride?: string | null, usuarioId?: string, categoria = 'COBRO', occurredAt?: Date) {
+    if (operationContext.getStore()) { occurredAt ??= operationNow(); turnoIdOverride ??= operationContext.getStore()!.shiftId; }
     // También protege el caso de la primera caja: bloquear una fila inexistente no alcanza.
     await manager.query('SELECT pg_advisory_xact_lock(718904)');
     // Todo cobro, devolución, anticipo o movimiento de «Varios» pasa por acá: una playa gratuita no
@@ -503,6 +505,7 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
    * de siempre (el turno propio, o ninguno si los turnos están apagados).
    */
   private async turnoParaVarios(manager: EntityManager): Promise<string | undefined> {
+    if (operationContext.getStore()) return operationContext.getStore()!.shiftId ?? undefined;
     await rolloverShifts(manager);
     const usuarioId = tenantContext.getStore()?.userId;
     const repo = manager.getRepository(Turno);
@@ -515,8 +518,8 @@ async createBox(dto: CreateBoxListDto, manager?: EntityManager) {
   }
 
   async createOtherPayment(dto: CreateOtherPaymentDto) {
-    return this.dataSource.transaction(async manager => {
-      const date = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+    return operationTransaction(this.dataSource, async manager => {
+      const date = dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
       const amount = dto.paymentMethod === 'TRANSFER' ? 0 : this.computeBoxDelta(dto.type, dto.price);
       const digital = dto.paymentMethod === 'TRANSFER' && dto.type !== 'EGRESOS';
       const turnoId = amount || digital ? await this.turnoParaVarios(manager) : undefined;

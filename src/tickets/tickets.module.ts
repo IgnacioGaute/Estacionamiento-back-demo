@@ -4,6 +4,8 @@ import { PublicParkingReceiptsController } from './public-parking-receipts.contr
 import { TicketsService } from './tickets.service';
 import { TariffPlanService } from './tariff-plan.service';
 import { OfflineService } from './offline.service';
+import { TurnosModule } from 'src/turnos/turnos.module';
+import { OfflineActionsService } from './offline-actions.service';
 import { TicketsController } from './tickets.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Ticket } from './entities/ticket.entity';
@@ -17,9 +19,9 @@ import { TicketScheduleSettings } from './entities/ticket-schedule-settings.enti
 import { MovimientosModule } from 'src/movimientos/movimientos.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Ticket, TicketRegistration, TicketRegistrationForDay, TicketPrice, TicketPriceBracket, TicketScheduleSettings]), BoxListsModule, MovimientosModule],
+  imports: [TypeOrmModule.forFeature([Ticket, TicketRegistration, TicketRegistrationForDay, TicketPrice, TicketPriceBracket, TicketScheduleSettings]), BoxListsModule, MovimientosModule, TurnosModule],
   controllers: [TicketsController, PublicParkingReceiptsController],
-  providers: [TicketsService, TariffPlanService, TicketGateway, ParkingReceiptsService, OfflineService],
+  providers: [TicketsService, TariffPlanService, TicketGateway, ParkingReceiptsService, OfflineService, OfflineActionsService],
   exports: [TicketsService]
 })
 export class TicketsModule {}

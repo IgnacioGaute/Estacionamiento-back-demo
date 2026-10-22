@@ -154,6 +154,7 @@ before(async () => {
     await new (load('database/migrations/1790000034000-alias-abonos', 'AliasAbonos1790000034000'))().up(migrationRunner);
     await new (load('database/migrations/1790000035000-alias-inquilinos', 'AliasInquilinos1790000035000'))().up(migrationRunner);
     await new (load('database/migrations/1790000036000-turnos-diarios', 'TurnosDiarios1790000036000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000043000-superadmin-operativo', 'SuperadminOperativo1790000043000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -328,6 +329,44 @@ test('prepara dos empresas y tres playas independientes', async () => {
   );
   assert.equal(customerA.playaId, a.playaId);
   assert.equal(customerB.playaId, b.playaId);
+});
+
+test('el superadministrador opera solo en la playa elegida y conserva su autoría sin bypass de RLS', async () => {
+  const access = app.get(load('tenancy/tenant-access', 'TenantAccessService'));
+  const scopeA = await access.resolve(superUser.id, a.playaId);
+  const scopeB = await access.resolve(superUser.id, b.playaId);
+  assert.equal(scopeA.platform, false);
+  assert.equal(scopeB.platform, false);
+  const usuarios = await request(app.getHttpServer()).get('/users?limit=100')
+    .set('Authorization', 'Bearer ' + token(superUser)).set('X-Playa-Id', a.playaId).expect(200);
+  assert.deepEqual(usuarios.body.data.map(u => u.id), [adminA.id]);
+  assert.equal(usuarios.body.meta.totalItems, 1);
+  const busquedaSuper = await request(app.getHttpServer()).get('/users?search=root-test')
+    .set('Authorization', 'Bearer ' + token(superUser)).set('X-Playa-Id', a.playaId).expect(200);
+  assert.equal(busquedaSuper.body.data.length, 0);
+  assert.equal(busquedaSuper.body.meta.totalItems, 0);
+  const lookup = await request(app.getHttpServer()).get('/users?filter.email=root@example.test')
+    .set('Authorization', 'Bearer test-static-secret').expect(200);
+  assert.equal(lookup.body.data[0].id, superUser.id);
+  await scoped(scopeA, async () => {
+    assert.equal(await ds.getRepository(Customer).count(), 1);
+    assert.equal(await ds.getRepository(Customer).findOneBy({ id: customerB.id }), null);
+    assert.equal(await ds.getRepository(User).findOneBy({ id: adminB.id }), null);
+    assert.ok(await ds.getRepository(User).findOneBy({ id: superUser.id }));
+    assert.equal((await ds.getRepository(User).update(superUser.id, { firstName: 'No permitido' })).affected, 0);
+    const Note = load('notes/entities/note.entity', 'Note');
+    const note = await ds.getRepository(Note).save({ description: 'Acceso operativo', user: superUser, date: '2026-10-21', hours: '10:00:00' });
+    assert.equal(note.playaId, a.playaId);
+    assert.equal(note.user.id, superUser.id);
+    await assert.rejects(ds.getRepository(Note).save({ description: 'Otra playa', user: superUser, playaId: b.playaId, date: '2026-10-21', hours: '10:00:00' }));
+    await ds.getRepository(Note).delete(note.id);
+  });
+  await scoped(scopeB, async () => {
+    assert.equal(await ds.getRepository(Customer).count(), 1);
+    assert.equal(await ds.getRepository(Customer).findOneBy({ id: customerA.id }), null);
+  });
+  const [connection] = await ds.query("SELECT current_setting('parking.actor', true) AS actor");
+  assert.equal(connection.actor, '');
 });
 
 test('RLS filtra listados, agregados, IDs y modificaciones, incluso dentro de transacciones', async () => {
@@ -906,13 +945,26 @@ test('offline: múltiples dispositivos, conflictos y cobro idempotente con horar
     const otherDevice = uuid();
     const otherSession = await offline.prepare(otherDevice);
     assert.notEqual(session.sessionId, otherSession.sessionId);
+    const unchanged = await offline.prepare(deviceId, true, session.sessionId);
+    assert.equal(unchanged.unchanged, true);
+    assert.equal(unchanged.sessionId, session.sessionId);
+    assert.equal(unchanged.vehicles, undefined);
+    const renewDevice = uuid();
+    const old = await offline.prepare(renewDevice);
+    await ds.getRepository(load('tickets/entities/offline-session.entity', 'OfflineSession')).update(old.sessionId, { expiresAt: new Date(Date.now() + 22 * 3600000) });
+    const renewed = await offline.prepare(renewDevice, true, old.sessionId);
+    assert.notEqual(renewed.unchanged, true);
+    assert.notEqual(renewed.sessionId, old.sessionId);
     const now = Math.floor(Date.now() / 1000) * 1000;
     entryOp = { deviceId, sessionId: session.sessionId, id: uuid(), registrationId: uuid(), kind: 'ENTRY', occurredAt: new Date(now - 60000).toISOString(), plate: 'OFF123', vehicleType: 'AUTO' };
     await offline.synchronize(entryOp);
     await offline.synchronize(entryOp);
     await assert.rejects(offline.synchronize({ ...entryOp, id: uuid(), registrationId: uuid(), deviceId: otherDevice, sessionId: otherSession.sessionId }), /ingreso activo/);
-    const refreshed = await offline.prepare(otherDevice, true);
+    const refreshed = await offline.prepare(otherDevice, true, otherSession.sessionId);
+    assert.notEqual(refreshed.unchanged, true);
+    assert.notEqual(refreshed.sessionId, otherSession.sessionId);
     assert.ok(refreshed.vehicles.some(v => v.id === entryOp.registrationId));
+    assert.equal((await offline.prepare(otherDevice, true, refreshed.sessionId)).unchanged, true);
     assert.equal(await ds.getRepository(Registration).countBy({ id: entryOp.registrationId }), 1);
     await assert.rejects(offline.synchronize({ ...entryOp, plate: 'DIFFERENT' }), /otros datos/);
     const expected = load('tickets/pricing/stay-pricing', 'calculateStayPrice')(session.pricing, 'AUTO', new Date(entryOp.occurredAt), new Date(now));

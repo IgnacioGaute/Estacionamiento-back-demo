@@ -48,7 +48,7 @@ export class TicketsController {
   simulateTariffPlan(@Body() dto: SimulateTariffPlanDto) { return this.tariffPlans.simulate(dto); }
 
   @Post('offline/prepare')
-  prepareOffline(@Body() dto: OfflineDeviceDto) { return this.offline.prepare(dto.deviceId, dto.refresh); }
+  prepareOffline(@Body() dto: OfflineDeviceDto) { return this.offline.prepare(dto.deviceId, dto.refresh, dto.knownSessionId); }
   @Post('offline/sync')
   syncOffline(@Body() dto: OfflineOperationDto) { return this.offline.synchronize(dto); }
   @Post('offline/finish')

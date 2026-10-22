@@ -103,7 +103,9 @@ test('PWA operativa: entradas, salidas, persistencia offline, cifrado y reintent
     for (const c of parity.cases) assert.deepEqual(c.result, JSON.parse(JSON.stringify(backendEngine(parity.pricing, 'AUTO', new Date(c.entry), new Date(c.exit)))));
     const race = await page.evaluate(async () => {
       const vault = await import('/offline-vault.js'); const opened = await vault.openOperations('frase-local-segura-123');
+      const beforeRevision = await vault.getOperationsRevision();
       await vault.saveOperations(opened.state, 'frase-local-segura-123', opened.revision);
+      if (await vault.getOperationsRevision() !== beforeRevision + 1) throw new Error('La revisión debe cambiar al escribir desde otra pestaña.');
       try { await vault.saveOperations(opened.state, 'frase-local-segura-123', opened.revision); return false; } catch { return true; }
     });
     assert.equal(race, true);
@@ -173,7 +175,8 @@ test('PWA operativa: entradas, salidas, persistencia offline, cifrado y reintent
     await page.evaluate(async () => {
       const vault = await import('/offline-vault.js');
       const opened = await vault.openOperations('frase-local-segura-123');
-      const capturedAt = new Date().toISOString();
+      // Las entradas del servidor y las salidas locales tienen precisión de segundos.
+      const capturedAt = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();
       await vault.saveOperations({ ...opened.state, modalidad: 'GRATUITO', capturedAt, pricing: null, receiptDelivery: null, receipts: [], vehicles: [{ id: crypto.randomUUID(), modalidad: 'GRATUITO', plate: 'PREVIO1', vehicleType: 'AUTO', entry: capturedAt, pricing: null, collected: 0, eligible: true }], pending: [] }, 'frase-local-segura-123', opened.revision);
     });
     await page.reload({ waitUntil: 'domcontentloaded' });

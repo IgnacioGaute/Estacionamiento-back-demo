@@ -16,4 +16,21 @@ describe('turno del usuario autenticado', () => {
     const ds = { transaction: jest.fn(fn => fn(manager)) };
     await expect(new TurnosService(null!, null!, ds as never).open('usuario', { fondoInicial: 0 })).rejects.toThrow('Los turnos están desactivados');
   });
+
+  it('permite al superadministrador revisar el turno de otro operador', async () => {
+    const repo = { findOne: jest.fn().mockResolvedValue({ usuarioApertura: { id: 'operador', firstName: 'Ana' } }) };
+    const ds = { query: jest.fn().mockResolvedValue([]) };
+    const service = new TurnosService(repo as never, null!, ds as never);
+    await expect(service.estadiasAbiertas('turno', 'super', 'SUPER_ADMIN', true)).resolves.toEqual([]);
+    await expect(service.estadiasAbiertas('turno', 'otro', 'USER', true)).rejects.toThrow('Solo el responsable');
+  });
+
+  it('el cierre de otro operador por superadministrador sigue exigiendo un motivo', async () => {
+    const repo = { findOne: jest.fn().mockResolvedValue({ id: 'turno', usuarioApertura: { id: 'operador' } }) };
+    const manager = { query: jest.fn(), getRepository: jest.fn(() => repo) };
+    const ds = { transaction: jest.fn(fn => fn(manager)) };
+    const service = new TurnosService(repo as never, null!, ds as never);
+    await expect(service.close('turno', 'super', {} as never, 'SUPER_ADMIN')).rejects.toThrow('Explicá por qué cerrás');
+    await expect(service.close('turno', 'otro', {} as never, 'USER')).rejects.toThrow('El cierre debe confirmarlo');
+  });
 });

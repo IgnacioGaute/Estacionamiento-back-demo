@@ -5,7 +5,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { User, UserRole } from './entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, Not, Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { FilterOperator, paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
 import { UpdatePasswordDto } from './dto/update-password.dto';
@@ -60,6 +60,9 @@ export class UsersService {
   async findAll(query: PaginateQuery): Promise<Paginated<User>> {
     try {
       return await paginate(query, this.userRepository, {
+        // La autoría del superadministrador sigue disponible, pero no es una cuenta de la empresa.
+        // El lookup interno de autenticación, sin scope operativo, conserva todas las cuentas.
+        ...(tenantContext.getStore() ? { where: { role: Not('SUPER_ADMIN') } } : {}),
         sortableColumns: ['id', 'username', 'email'],
         nullSort: 'last',
         defaultSortBy: [['createdAt', 'DESC']],

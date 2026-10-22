@@ -38,6 +38,15 @@ Consequences for new code:
 
 ### Auth & permissions
 
+El selector de acceso del frontend permite a SUPER_ADMIN entrar a la plataforma o a cualquier playa.
+`TenantAccessService.resolve` aplica el scope operativo con `platform: false` también para ese rol:
+las consultas y escrituras quedan aisladas en la empresa/playa elegidas. `parking.actor` identifica
+al autor autenticado; la migración `SuperadminOperativo1790000043000` permite leer su propia fila de
+superadministrador para las referencias de cobros, entradas y turnos, sin permitir modificarla ni
+abrir registros de otras empresas. La conexión limpia también ese valor al volver al pool.
+El listado operativo de Usuarios excluye SUPER_ADMIN antes de paginar y contar resultados; su fila
+sigue disponible para autoría y para las búsquedas internas de autenticación sin scope operativo.
+
 - `JwtStrategy` (`src/utils/strategies/jwt.strategy.ts`) validates bearer tokens signed with `NEXTAUTH_SECRET`
   (tokens are minted by a NextAuth frontend, not here), then re-reads the user from the database: the account must
   exist, `payload.authVersion` must match `user.authVersion` (bumped on password change, so old sessions die), and

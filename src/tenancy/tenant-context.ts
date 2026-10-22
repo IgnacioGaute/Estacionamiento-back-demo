@@ -32,8 +32,8 @@ export function installTenantConnections(ds: DataSource) {
     runner.connect = () => initialized ??= (async () => {
       const connection = await connect();
       await connection.query('RESET ROLE');
-      await connection.query(`SELECT set_config('parking.empresa', $1, false), set_config('parking.playa', $2, false), set_config('parking.platform', $3, false)`,
-        [scope?.empresaId ?? '', scope?.playaId ?? '', scope?.platform ? 'yes' : 'no']);
+      await connection.query(`SELECT set_config('parking.empresa', $1, false), set_config('parking.playa', $2, false), set_config('parking.platform', $3, false), set_config('parking.actor', $4, false)`,
+        [scope?.empresaId ?? '', scope?.playaId ?? '', scope?.platform ? 'yes' : 'no', scope?.userId ?? '']);
       if (scope) await connection.query('SET ROLE parking_scoped');
       return connection;
     })();
@@ -45,7 +45,7 @@ export function installTenantConnections(ds: DataSource) {
           // A failed transaction must not contaminate the next checkout.
           if (runner.isTransactionActive) await connection.query('ROLLBACK');
           await connection.query('RESET ROLE');
-          await connection.query(`SELECT set_config('parking.empresa', '', false), set_config('parking.playa', '', false), set_config('parking.platform', 'no', false)`);
+          await connection.query(`SELECT set_config('parking.empresa', '', false), set_config('parking.playa', '', false), set_config('parking.platform', 'no', false), set_config('parking.actor', '', false)`);
         }
       } finally { await release(); }
     };

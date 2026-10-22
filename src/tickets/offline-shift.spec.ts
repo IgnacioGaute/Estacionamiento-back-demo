@@ -154,7 +154,7 @@ describe('preparación offline por usuario', () => {
       if (entity === OfflineSession) return { findOne: jest.fn().mockRejectedValue(stop) };
     }) };
     const ds = { transaction: jest.fn(callback => callback(manager)) };
-    const service = new OfflineService(ds as never, { getSchedule: jest.fn().mockResolvedValue({ shiftsEnabled: true }) } as never, null!, null!, null!);
+    const service = new OfflineService(ds as never, { getSchedule: jest.fn().mockResolvedValue({ shiftsEnabled: true }) } as never, null!, null!, null!, null!);
     await tenantContext.run({ userId: 'usuario-propio', playaId: 'playa', empresaId: 'empresa', role: 'USER' }, async () => {
       await expect(service.prepare('dispositivo')).rejects.toBe(stop);
     });

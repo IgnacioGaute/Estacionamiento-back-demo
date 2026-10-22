@@ -9,5 +9,5 @@ export class OfflineSession {
   @Column('timestamptz') createdAt: Date;
   @Column('timestamptz') expiresAt: Date;
   @Column('jsonb') snapshot: any;
-  @Column('jsonb', { default: {} }) processed: Record<string, { fingerprint: string; registrationId: string }>;
+  @Column('jsonb', { default: {} }) processed: Record<string, { fingerprint: string; registrationId: string; action?: string }>;
 }
