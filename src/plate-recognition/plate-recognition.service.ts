@@ -21,7 +21,7 @@ const ALPR_NO_DISPONIBLE = {
   code: 'ALPR_NO_DISPONIBLE',
   message: 'El reconocimiento de patentes no responde en este momento. Escribí la patente a mano.',
 };
-const FOTO_PESADA = {
+export const FOTO_PESADA = {
   code: 'PLATE_IMAGE_TOO_LARGE',
   message: 'La foto es demasiado pesada para reconocer la patente. Probá de nuevo o escribila manualmente.',
 };

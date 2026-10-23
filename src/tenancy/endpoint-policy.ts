@@ -43,7 +43,8 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     'findOne',
   ],
   ScannerController: ['startScanner'],
-  PlateRecognitionController: ['scan'],
+  // detectarTipo: el tipo y el modelo sugeridos para una entrada, a partir de la foto del escaneo.
+  PlateRecognitionController: ['scan', 'detectarTipo'],
   CustomersController: [
     'findAll',
     'getCustomerthird',

@@ -1,4 +1,12 @@
 import { HttpException, ServiceUnavailableException } from '@nestjs/common';
+import type { ConfigService } from '@nestjs/config';
+
+/** El modelo principal y sus respaldos configurados: como mucho tres, sin repetir. */
+export function modelosGemini(config: ConfigService): string[] {
+  const primary = config.get<string>('GEMINI_MODEL') || 'gemini-3.5-flash-lite';
+  const fallback = config.get<string>('GEMINI_FALLBACK_MODELS') ?? 'gemini-3.1-flash-lite';
+  return [...new Set([primary, ...fallback.split(',').map(value => value.trim()).filter(Boolean)])].slice(0, 3);
+}
 
 /** Consume la respuesta completa dentro del timeout y del bloque de reintentos.
  * Conserva las partes originales, incluidas las firmas de llamadas a herramientas.

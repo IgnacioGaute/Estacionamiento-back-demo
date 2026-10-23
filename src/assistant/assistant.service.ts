@@ -9,7 +9,7 @@ import { TicketScheduleSettings } from '../tickets/entities/ticket-schedule-sett
 import { TicketsService } from '../tickets/tickets.service';
 import { TurnosService } from '../turnos/turnos.service';
 import { SYSTEM_GUIDE } from './knowledge';
-import { requestGemini } from './gemini-request';
+import { modelosGemini, requestGemini } from './gemini-request';
 import { claveDePregunta, temaDePregunta } from './temas';
 import type { AssistantMessageDto } from './assistant.controller';
 import { esGratuita } from 'src/tenancy/modalidad';
@@ -99,9 +99,8 @@ export class AssistantService {
         { name: 'ticket_amount', description: 'Importe y desglose actual de un ingreso activo. Primero obtener su id mediante active_vehicles.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' } }, required: ['id'] } },
         ...(s.role === 'ADMIN' ? [{ name: 'shift_history', description: 'Últimos cinco cierres de turno, sin totales de recaudación.' }] : []),
       ].filter(f => !esGratuita(s.modalidad) || ['active_vehicles', 'pricing_settings'].includes(f.name));
-      const primary =this.config.get<string>('GEMINI_MODEL') || 'gemini-3.5-flash-lite';
-      const fallback = this.config.get<string>('GEMINI_FALLBACK_MODELS') ?? 'gemini-3.1-flash-lite';
-      const models = [...new Set([primary, ...fallback.split(',').map(value => value.trim()).filter(Boolean)])].slice(0, 3);
+      const models = modelosGemini(this.config);
+      const primary = models[0];
       if (models.some(model => !/^[a-zA-Z0-9.-]+$/.test(model))) throw new ServiceUnavailableException('Modelo de asistente inválido.');
       let activeModel = primary;
       let candidates = models;

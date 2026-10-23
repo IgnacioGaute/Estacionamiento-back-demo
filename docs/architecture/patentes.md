@@ -21,3 +21,15 @@ The front's live scanner (`src/utils/plate-scan.ts`) filters frames before sendi
 of the frame visible in its 3:4 viewer, at native resolution. The ALPR service detects in the central square around
 the guide and in the whole image, so a plate the operator aims at is found even with poor phone cameras. See
 `alpr/README.md`.
+
+### Vehicle type and model
+
+`POST /plate-recognition/vehicle-type` (`TipoVehiculoService`) receives the photo that produced the plate read and
+suggests the vehicle type and model with Gemini (same `GEMINI_API_KEY`/models as the assistant), in both modalities.
+The plate is always read by the playa's plate engine (Plate Recognizer or the platform ALPR), never by Gemini. The
+response is constrained by schema to the playa's enabled type codes or `NINGUNO`, plus `modelo` (make and model as known
+in Argentina, sanitized to 60 chars). Any failure (no key, quota, invalid answer) returns nulls and never blocks the
+entry. The photo is sent to Google only for that request and is not stored. When a scanned plate is not inside, the
+dock scanner starts the detection while the operator answers «¿Está entrando o se está yendo?», and the entry dialog
+reuses that result. The dialog preselects the type only if the operator didn't change it and no frequent customer set
+it meanwhile, and fills `modeloVehiculo` only when it is empty.
