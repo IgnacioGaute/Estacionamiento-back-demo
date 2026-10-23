@@ -34,6 +34,7 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     'closeRegistrationByPlate',
     // «Se fue antes»: las tarifas posibles y la salida con la tarifa elegida (ver registrarSalidaAnterior).
     'opcionesSalidaAnterior',
+    'tarifasSinEntrada',
     'registrarSalidaAnterior',
     // La salida de una estadía que ingresó gratis (ver registrarSalidaGratuita).
     'registrarSalida',
@@ -186,6 +187,7 @@ export const FREE_MODE_BLOCKED: Record<string, readonly string[]> = {
     'pagoParcial',
     'closeRegistrationByPlate',
     'opcionesSalidaAnterior',
+    'tarifasSinEntrada',
     'registrarSalidaAnterior',
     'createRegistrationForDay',
     'retireRegistrationsForDay',

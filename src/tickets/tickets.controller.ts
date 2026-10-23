@@ -1,5 +1,5 @@
 import { CreateVehicleTypeDto, UpdateVehicleTypeDto } from './dto/vehicle-type.dto';
-import { Controller, Get, Post, Body, Patch, Param, Query, Delete, UseGuards, Req, UnauthorizedException, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Query, Delete, UseGuards, Req, UnauthorizedException, ParseIntPipe, BadRequestException } from '@nestjs/common';
 import { AuthenticatedRequest } from 'src/types/request';
 import { CreateRegistrationByPlateDto } from './dto/create-registration-by-plate.dto';
 import { DiscountRegistrationDto } from './dto/discount-registration.dto';
@@ -262,6 +262,13 @@ export class TicketsController {
   registrarSalida(@Req() req: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
     if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
     return this.ticketsService.registrarSalidaGratuita(id, req.user.userId);
+  }
+
+  // Las tarifas para cobrar un auto que se va sin entrada, con su importe (ver tarifasSinEntrada).
+  @Get('tarifas-sin-entrada')
+  tarifasSinEntrada(@Query('vehicleType') vehicleType: string) {
+    if (!/^[A-Z][A-Z0-9_]{0,31}$/.test(vehicleType ?? '')) throw new BadRequestException('Elegí el tipo de vehículo.');
+    return this.ticketsService.tarifasSinEntrada(vehicleType);
   }
 
   // Las tarifas que pudo haber pagado si se fue antes, con su importe (ver opcionesSalidaAnterior).

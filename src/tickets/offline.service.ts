@@ -28,7 +28,7 @@ const TZ = 'America/Argentina/Buenos_Aires';
 @Injectable()
 export class OfflineService {
   constructor(private readonly ds: DataSource, private readonly tickets: TicketsService, private readonly boxes: BoxListsService, private readonly movements: MovimientosService, private readonly gateway: TicketGateway, private readonly actions: OfflineActionsService) {}
-  private scope() { const s = tenantContext.getStore(); if (!s?.userId || !s.playaId || !['USER', 'ADMIN'].includes(s.role)) throw new ForbiddenException(); return s; }
+  private scope() { const s = tenantContext.getStore(); if (!s?.userId || !s.playaId || !['USER', 'ADMIN', 'SUPER_ADMIN'].includes(s.role)) throw new ForbiddenException(); return s; }
   async prepare(deviceId: string, refresh = false, knownSessionId?: string) {
     const scope = this.scope();
     return this.ds.transaction(async manager => {

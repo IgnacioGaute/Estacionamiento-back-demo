@@ -96,6 +96,14 @@ export class TicketRegistration {
   @Column('varchar', { length: 15, nullable: true })
   phoneCustomer: string | null;
 
+  // Documento (DNI, solo dígitos) y modelo del vehículo, opcionales: los pide la playa gratuita
+  // para saber a quién deja entrar (migración DatosClienteEstadia1790000044000).
+  @Column('varchar', { length: 20, nullable: true })
+  documentoCustomer: string | null;
+
+  @Column('varchar', { length: 60, nullable: true })
+  modeloVehiculo: string | null;
+
   // @deprecated — reemplazado por licensePlateOriginal/Normalized/Search. Se deja de escribir
   // pero no se borra la columna (con synchronize:true, borrar el @Column borra los datos).
   @Column('varchar', { length: 50, nullable: true })

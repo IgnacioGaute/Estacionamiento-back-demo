@@ -96,6 +96,7 @@ describe('TenantGuard: quién puede llamar a qué', () => {
       await deja('TicketsController', 'createRegistrationByPlate', { sesion: operador });
       await deja('TicketsController', 'closeRegistrationByPlate', { sesion: operador });
       await deja('TicketsController', 'opcionesSalidaAnterior', { sesion: operador });
+      await deja('TicketsController', 'tarifasSinEntrada', { sesion: operador });
       await deja('TicketsController', 'registrarSalidaAnterior', { sesion: operador });
       await deja('TurnosController', 'close', { sesion: operador });
       await deja('CuentasController', 'registrarPago', { sesion: operador });
@@ -148,6 +149,8 @@ describe('TenantGuard: quién puede llamar a qué', () => {
     test('no abre estadías nuevas ni cambia configuración, cualquiera sea el rol', async () => {
       const codigo = expect.objectContaining({ response: expect.objectContaining({ code: 'EMPRESA_SUSPENDIDA' }) });
       await expect(pedir('TicketsController', 'createRegistrationByPlate', { sesion: suspendida(operador) }).resultado).rejects.toEqual(codigo);
+      // Cobrar un auto sin entrada abre una estadía: tampoco sus tarifas.
+      await expect(pedir('TicketsController', 'tarifasSinEntrada', { sesion: suspendida(operador) }).resultado).rejects.toEqual(codigo);
       await expect(pedir('TicketsController', 'updateSchedule', { sesion: suspendida(admin) }).resultado).rejects.toEqual(codigo);
       await expect(pedir('CuentasController', 'registrarPago', { sesion: suspendida(admin) }).resultado).rejects.toEqual(codigo);
     });

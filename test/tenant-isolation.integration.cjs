@@ -155,6 +155,7 @@ before(async () => {
     await new (load('database/migrations/1790000035000-alias-inquilinos', 'AliasInquilinos1790000035000'))().up(migrationRunner);
     await new (load('database/migrations/1790000036000-turnos-diarios', 'TurnosDiarios1790000036000'))().up(migrationRunner);
     await new (load('database/migrations/1790000043000-superadmin-operativo', 'SuperadminOperativo1790000043000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000044000-datos-cliente-estadia', 'DatosClienteEstadia1790000044000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -364,6 +365,13 @@ test('el superadministrador opera solo en la playa elegida y conserva su autorí
   await scoped(scopeB, async () => {
     assert.equal(await ds.getRepository(Customer).count(), 1);
     assert.equal(await ds.getRepository(Customer).findOneBy({ id: customerA.id }), null);
+  });
+  // Dentro de una playa también prepara el modo sin conexión (antes respondía Forbidden).
+  await scoped(scopeA, async () => {
+    const offline = app.get(load('tickets/offline.service', 'OfflineService'));
+    const copia = await offline.prepare(require('node:crypto').randomUUID());
+    assert.equal(copia.playaId, a.playaId);
+    assert.equal(copia.userId, superUser.id);
   });
   const [connection] = await ds.query("SELECT current_setting('parking.actor', true) AS actor");
   assert.equal(connection.actor, '');
@@ -1538,4 +1546,17 @@ test('avisos: filtros por estado, origen, período y autor, con conteos por esta
 
   for (const malo of ['&estado=NUEVO', '&origen=OTRO', '&desde=2026-13-01', '&desde=2026-02-01&hasta=2026-01-01', '&autor=yo'])
     assert.equal((await listar(adminA, malo).expect(400)).body.code, 'FILTRO_INVALIDO', malo);
+});
+
+test('el rol operativo guarda DNI y modelo de la estadía, y otra empresa no los ve', async () => {
+  const service = app.get(TicketsService);
+  let id;
+  await scoped(a, async () => {
+    const registration = await service.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'DNI' + Date.now().toString().slice(-4), documentoCustomer: '30.123.456', modeloVehiculo: '  Toyota   Etios ' });
+    id = registration.id;
+    const guardada = await ds.getRepository(Registration).findOneBy({ id });
+    assert.equal(guardada.documentoCustomer, '30123456');
+    assert.equal(guardada.modeloVehiculo, 'Toyota Etios');
+  });
+  await scoped(b, async () => assert.equal(await ds.getRepository(Registration).findOneBy({ id }), null));
 });

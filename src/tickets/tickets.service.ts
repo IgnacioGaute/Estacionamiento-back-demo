@@ -1098,6 +1098,8 @@ async removePriceBracket(id: string) {
         casilleroNumber: dto.casilleroNumber ?? null,
         lastNameCustomer: dto.lastNameCustomer ?? null,
         phoneCustomer: dto.phoneCustomer?.trim().replace(/[\s()+-]/g, '') || null,
+        documentoCustomer: dto.documentoCustomer?.replace(/\D/g, '') || null,
+        modeloVehiculo: dto.modeloVehiculo?.trim().replace(/\s+/g, ' ').slice(0, 60) || null,
         noPlate: !!dto.noPlate,
         duplicatePlateOverrideReason: dto.duplicateOverride ? dto.duplicateOverrideReason ?? null : null,
         duplicateOfRegistrationId,
@@ -1498,7 +1500,9 @@ async removePriceBracket(id: string) {
     const opcionesTarifa = snapshot.schedule.pricingOptions ?? defaultPricingOptions();
     // Las que se repiten se cortan acá: más allá, una estadía tan larga ya no «se fue antes».
     const MAX_REPETICIONES = 12;
-    const candidatas: { etiqueta: string; minutos: number }[] = [];
+    // `repeticiones`: cuántas veces la franja que se repite, para que el mostrador las muestre como
+    // un contador sobre la última tarifa en vez de una opción por renglón.
+    const candidatas: { etiqueta: string; minutos: number; repeticiones?: number }[] = [];
     if (opcionesTarifa.charging.enabled) {
       const unidad = opcionesTarifa.charging.unitMinutes;
       for (let n = 1; n * unidad < transcurridos && n <= MAX_REPETICIONES * 2; n++) candidatas.push({ etiqueta: `${n} × ${unidad} min`, minutos: n * unidad });
@@ -1511,19 +1515,59 @@ async removePriceBracket(id: string) {
       if (abierta?.recurringUnitMinutes) {
         const base = ultima?.uptoMinutes ?? 0;
         for (let n = 1; base + n * abierta.recurringUnitMinutes < transcurridos && n <= MAX_REPETICIONES; n++)
-          candidatas.push({ etiqueta: `${ultima ? `${ultima.label} + ` : ''}${n} × ${abierta.label}`, minutos: base + n * abierta.recurringUnitMinutes });
+          candidatas.push({ etiqueta: `${ultima ? `${ultima.label} + ` : ''}${n} × ${abierta.label}`, minutos: base + n * abierta.recurringUnitMinutes, repeticiones: n });
       }
     }
     const ahora = await this.priceRegistration(registration);
-    const opciones: { etiqueta: string; minutos: number; salidaEn: string; precio: number }[] = [];
+    const opciones: { etiqueta: string; minutos: number; salidaEn: string; precio: number; repeticiones?: number }[] = [];
     for (const candidata of candidatas) {
       const salida = entrada.add(candidata.minutos, 'minute');
       const { price } = await this.priceRegistration(registration, undefined, salida.toDate());
       // Misma plata con otro nombre (la tolerancia entre franjas): queda la primera.
       if (price >= ahora.price || opciones.some(o => o.precio === price)) continue;
-      opciones.push({ etiqueta: candidata.etiqueta, minutos: candidata.minutos, salidaEn: salida.toISOString(), precio: price });
+      opciones.push({ etiqueta: candidata.etiqueta, minutos: candidata.minutos, salidaEn: salida.toISOString(), precio: price, ...(candidata.repeticiones ? { repeticiones: candidata.repeticiones } : {}) });
     }
     return { ahora: ahora.price, cobrado: await this.collectedAmount(registration), opciones };
+  }
+
+  /**
+   * Las tarifas para cobrar un auto que se va sin entrada registrada: como en «Se fue antes», se
+   * elige la tarifa y no la hora exacta. Cada franja del vehículo con su importe y, si hay una que
+   * se repite («cada»), el total con 1 a 12 repeticiones después de la última. Los importes salen
+   * del mismo cálculo del cobro (entrada = ahora menos la duración), así coinciden con lo que
+   * después muestra el cobro.
+   */
+  async tarifasSinEntrada(vehicleType: string) {
+    await this.assertVehicleType(vehicleType);
+    const snapshot = await this.capturePricing(vehicleType, undefined, false);
+    const ahora = dayjs(operationNow()).tz('America/Argentina/Buenos_Aires');
+    const precio = (minutos: number) =>
+      calculateStayPrice(snapshot, vehicleType, ahora.subtract(minutos, 'minute').toDate(), ahora.toDate()).price;
+    const MAX_REPETICIONES = 12;
+    const opcionesTarifa = snapshot.schedule.pricingOptions ?? defaultPricingOptions();
+    if (opcionesTarifa.charging.enabled) {
+      const unidad = opcionesTarifa.charging.unitMinutes;
+      return {
+        opciones: [{ etiqueta: `${unidad} min`, minutos: unidad, precio: precio(unidad) }],
+        repeticion: {
+          etiqueta: `${unidad} min`, unidadMinutos: unidad, base: unidad,
+          precios: Array.from({ length: MAX_REPETICIONES }, (_, i) => precio(unidad * (i + 2))),
+        },
+      };
+    }
+    const franjas = selectBrackets(snapshot.brackets, vehicleType, resolveDayType(snapshot.schedule, ahora.hour()));
+    const finitas = franjas.filter(b => b.uptoMinutes !== null);
+    const abierta = franjas.find(b => b.uptoMinutes === null);
+    const base = finitas[finitas.length - 1]?.uptoMinutes ?? 0;
+    return {
+      opciones: finitas.map(b => ({ etiqueta: b.label, minutos: b.uptoMinutes!, precio: precio(b.uptoMinutes!) })),
+      repeticion: abierta?.recurringUnitMinutes
+        ? {
+            etiqueta: abierta.label, unidadMinutos: abierta.recurringUnitMinutes, base,
+            precios: Array.from({ length: MAX_REPETICIONES }, (_, i) => precio(base + (i + 1) * abierta.recurringUnitMinutes!)),
+          }
+        : null,
+    };
   }
 
   // La hora informada tiene que caer entre la entrada y ahora (un minuto de margen por relojes).

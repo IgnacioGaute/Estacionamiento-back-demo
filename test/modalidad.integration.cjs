@@ -77,6 +77,7 @@ before(async () => {
       ['1790000036000-turnos-diarios', 'TurnosDiarios1790000036000'],
       ['1790000042000-modalidad-operacion', 'ModalidadOperacion1790000042000'],
       ['1790000043000-superadmin-operativo', 'SuperadminOperativo1790000043000'],
+      ['1790000044000-datos-cliente-estadia', 'DatosClienteEstadia1790000044000'],
     ]) await new (load('database/migrations/' + file, name))().up(runner);
   } finally { await runner.release(); }
   installTenantConnections(ds);

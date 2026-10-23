@@ -221,6 +221,8 @@ test('se fue antes: ofrece las tarifas que ya pasó y registra la salida con la 
   assert.equal(ahora, 5000);
   assert.equal(cobrado, 0);
   assert.deepEqual(opciones.map(o => [o.etiqueta, o.precio]), [['Hora', 1000], ['Hora + 1 × Extra', 2000], ['Hora + 2 × Extra', 3000], ['Hora + 3 × Extra', 4000]]);
+  // Las que repiten la franja abierta dicen cuántas veces, para mostrarlas como contador.
+  assert.deepEqual(opciones.map(o => o.repeticiones ?? 0), [0, 1, 2, 3]);
   const [primera] = opciones;
   const salida = dayjs(primera.salidaEn).tz('America/Argentina/Buenos_Aires');
   const dto = { closeType: 'PAYMENT', metodo: 'CASH', expectedPrice: primera.precio, expectedCollected: 0, salidaEn: primera.salidaEn };
@@ -240,6 +242,19 @@ test('se fue antes: ofrece las tarifas que ya pasó y registra la salida con la 
   assert.equal(saved.price, 1000);
   await assert.rejects(tickets.registrarSalidaAnterior(registration.id, dto, user.id), /ya tiene la salida/);
   assert.equal(await movements.sumByRegistration(registration.id), 1000);
+});
+
+test('sin entrada: tarifas del vehículo con su importe y la que se repite con 1 a 12 veces', async () => {
+  const { opciones, repeticion } = await tickets.tarifasSinEntrada('AUTO');
+  assert.deepEqual(opciones.map(o => [o.etiqueta, o.minutos, o.precio]), [['Hora', 60, 1000]]);
+  assert.equal(repeticion.etiqueta, 'Extra');
+  assert.equal(repeticion.unidadMinutos, 60);
+  assert.equal(repeticion.base, 60);
+  assert.equal(repeticion.precios.length, 12);
+  // Hora + 1 × Extra y Hora + 3 × Extra: el mismo importe que cobraría el cierre.
+  assert.equal(repeticion.precios[0], 2000);
+  assert.equal(repeticion.precios[2], 4000);
+  await assert.rejects(tickets.tarifasSinEntrada('NO_EXISTE'), /no existe o está desactivado/);
 });
 
 test('saldo histórico se conserva sin inventar movimientos y admite ajustes posteriores', async () => {

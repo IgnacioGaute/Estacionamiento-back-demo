@@ -1,6 +1,6 @@
 import { Matches } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { TicketType } from '../entities/ticket.entity';
 
 export class CreateRegistrationByPlateDto {
@@ -26,6 +26,18 @@ export class CreateRegistrationByPlateDto {
   @IsString()
   @IsOptional()
   lastNameCustomer?: string;
+
+  // DNI, opcional: se guardan solo los dígitos (se aceptan puntos y espacios al escribirlo).
+  @IsOptional()
+  @Transform(({ value }) => typeof value === 'string' ? value.replace(/[\s.-]/g, '') || undefined : value)
+  @Matches(/^\d{6,9}$/, { message: 'Ingresá el DNI con 6 a 9 números.' })
+  documentoCustomer?: string;
+
+  // Modelo del vehículo, opcional (el mostrador sugiere los comunes; se puede escribir cualquiera).
+  @IsOptional()
+  @IsString()
+  @MaxLength(60, { message: 'El modelo puede tener hasta 60 caracteres.' })
+  modeloVehiculo?: string;
 
   @IsBoolean()
   @IsOptional()

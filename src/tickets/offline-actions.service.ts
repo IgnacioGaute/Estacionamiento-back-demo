@@ -65,7 +65,7 @@ export class OfflineActionsService {
     if (!op.action || !op.data || session.snapshot.operationVersion !== 3) throw new BadRequestException('Actualizá la copia sin conexión antes de usar estas opciones.');
     const scope = tenantContext.getStore()!;
     const action = op.action, data = op.data, at = new Date(op.occurredAt);
-    if (['DELETE', 'CASH_MOVEMENT'].includes(action) && scope.role !== 'ADMIN') throw new ForbiddenException('Esta operación requiere un administrador.');
+    if (['DELETE', 'CASH_MOVEMENT'].includes(action) && !['ADMIN', 'SUPER_ADMIN'].includes(scope.role)) throw new ForbiddenException('Esta operación requiere un administrador.');
     const creating = ['PLATE_ENTRY', 'CARD_ENTRY', 'PASS_ENTRY', 'SHIFT_OPEN'].includes(action);
     const cashAction = action.startsWith('SHIFT_') || ['CASH_MOVEMENT','BOX_MOVEMENT'].includes(action);
     let registrationFree = false;
