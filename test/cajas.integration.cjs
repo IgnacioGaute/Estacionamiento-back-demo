@@ -309,6 +309,19 @@ test('sueldo insuficiente: no descuenta ni paga parcialmente y persiste la alert
   assert.equal(await ds.getRepository(SessionMovement).count({ where: { turnoId: t.id } }), 0);
 });
 
+test('sueldo opcional: si alcanza, el operador puede no retirarlo y el efectivo queda para el retiro', async () => {
+  const t = await openCash(user.id, 15000);
+  await cash(user.id, 90000);
+  // Sin elegir, sigue siendo obligatorio informar el sueldo que alcanza.
+  await assert.rejects(shifts.close(t.id, user.id, { efectivoContado: 105000, efectivoEsperado: 105000, efectivoParaSiguiente: 15000, sueldoEsperado: 0 }), /sueldo actualizado/);
+  await assert.rejects(shifts.close(t.id, user.id, { efectivoContado: 105000, efectivoEsperado: 105000, efectivoParaSiguiente: 15000, sueldoEsperado: 25000, sinSueldo: true }), /sueldo actualizado/);
+  const closed = await shifts.close(t.id, user.id, { efectivoContado: 105000, efectivoEsperado: 105000, efectivoParaSiguiente: 15000, sueldoEsperado: 0, sinSueldo: true });
+  assert.equal(closed.sueldoRetirado, 0);
+  assert.equal(closed.efectivoRetirado, 90000);
+  assert.match(closed.alertaSueldo, /eligió no retirarlo/);
+  assert.equal(await ds.getRepository(SessionMovement).count({ where: { turnoId: t.id, tipo: 'SUELDO' } }), 0);
+});
+
 test('medianoche: corta una vez, conserva caja y jornada y no retira sueldo', async () => {
   const t = await openCash(user.id, 15000);
   const today = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day');

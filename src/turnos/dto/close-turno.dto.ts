@@ -2,6 +2,9 @@ import { IsBoolean, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-va
 
 export class CloseTurnoDto {
   @IsOptional() @IsInt() @Min(0) sueldoEsperado?: number;
+  // El operador elige no retirar su sueldo aunque el efectivo alcance: el cierre no registra el
+  // movimiento SUELDO y el historial lo deja anotado (sueldoEsperado debe venir en 0).
+  @IsOptional() @IsBoolean() sinSueldo?: boolean;
   @IsBoolean() @IsOptional() cerrarCaja?: boolean;
   @IsInt()
   @Min(0)

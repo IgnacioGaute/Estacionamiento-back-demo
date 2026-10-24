@@ -293,10 +293,16 @@ export class TurnosService {
       if (turno.estado === 'CERRADO') throw new BadRequestException('Este turno ya está cerrado.');
       const caja = turno.cajaId ? await manager.getRepository(CashRegister).findOneBy({ id: turno.cajaId }) : null;
       const available = dto.efectivoContado ?? await this.cashTotal(turno, manager);
-      const salary = salaryWithdrawal(available, caja?.fondoObjetivo ?? 0, turno.sueldoPrevisto);
+      const alcanza = salaryWithdrawal(available, caja?.fondoObjetivo ?? 0, turno.sueldoPrevisto);
+      // Aunque alcance, el operador puede elegir no retirarlo ahora; el efectivo queda en la caja.
+      const salary = dto.sinSueldo ? 0 : alcanza;
       if (turno.sueldoPrevisto > 0 && dto.sueldoEsperado !== salary) throw new ConflictException('Revisá el retiro de sueldo actualizado antes de confirmar.');
       turno.sueldoRetirado = salary;
-      turno.alertaSueldo = turno.sueldoPrevisto > 0 && !salary ? `No se retiró el sueldo de $${turno.sueldoPrevisto}: el efectivo no alcanza para preservar el fondo de $${caja?.fondoObjetivo ?? 0}.` : null;
+      turno.alertaSueldo = turno.sueldoPrevisto > 0 && !salary
+        ? alcanza
+          ? `No se retiró el sueldo de $${turno.sueldoPrevisto}: el operador eligió no retirarlo en este cierre.`
+          : `No se retiró el sueldo de $${turno.sueldoPrevisto}: el efectivo no alcanza para preservar el fondo de $${caja?.fondoObjetivo ?? 0}.`
+        : null;
       turno.vehiculosFin = await occupancyAt(manager, operationNow());
       turno.salidasRegistradas = await exitCount(manager, turno.id);
       if (turno.cashSessionId) {
