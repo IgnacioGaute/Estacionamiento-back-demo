@@ -115,7 +115,8 @@ export class OfflineActionsService {
     }
     await operationContext.run({ manager, at, resourceId: op.registrationId, cashSessionId: op.cashSessionId, shiftId, snapshot: session.snapshot, afterCommit }, async () => {
       switch (action) {
-        case 'PLATE_ENTRY': await this.tickets.createRegistrationByPlate(await this.dto(CreateRegistrationByPlateDto, data), scope.userId!); break;
+        // Sin conexión no hay escáner de patentes (la lectura necesita internet): todo es a mano.
+        case 'PLATE_ENTRY': await this.tickets.createRegistrationByPlate(await this.dto(CreateRegistrationByPlateDto, { ...data, origen: 'MANUAL' }), scope.userId!); break;
         case 'CARD_ENTRY': {
           if (Object.keys(data).some(k => k !== 'ticketId') || !session.snapshot.cards.some(c => c.id === data.ticketId)) throw new BadRequestException('Tarjeta no disponible en la copia guardada.');
           const result = await this.tickets.createRegistration(data.ticketId, scope.userId!);
@@ -123,6 +124,7 @@ export class OfflineActionsService {
           break;
         }
         case 'CLOSE':
+          await this.tickets.marcarOrigenSalida(op.registrationId, 'MANUAL');
           if (registrationFree) {
             if (Object.keys(data).length) throw new BadRequestException('La salida gratuita no admite cobros.');
             await this.tickets.registrarSalidaGratuita(op.registrationId, scope.userId!);

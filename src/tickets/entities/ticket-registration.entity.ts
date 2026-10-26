@@ -17,6 +17,9 @@ import { BoxList } from 'src/box-lists/entities/box-list.entity';
 import { PricingSnapshot, PricingDayType, PricingLine } from '../pricing/pricing.types';
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
 import type { Modalidad } from 'src/tenancy/modalidad';
+export const ORIGEN_REGISTRO = ['ESCANER', 'CORREGIDA', 'MANUAL', 'TARJETA'] as const;
+export type OrigenRegistro = (typeof ORIGEN_REGISTRO)[number];
+
 @Entity({ name: 'ticket_registrations' })
 export class TicketRegistration {
   @Column('uuid', { nullable: true }) exitTurnoId: string | null;
@@ -103,6 +106,15 @@ export class TicketRegistration {
 
   @Column('varchar', { length: 60, nullable: true })
   modeloVehiculo: string | null;
+
+  // Cómo se cargó la entrada y cómo se inició la salida (métricas de la plataforma): escáner de
+  // patentes, escáner con la lectura corregida, a mano o tarjeta física. Null: anterior a medirlo.
+  // La salida se anota al abrir su cobro (los cobros con QR o alias se cierran después, solos).
+  @Column('varchar', { length: 12, nullable: true })
+  origenEntrada: OrigenRegistro | null;
+
+  @Column('varchar', { length: 12, nullable: true })
+  origenSalida: OrigenRegistro | null;
 
   // @deprecated — reemplazado por licensePlateOriginal/Normalized/Search. Se deja de escribir
   // pero no se borra la columna (con synchronize:true, borrar el @Column borra los datos).

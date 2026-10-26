@@ -76,6 +76,8 @@ before(async () => {
       ['1790000035000-alias-inquilinos', 'AliasInquilinos1790000035000'],
       ['1790000036000-turnos-diarios', 'TurnosDiarios1790000036000'],
       ['1790000042000-modalidad-operacion', 'ModalidadOperacion1790000042000'],
+      ['1790000045000-qr-plan', 'QrPlan1790000045000'],
+      ['1790000046000-origen-registro', 'OrigenRegistro1790000046000'],
     ]) await new (load('database/migrations/' + file, name))().up(runner);
   } finally { await runner.release(); }
   installTenantConnections(ds);

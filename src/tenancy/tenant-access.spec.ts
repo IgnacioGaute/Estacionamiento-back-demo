@@ -99,6 +99,7 @@ describe('TenantGuard: quién puede llamar a qué', () => {
       await deja('TicketsController', 'tarifasSinEntrada', { sesion: operador });
       await deja('TicketsController', 'registrarSalidaAnterior', { sesion: operador });
       await deja('PlateRecognitionController', 'detectarTipo', { sesion: operador });
+      await deja('TicketsController', 'marcarOrigenSalida', { sesion: operador });
       await deja('TurnosController', 'close', { sesion: operador });
       await deja('CuentasController', 'registrarPago', { sesion: operador });
     });
@@ -141,10 +142,13 @@ describe('TenantGuard: quién puede llamar a qué', () => {
       await deja('TicketsController', 'closeRegistrationByPlate', { sesion: suspendida(operador) });
       await deja('TicketsController', 'opcionesSalidaAnterior', { sesion: suspendida(operador) });
       await deja('TicketsController', 'registrarSalidaAnterior', { sesion: suspendida(operador) });
+      await deja('TicketsController', 'marcarOrigenSalida', { sesion: suspendida(operador) });
       await deja('TicketsController', 'issueParkingReceipt', { sesion: suspendida(operador) });
       await deja('TurnosController', 'close', { sesion: suspendida(operador) });
       await deja('MiPlanController', 'estado', { sesion: suspendida(admin) });
       await deja('MiPlanController', 'pagarConMercadoPago', { sesion: suspendida(admin) });
+      await deja('MiPlanController', 'pagarConQr', { sesion: suspendida(admin) });
+      await deja('MiPlanController', 'verificarQr', { sesion: suspendida(admin) });
     });
 
     test('no abre estadías nuevas ni cambia configuración, cualquiera sea el rol', async () => {

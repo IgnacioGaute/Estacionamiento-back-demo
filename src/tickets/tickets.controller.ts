@@ -8,6 +8,7 @@ import { CorregirEntradaDto } from './dto/corregir-entrada.dto';
 import { CorregirDatosEstadiaDto } from './dto/corregir-datos-estadia.dto';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
 import { SalidaAnteriorDto } from './dto/salida-anterior.dto';
+import { OrigenSalidaDto } from './dto/origen-salida.dto';
 import { PreviewPriceDto, SimulatePriceDto } from './dto/preview-price.dto';
 import { TicketsService } from './tickets.service';
 import { TariffPlanService } from './tariff-plan.service';
@@ -255,6 +256,13 @@ export class TicketsController {
     @Query('limit') limit?: string,
   ) {
     return this.ticketsService.planillaVehiculos({ desde, hasta, estado, operador, tipo, q }, listPagination(page, limit));
+  }
+
+  // Cómo se inició la salida (escáner, lectura corregida, a mano o tarjeta): lo anota el panel al
+  // abrir el cobro de la estadía, para las métricas de la plataforma (ver marcarOrigenSalida).
+  @Post('registrations/:id/origen-salida')
+  marcarOrigenSalida(@Param('id', ParseUUIDPipe) id: string, @Body() dto: OrigenSalidaDto) {
+    return this.ticketsService.marcarOrigenSalida(id, dto.origen);
   }
 
   // La salida de una estadía que ingresó en modalidad gratuita: sin importes, medio de pago ni caja.

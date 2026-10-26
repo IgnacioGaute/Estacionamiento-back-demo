@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Param,
   Post,
   Req,
   UnauthorizedException,
@@ -63,6 +64,8 @@ export class MiPlanController {
       comoPagar: this.config.get<string>('PLATAFORMA_DATOS_PAGO') || null,
       contacto: this.config.get<string>('PLATAFORMA_WHATSAPP') || null,
       mercadoPago: this.cobros.configurado(),
+      // El QR que cobra en la cuenta de la plataforma, si ya tiene su caja creada.
+      mercadoPagoQr: await this.cobros.qrDisponible(),
       // Con la clave pública, el débito se activa con la tarjeta en el panel, sin cuenta de
       // MercadoPago; sin ella, confirmándolo en MercadoPago.
       mercadoPagoClavePublica: this.cobros.clavePublica(),
@@ -75,6 +78,24 @@ export class MiPlanController {
     this.usuario(req);
     const empresaId = this.empresa();
     return this.comoPlataforma(() => this.cobros.pagar(empresaId));
+  }
+
+  // Un QR para pagar lo que debe desde cualquier banco o billetera (cobra la plataforma).
+  @Post('qr')
+  pagarConQr(@Req() req: any) {
+    this.usuario(req);
+    const empresaId = this.empresa();
+    return this.comoPlataforma(() => this.cobros.pagarConQr(empresaId));
+  }
+
+  // Mientras se muestra el QR: si ya se pagó, se asienta.
+  @Get('qr/:ordenId')
+  verificarQr(@Req() req: any, @Param('ordenId') ordenId: string) {
+    this.usuario(req);
+    const empresaId = this.empresa();
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(ordenId))
+      throw new BadRequestException('QR inválido.');
+    return this.comoPlataforma(() => this.cobros.verificarQr(empresaId, ordenId));
   }
 
   @Post('debito')

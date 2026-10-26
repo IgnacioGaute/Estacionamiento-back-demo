@@ -94,6 +94,11 @@ export class Suscripcion {
   @Column('int', { nullable: true })
   debitoImporte: number | null;
 
+  // La orden de MercadoPago del QR para pagar el plan que está abierta (en la cuenta de la
+  // plataforma). Se borra al asentar el pago o cuando vence.
+  @Column('varchar', { length: 64, nullable: true })
+  qrOrdenId: string | null;
+
   // Cada cuánto paga (`periodos_pago.codigo`). Los meses y el descuento se congelan al asignarlo,
   // como el precio pactado de cada playa: cambiar el catálogo no le cambia la cuenta a nadie.
   @Column('varchar', { length: 20, default: 'MENSUAL' })

@@ -26,6 +26,8 @@ import {
   PagosSaasQueryDto,
   DiasExtraDto,
   RegistrarPagoSaasDto,
+  CajaQrPlataformaDto,
+  UbicacionQrPlataformaDto,
 } from './dto/suscripciones.dto';
 
 // Planes y cuentas de las empresas con la plataforma: lo que vos les cobrás. Igual que
@@ -100,6 +102,32 @@ export class SuscripcionesController {
   async revisar() {
     const { acreditados } = await this.cobros.conciliarTodas();
     return { ...(await this.suscripciones.revisarVencimientos()), acreditados };
+  }
+
+  // El QR para pagar el plan: la sucursal y la caja en la cuenta de MercadoPago de la plataforma.
+  @Get('plataforma/qr')
+  cajaQrPlataforma() {
+    return this.cobros.cajaQrPlataforma();
+  }
+
+  @Get('plataforma/qr/provincias')
+  provinciasQr() {
+    return this.cobros.provinciasQr();
+  }
+
+  @Get('plataforma/qr/provincias/:id/ciudades')
+  ciudadesQr(@Param('id') id: string) {
+    return this.cobros.ciudadesQr(id);
+  }
+
+  @Post('plataforma/qr/con-ubicacion')
+  crearCajaQrConUbicacion(@Body() dto: UbicacionQrPlataformaDto) {
+    return this.cobros.crearCajaQrConUbicacion(dto.latitud, dto.longitud);
+  }
+
+  @Post('plataforma/qr')
+  crearCajaQrPlataforma(@Body() dto: CajaQrPlataformaDto) {
+    return this.cobros.crearCajaQrPlataforma(dto);
   }
 
   @Get('empresas/:id/suscripcion')

@@ -17,6 +17,40 @@ dayjs.extend(timezone);
 const API = 'https://api.mercadopago.com';
 const TIEMPO_LIMITE_MS = 12_000;
 
+// La sucursal y la caja del QR para pagar el plan, en la cuenta de la plataforma. Identificadores
+// fijos: se encuentran en MercadoPago sin guardarlos acá, y un alta que se cortó a la mitad se
+// retoma en vez de duplicarse.
+export const SUCURSAL_QR_PLATAFORMA = 'PLATAFORMA';
+export const CAJA_QR_PLATAFORMA = 'CAJAPLATAFORMA';
+
+export type DireccionSucursal = {
+  calle: string;
+  numero: string;
+  ciudad: string;
+  provincia: string;
+  latitud: number;
+  longitud: number;
+  referencia?: string | null;
+};
+
+export type OrdenQr = {
+  id: string;
+  estado: string;
+  pagada: boolean;
+  pagoId: string | null;
+  monto: number;
+  referencia: string | null;
+};
+
+type OpcionesLlamada = {
+  // Clave de idempotencia de MercadoPago: reintentar el mismo pedido no crea dos.
+  idempotencia?: string;
+  // 404 es «no hay» (una búsqueda sin resultados), no un error.
+  vacioSiNoEncuentra?: boolean;
+  // Sumar al rechazo el motivo de MercadoPago (sirve para corregir una dirección).
+  conDetalle?: boolean;
+};
+
 export type PagoMp = {
   id: string;
   estado: string;
@@ -243,6 +277,197 @@ export class MercadoPagoPlataforma {
   }
 
   /**
+   * La caja del QR de la plataforma, si ya se creó, con la dirección de su sucursal. Una cuenta sin
+   * cajas responde 404 a la búsqueda: es «no hay».
+   */
+  async cajaQr(): Promise<{ posId: string; storeId: string; direccion: string | null } | null> {
+    const cajas = await this.llamar(
+      `${API}/v2/pos?external_id=${CAJA_QR_PLATAFORMA}`,
+      {},
+      undefined,
+      { vacioSiNoEncuentra: true },
+    );
+    const caja = ((cajas?.data ?? []) as any[]).find(
+      (c) => c?.external_id === CAJA_QR_PLATAFORMA,
+    );
+    if (!caja?.id) return null;
+    const sucursal = caja.store_id
+      ? await this.llamar(
+          `${API}/stores/${encodeURIComponent(String(caja.store_id))}`,
+          {},
+          undefined,
+          { vacioSiNoEncuentra: true },
+        ).catch(() => null)
+      : null;
+    const l = sucursal?.location;
+    const direccion =
+      l?.address_line ||
+      [
+        [l?.street_name, l?.street_number].filter(Boolean).join(' '),
+        l?.city_name,
+        l?.state_name,
+      ]
+        .filter(Boolean)
+        .join(', ') ||
+      null;
+    return { posId: String(caja.id), storeId: String(caja.store_id ?? ''), direccion };
+  }
+
+  /**
+   * Crea la sucursal y la caja del QR en la cuenta de la plataforma. Si alguna ya existía (un
+   * intento anterior que se cortó), se reusa. La dirección ya viene validada contra el listado de
+   * MercadoPago (provincia y ciudad escritas como ahí).
+   */
+  async crearCajaQr(direccion: DireccionSucursal, nombre: string) {
+    const yo = await this.llamar(`${API}/users/me`);
+    const usuario = String(yo?.id ?? '');
+    if (!usuario)
+      throw new ServiceUnavailableException(
+        'MercadoPago no devolvió la cuenta de la plataforma. Probá de nuevo.',
+      );
+    const rechazo = 'MercadoPago rechazó la sucursal o la caja';
+
+    const sucursales = await this.llamar(
+      `${API}/users/${usuario}/stores/search?external_id=${SUCURSAL_QR_PLATAFORMA}`,
+      {},
+      rechazo,
+      { vacioSiNoEncuentra: true, conDetalle: true },
+    );
+    let storeId: string | undefined = ((sucursales?.results ?? []) as any[])
+      .find((s) => s?.external_id === SUCURSAL_QR_PLATAFORMA)?.id?.toString();
+    if (!storeId) {
+      const sucursal = await this.llamar(
+        `${API}/users/${usuario}/stores`,
+        {
+          method: 'POST',
+          body: {
+            name: nombre.slice(0, 60),
+            external_id: SUCURSAL_QR_PLATAFORMA,
+            location: {
+              street_number: direccion.numero,
+              street_name: direccion.calle,
+              city_name: direccion.ciudad,
+              state_name: direccion.provincia,
+              latitude: direccion.latitud,
+              longitude: direccion.longitud,
+              reference: direccion.referencia || nombre,
+            },
+          },
+        },
+        rechazo,
+        { conDetalle: true },
+      );
+      storeId = sucursal?.id ? String(sucursal.id) : undefined;
+    }
+    if (!storeId)
+      throw new ServiceUnavailableException(
+        'MercadoPago no devolvió la sucursal creada. Probá de nuevo.',
+      );
+
+    if (await this.cajaQr()) return;
+    // Recién creada, la sucursal puede tardar en estar disponible para colgarle la caja.
+    for (let intento = 0; ; intento++) {
+      try {
+        await this.llamar(
+          `${API}/v2/pos`,
+          {
+            method: 'POST',
+            body: {
+              name: 'Plan del sistema',
+              store_id: storeId,
+              external_id: CAJA_QR_PLATAFORMA,
+              config: { qr: { operating_mode: 'pdv' } },
+            },
+          },
+          rechazo,
+          { idempotencia: `caja-plataforma-${usuario}-${storeId}`, conDetalle: true },
+        );
+        return;
+      } catch (error) {
+        const sucursalTodaviaNoEsta =
+          error instanceof BadRequestException &&
+          /store_not_found|non_existent_external_store_id|does not refer any store/i.test(
+            error.message,
+          );
+        if (!sucursalTodaviaNoEsta || intento >= 4) throw error;
+        await this.esperar(1500 * (intento + 1));
+      }
+    }
+  }
+
+  /**
+   * Una orden de cobro de la caja del QR: devuelve el código estándar que se paga desde cualquier
+   * banco o billetera. Cada pedido es una orden nueva (idempotencia por pedido).
+   */
+  async crearOrdenQr(datos: {
+    referencia: string;
+    descripcion: string;
+    importe: number;
+    minutos: number;
+    idempotencia: string;
+  }) {
+    const orden = await this.llamar(
+      `${API}/v1/orders`,
+      {
+        method: 'POST',
+        body: {
+          type: 'qr',
+          total_amount: datos.importe.toFixed(2),
+          description: datos.descripcion.slice(0, 150),
+          external_reference: datos.referencia,
+          expiration_time: `PT${datos.minutos}M`,
+          config: { qr: { external_pos_id: CAJA_QR_PLATAFORMA, mode: 'dynamic' } },
+          transactions: { payments: [{ amount: datos.importe.toFixed(2) }] },
+        },
+      },
+      'MercadoPago no generó el QR. Probá de nuevo en un momento.',
+      { idempotencia: datos.idempotencia },
+    );
+    const qrData = orden?.type_response?.qr_data;
+    if (!orden?.id || !qrData)
+      throw new ServiceUnavailableException(
+        'MercadoPago no devolvió el código QR. Probá de nuevo en un momento.',
+      );
+    return { ordenId: String(orden.id), qrData: String(qrData) };
+  }
+
+  /** Cómo está una orden del QR y, si se pagó, el id del pago y lo que entró. */
+  async ordenQr(id: string): Promise<OrdenQr> {
+    const orden = await this.llamar(`${API}/v1/orders/${encodeURIComponent(id)}`);
+    const pago = orden?.transactions?.payments?.[0];
+    const pagada =
+      orden?.status === 'processed' ||
+      ['processed', 'accredited', 'approved'].includes(pago?.status);
+    return {
+      id: String(orden?.id ?? id),
+      estado: String(orden?.status ?? ''),
+      pagada,
+      pagoId: pagada ? String(pago?.id ?? orden?.id ?? id) : null,
+      monto: Math.round(
+        Number(pago?.paid_amount ?? pago?.amount ?? orden?.total_paid_amount ?? orden?.total_amount ?? 0),
+      ),
+      referencia: orden?.external_reference ? String(orden.external_reference) : null,
+    };
+  }
+
+  /** Cancelar una orden del QR para que no se pueda pagar. Si falla, no importa: vence sola. */
+  async cancelarOrdenQr(id: string) {
+    await this.llamar(`${API}/v1/orders/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: { status: 'canceled' },
+    }).catch((error) =>
+      this.logger.warn(
+        `No se pudo cancelar la orden ${id}: ${error instanceof Error ? error.message : error}`,
+      ),
+    );
+  }
+
+  // Separado para que las pruebas no esperen de verdad.
+  protected esperar(ms: number) {
+    return new Promise((resolver) => setTimeout(resolver, ms));
+  }
+
+  /**
    * La firma de un aviso: HMAC-SHA256 de «id:<data.id>;request-id:<x-request-id>;ts:<ts>;» con la
    * clave secreta del webhook de la aplicación. Sin clave configurada no se puede validar: el aviso
    * igual solo dispara una consulta con el token propio, así que no se le cree nada.
@@ -279,6 +504,7 @@ export class MercadoPagoPlataforma {
     url: string,
     init: { method?: string; body?: unknown } = {},
     rechazo = 'MercadoPago no aceptó la operación. Revisá el email de tu cuenta de MercadoPago y probá de nuevo.',
+    opciones: OpcionesLlamada = {},
   ): Promise<any> {
     const token = this.config.get<string>(
       'MERCADOPAGO_PLATAFORMA_ACCESS_TOKEN',
@@ -294,6 +520,7 @@ export class MercadoPagoPlataforma {
         headers: {
           authorization: `Bearer ${token}`,
           ...(init.body ? { 'content-type': 'application/json' } : {}),
+          ...(opciones.idempotencia ? { 'X-Idempotency-Key': opciones.idempotencia } : {}),
         },
         body: init.body ? JSON.stringify(init.body) : undefined,
         signal: AbortSignal.timeout(TIEMPO_LIMITE_MS),
@@ -307,20 +534,47 @@ export class MercadoPagoPlataforma {
       );
     }
     if (!respuesta.ok) {
+      if (respuesta.status === 404 && opciones.vacioSiNoEncuentra) {
+        await respuesta.body?.cancel();
+        return null;
+      }
       // El mensaje de MercadoPago se loguea (no trae credenciales) pero no se reenvía tal cual:
-      // está en inglés y habla de su API.
+      // está en inglés y habla de su API. Salvo `conDetalle`, para corregir una dirección.
       const detalle = await respuesta.text().catch(() => '');
       this.logger.error(
         `MercadoPago respondió ${respuesta.status} a ${init.method ?? 'GET'} ${new URL(url).pathname}: ${detalle.slice(0, 300)}`,
       );
       if (respuesta.status >= 400 && respuesta.status < 500)
-        throw new BadRequestException(rechazo);
+        throw new BadRequestException(
+          opciones.conDetalle ? `${rechazo}: ${motivoDe(detalle)}` : rechazo,
+        );
       throw new ServiceUnavailableException(
         'MercadoPago no está respondiendo. Probá de nuevo en un momento.',
       );
     }
     return respuesta.json();
   }
+}
+
+// Solo el motivo de un rechazo de MercadoPago (mensaje y causas), recortado.
+function motivoDe(texto: string) {
+  let datos: any = null;
+  try {
+    datos = texto ? JSON.parse(texto) : null;
+  } catch {
+    datos = null;
+  }
+  return (
+    [
+      datos?.message,
+      datos?.error,
+      ...(Array.isArray(datos?.cause) ? datos.cause.map((c: any) => c?.description ?? c?.code) : []),
+      ...(Array.isArray(datos?.errors) ? datos.errors.map((e: any) => e?.message ?? e?.code) : []),
+    ]
+      .filter(Boolean)
+      .join(' · ')
+      .slice(0, 300) || 'sin detalle'
+  );
 }
 
 function aPago(p: any): PagoMp {

@@ -26,7 +26,8 @@ is soft and only the super admin sees usage; `MiPlanController` never returns it
 `MiPlanController` with RLS and `SELECT`-only grants; its payment handlers (MercadoPago link, débito automático,
 verify) write through `tenantContext.exit` on the session's empresa only. The platform collects with its own
 MercadoPago app (`MercadoPagoPlataforma`, never the empresas' OAuth tokens): Checkout Pro links
-(`plan:<empresaId>:<desde>`) and a `preapproval` charging every period: with `MERCADOPAGO_PLATAFORMA_PUBLIC_KEY` the panel embeds
+(`plan:<empresaId>:<desde>`), an interoperable QR order on the platform's own store/POS (`plan_<empresaId>_<desde>`,
+open order in `suscripciones.qrOrdenId`, credited by the order's payment id, never by the payment webhook) and a `preapproval` charging every period: with `MERCADOPAGO_PLATAFORMA_PUBLIC_KEY` the panel embeds
 MercadoPago's card form and sends only its one-time token (`authorized` on the spot, no MercadoPago account needed);
 without it the customer confirms it in MercadoPago. `CobrosPlataformaService`
 credits approved payments from the webhook, the return from MercadoPago and a cron every 2h (plus 05:00, before

@@ -54,6 +54,7 @@ before(async () => {
       await new (load('database/migrations/1790000023000-facturas-anticipadas', 'FacturasAnticipadas1790000023000'))().up(runner);
       await new (load('database/migrations/1790000024000-debito-automatico', 'DebitoAutomatico1790000024000'))().up(runner);
       await new (load('database/migrations/1790000025000-periodos-de-pago', 'PeriodosDePago1790000025000'))().up(runner);
+      await new (load('database/migrations/1790000045000-qr-plan', 'QrPlan1790000045000'))().up(runner);
     }
   } finally {
     await runner.release();
@@ -400,6 +401,25 @@ function mercadoPagoFalso(prefijo = 'deb') {
     async cobroDeSuscripcion(id) {
       return mp.cobros.get(id);
     },
+    // QR: la caja de la plataforma y sus órdenes.
+    caja: true,
+    ordenes: new Map(),
+    async cajaQr() {
+      return mp.caja ? { posId: 'pos-1', storeId: 'store-1', direccion: 'Mitre 1543, Rosario' } : null;
+    },
+    async crearOrdenQr(datos) {
+      mp.llamadas.push(['crearOrdenQr', datos]);
+      const id = 'ORD' + prefijo + (mp.ordenes.size + 1);
+      mp.ordenes.set(id, { id, estado: 'created', pagada: false, pagoId: null, monto: datos.importe, referencia: datos.referencia });
+      return { ordenId: id, qrData: '000201qr-' + id };
+    },
+    async ordenQr(id) {
+      return { ...mp.ordenes.get(id) };
+    },
+    async cancelarOrdenQr(id) {
+      mp.llamadas.push(['cancelarOrdenQr', id]);
+      mp.ordenes.get(id).estado = 'canceled';
+    },
   };
   return mp;
 }
@@ -458,6 +478,59 @@ test('pago con MercadoPago: se asienta una sola vez, llegue por el aviso, al vol
   await cobros.pagar(empresa.id);
   const ultimo = mp.llamadas.filter(([q]) => q === 'crearPago').at(-1)[1];
   assert.equal(ultimo.referencia, `plan:${empresa.id}:${cuenta.proximoVencimiento}`);
+});
+
+test('pago con QR: cobra en la cuenta de la plataforma, se asienta una sola vez y solo para su empresa', async () => {
+  const mp = mercadoPagoFalso('qr');
+  const cobros = new CobrosPlataformaService(servicio, mp);
+  const { empresa, playas } = await nuevaEmpresa('Paga con QR', { diasPrueba: 0, alta: dia(-2) });
+  const otra = await nuevaEmpresa('Otra con QR', { diasPrueba: 0, alta: dia(-2) });
+  await servicio.asignarPlan(empresa.id, playas[0].id, { planId: (await plan('CHICA')).id }, superUser.id);
+  await servicio.revisarVencimientos();
+  const cuenta = await servicio.resumen(empresa.id);
+
+  // Sin la caja de la plataforma no se ofrece.
+  mp.caja = false;
+  assert.equal(await cobros.qrDisponible(), false);
+  await assert.rejects(cobros.pagarConQr(empresa.id), /no está disponible/);
+  mp.caja = true;
+  const cobrosConCaja = new CobrosPlataformaService(servicio, mp);
+
+  const qr = await cobrosConCaja.pagarConQr(empresa.id);
+  assert.equal(qr.importe, cuenta.facturaPendiente.importe);
+  assert.ok(qr.qrData.startsWith('000201'));
+  const [, pedido] = mp.llamadas.find(([q]) => q === 'crearOrdenQr');
+  assert.equal(pedido.referencia, `plan_${empresa.id}_${dia(-2).replace(/-/g, '')}`, 'otra referencia que la del link');
+  assert.equal(await servicio.ordenQr(empresa.id), qr.ordenId);
+
+  // Todavía sin pagar; y otra empresa no puede consultar ni asentar este QR.
+  assert.deepEqual(await cobrosConCaja.verificarQr(empresa.id, qr.ordenId), { pagada: false, vencida: false, acreditado: false });
+  await assert.rejects(cobrosConCaja.verificarQr(otra.empresa.id, qr.ordenId), /No encontramos ese QR/);
+
+  // Pedir otro QR cancela el anterior sin pagar.
+  const segundo = await cobrosConCaja.pagarConQr(empresa.id);
+  assert.deepEqual(mp.llamadas.find(([q]) => q === 'cancelarOrdenQr'), ['cancelarOrdenQr', qr.ordenId]);
+  assert.equal(await servicio.ordenQr(empresa.id), segundo.ordenId);
+
+  // Se paga: la pantalla, la revisión periódica y otra consulta llegan juntas; entra una sola vez.
+  Object.assign(mp.ordenes.get(segundo.ordenId), { estado: 'processed', pagada: true, pagoId: 'PAYQR1' });
+  await Promise.all([
+    cobrosConCaja.verificarQr(empresa.id, segundo.ordenId),
+    cobrosConCaja.conciliar(empresa.id),
+    cobrosConCaja.verificarQr(empresa.id, segundo.ordenId),
+  ]);
+  const [pagada, ...otras] = await pagadas(empresa.id);
+  assert.equal(otras.length, 0, 'un solo pago');
+  assert.equal(pagada.medio, 'MERCADOPAGO');
+  assert.equal(pagada.referencia, 'PAYQR1');
+  assert.equal((await servicio.resumen(empresa.id)).estado, 'AL_DIA');
+  assert.equal(await servicio.ordenQr(empresa.id), null, 'el QR asentado ya no queda abierto');
+  assert.equal((await cobrosConCaja.verificarQr(empresa.id, segundo.ordenId)).acreditado, false);
+
+  // El aviso de pagos no asienta un pago del QR (su referencia no es la del link): no entra dos veces.
+  mp.pagos.set('qr-pago', { id: '880', estado: 'approved', monto: cuenta.mensual, fecha: hoy, referencia: `plan_${empresa.id}_${dia(-2).replace(/-/g, '')}` });
+  await cobrosConCaja.procesarAviso('payment', 'qr-pago');
+  assert.equal((await pagadas(empresa.id)).length, 1);
 });
 
 test('débito automático: después del primer pago, arranca el día 1, se asienta solo y estira la gracia a 10 días', async () => {

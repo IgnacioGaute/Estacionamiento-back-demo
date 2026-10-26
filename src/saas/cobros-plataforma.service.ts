@@ -2,14 +2,33 @@ import {
   BadRequestException,
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { SuscripcionesService, ResumenCuenta } from './suscripciones.service';
-import { MercadoPagoPlataforma } from './mercadopago-plataforma';
+import { DireccionSucursal, MercadoPagoPlataforma, OrdenQr } from './mercadopago-plataforma';
 import { hoyAR } from './estado-cuenta';
+import {
+  ciudadesMp,
+  direccionDeUbicacion,
+  provinciasMp,
+  validarDireccionMp,
+} from 'src/mercadopago/ubicaciones-mp';
 
 // Cuántos días vale un link de pago: si el cliente lo abre después, se genera otro.
 const DIAS_DEL_LINK = 3;
+// Cuánto vale un QR: lo que se tarda en abrir la app del banco y pagar. Después se pide otro.
+const MINUTOS_DEL_QR = 15;
+// Si la plataforma tiene caja QR se le pregunta a MercadoPago: la respuesta se recuerda un rato.
+const RECORDAR_CAJA_QR_MS = 10 * 60 * 1000;
+const ORDEN_CERRADA = ['expired', 'canceled', 'cancelled', 'refunded', 'failed'];
+
+// La referencia de un QR: «plan_<empresa>_<desde sin guiones>». Distinta de la del link
+// («plan:…»): un pago del QR se asienta con el id de pago que trae la orden (al consultarla), no
+// por el aviso de pagos, para que el mismo pago no entre dos veces con dos ids distintos.
+const referenciaQr = (empresaId: string, desde: string) =>
+  `plan_${empresaId}_${desde.replace(/-/g, '')}`;
 
 const fechaCorta = (ymd: string) => {
   const [, m, d] = ymd.split('-');
@@ -31,6 +50,8 @@ const fechaCorta = (ymd: string) => {
 @Injectable()
 export class CobrosPlataformaService {
   private readonly logger = new Logger(CobrosPlataformaService.name);
+
+  private cajaQr: { disponible: boolean; hasta: number } | null = null;
 
   constructor(
     private readonly suscripciones: SuscripcionesService,
@@ -76,6 +97,138 @@ export class CobrosPlataformaService {
       importe: a.importe,
       vence: new Date(Date.now() + DIAS_DEL_LINK * 24 * 60 * 60 * 1000),
     });
+  }
+
+  // ── QR para pagar el plan ──────────────────────────────────────────────────────────────────────
+  // Un QR estándar (se paga desde cualquier banco o billetera) que cobra en la cuenta de MercadoPago
+  // de la PLATAFORMA, nunca en la que conectó la empresa. Necesita una sucursal y una caja en esa
+  // cuenta, que el super admin crea una vez con su dirección.
+
+  /** Si la plataforma ya tiene su caja QR (para ofrecer el QR en «Pagar tu plan»). Nunca falla. */
+  async qrDisponible() {
+    if (!this.mp.configurado()) return false;
+    if (this.cajaQr && this.cajaQr.hasta > Date.now()) return this.cajaQr.disponible;
+    let disponible = false;
+    try {
+      disponible = !!(await this.mp.cajaQr());
+    } catch {
+      disponible = false;
+    }
+    // Sin caja se vuelve a preguntar en un minuto: puede estar recién creándose.
+    this.cajaQr = { disponible, hasta: Date.now() + (disponible ? RECORDAR_CAJA_QR_MS : 60_000) };
+    return disponible;
+  }
+
+  /** Para el super admin: si está configurado el MercadoPago de la plataforma y su caja QR. */
+  async cajaQrPlataforma() {
+    if (!this.mp.configurado()) return { configurado: false, caja: null };
+    const caja = await this.mp.cajaQr();
+    this.cajaQr = { disponible: !!caja, hasta: Date.now() + RECORDAR_CAJA_QR_MS };
+    return { configurado: true, caja: caja ? { direccion: caja.direccion } : null };
+  }
+
+  provinciasQr() {
+    return provinciasMp();
+  }
+
+  ciudadesQr(provinciaId: string) {
+    return ciudadesMp(provinciaId);
+  }
+
+  async crearCajaQrPlataforma(direccion: DireccionSucursal) {
+    if (!this.mp.configurado())
+      throw new BadRequestException(
+        'Primero configurá el MercadoPago de la plataforma (MERCADOPAGO_PLATAFORMA_ACCESS_TOKEN).',
+      );
+    await validarDireccionMp(direccion);
+    await this.mp.crearCajaQr(direccion, 'Sistema de estacionamiento');
+    this.cajaQr = null;
+    return this.cajaQrPlataforma();
+  }
+
+  /** Con la ubicación del dispositivo; si no se reconoce la localidad, vuelve lo detectado. */
+  async crearCajaQrConUbicacion(latitud: number, longitud: number) {
+    const resultado = await direccionDeUbicacion(
+      latitud,
+      longitud,
+      null,
+      'La ubicación no es de Argentina. Completá la dirección a mano.',
+    );
+    if (!resultado.direccion)
+      return { creada: false as const, motivo: resultado.motivo, sugerencia: resultado.sugerencia };
+    return { creada: true as const, ...(await this.crearCajaQrPlataforma(resultado.direccion)) };
+  }
+
+  /**
+   * Un QR por lo que hay para pagar ahora (lo mismo que el link). El anterior que quedó abierto se
+   * revisa primero: si ya se pagó, se asienta y no se genera otro; si no, se cancela.
+   */
+  async pagarConQr(empresaId: string) {
+    const cuenta = await this.suscripciones.resumen(empresaId);
+    if (cuenta.estado === 'BONIFICADA')
+      throw new BadRequestException(
+        'Tu cuenta está bonificada: no tenés nada para pagar.',
+      );
+    const a = this.aPagar(cuenta);
+    if (!a?.importe)
+      throw new BadRequestException('No tenés nada para pagar por ahora.');
+    if (!(await this.qrDisponible()))
+      throw new BadRequestException(
+        'El pago con QR no está disponible por ahora. Pagá con MercadoPago o por transferencia.',
+      );
+    const anterior = await this.suscripciones.ordenQr(empresaId);
+    if (anterior) {
+      const revisada = await this.mp
+        .ordenQr(anterior)
+        .then((orden) => this.asentarOrdenQr(empresaId, orden))
+        .catch(() => null);
+      if (revisada?.pagada)
+        throw new BadRequestException('Ya se acreditó tu pago con QR.');
+      if (revisada && !revisada.vencida) await this.mp.cancelarOrdenQr(anterior);
+    }
+    const orden = await this.mp.crearOrdenQr({
+      referencia: referenciaQr(empresaId, a.desde),
+      descripcion: `Plan del sistema de estacionamiento · del ${fechaCorta(a.desde)} al ${fechaCorta(a.hasta)}`,
+      importe: a.importe,
+      minutos: MINUTOS_DEL_QR,
+      idempotencia: randomUUID(),
+    });
+    await this.suscripciones.guardarOrdenQr(empresaId, orden.ordenId);
+    return {
+      ordenId: orden.ordenId,
+      qrData: orden.qrData,
+      importe: a.importe,
+      desde: a.desde,
+      hasta: a.hasta,
+      vence: new Date(Date.now() + MINUTOS_DEL_QR * 60 * 1000).toISOString(),
+    };
+  }
+
+  /**
+   * Mientras se muestra el QR: si ya se pagó, se asienta. Solo se consulta una orden con la
+   * referencia de esta empresa, que la pone el servidor al crearla.
+   */
+  async verificarQr(empresaId: string, ordenId: string) {
+    const orden = await this.mp.ordenQr(ordenId);
+    if (!orden.referencia?.startsWith(`plan_${empresaId}_`))
+      throw new NotFoundException('No encontramos ese QR.');
+    return this.asentarOrdenQr(empresaId, orden);
+  }
+
+  private async asentarOrdenQr(empresaId: string, orden: OrdenQr) {
+    if (orden.pagada && orden.pagoId) {
+      const acreditado = await this.suscripciones.acreditarPagoMercadoPago(empresaId, {
+        id: orden.pagoId,
+        monto: orden.monto,
+        fecha: hoyAR(),
+        debito: false,
+      });
+      await this.suscripciones.olvidarOrdenQr(empresaId, orden.id);
+      return { pagada: true, vencida: false, acreditado };
+    }
+    const vencida = ORDEN_CERRADA.includes(orden.estado);
+    if (vencida) await this.suscripciones.olvidarOrdenQr(empresaId, orden.id);
+    return { pagada: false, vencida, acreditado: false };
   }
 
   /**
@@ -187,6 +340,12 @@ export class CobrosPlataformaService {
   async conciliar(empresaId: string) {
     if (!this.mp.configurado()) return { acreditados: 0 };
     let acreditados = 0;
+    // Un QR abierto: por si se pagó y se cerró la pantalla antes de que se confirme.
+    const qrAbierto = await this.suscripciones.ordenQr(empresaId);
+    if (qrAbierto) {
+      const qr = await this.asentarOrdenQr(empresaId, await this.mp.ordenQr(qrAbierto));
+      if (qr.acreditado) acreditados++;
+    }
     const d = await this.suscripciones.datosDebito(empresaId);
     if (d.debitoId && d.debitoEstado !== 'cancelled') {
       const debito = await this.mp.suscripcion(d.debitoId);

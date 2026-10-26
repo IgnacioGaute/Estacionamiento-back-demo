@@ -152,7 +152,7 @@ export class OfflineService {
           assertPricingCoverage(pricing, dto.vehicleType, 'DAY'); assertPricingCoverage(pricing, dto.vehicleType, 'NIGHT');
         }
         const date = dayjs(time).tz(TZ);
-        registration = await repo.save(repo.create({ id: dto.registrationId, playaId: scope.playaId, modalidad, description: `Entrada offline ${dto.id}`, price: 0, entryMode: 'PLATE', vehicleType: dto.vehicleType as any, licensePlateOriginal: dto.plate.trim().toUpperCase(), licensePlateNormalized: plate, licensePlateSearch: plate, entryDay: date.format('YYYY-MM-DD'), entryTime: date.format('HH:mm:ss'), pricingSnapshot: gratuita ? null : pricing, noPlate: false, entryOperatorName: operatorName }));
+        registration = await repo.save(repo.create({ id: dto.registrationId, playaId: scope.playaId, modalidad, description: `Entrada offline ${dto.id}`, price: 0, entryMode: 'PLATE', origenEntrada: 'MANUAL', vehicleType: dto.vehicleType as any, licensePlateOriginal: dto.plate.trim().toUpperCase(), licensePlateNormalized: plate, licensePlateSearch: plate, entryDay: date.format('YYYY-MM-DD'), entryTime: date.format('HH:mm:ss'), pricingSnapshot: gratuita ? null : pricing, noPlate: false, entryOperatorName: operatorName }));
       } else {
         const known = session.snapshot.vehicles.find(v => v.id === dto.registrationId);
         const ownEntry = Object.values(session.processed).some(p => p.registrationId === dto.registrationId);
@@ -168,7 +168,7 @@ export class OfflineService {
         if (esGratuita(registration.modalidad)) {
           if (dto.method || (dto.expectedPrice ?? 0) !== 0 || (dto.expectedCollected ?? 0) !== 0)
             throw new BadRequestException({ code: 'ESTADIA_GRATUITA', message: 'La salida gratuita no admite importes ni medio de pago.' });
-          Object.assign(registration, { exitTurnoId: null, departureDay: date.format('YYYY-MM-DD'), departureTime: date.format('HH:mm:ss'), codeBarTicket: registration.ticket?.codeBar ?? registration.codeBarTicket, vehicleType: vehicle, entryMode: registration.entryMode ?? (registration.ticket ? 'BARCODE' : 'PLATE'), ticket: null, description: `Salida offline ${dto.id}; ${dto.occurredAt}`, exitOperatorName: operatorName });
+          Object.assign(registration, { exitTurnoId: null, departureDay: date.format('YYYY-MM-DD'), departureTime: date.format('HH:mm:ss'), codeBarTicket: registration.ticket?.codeBar ?? registration.codeBarTicket, vehicleType: vehicle, entryMode: registration.entryMode ?? (registration.ticket ? 'BARCODE' : 'PLATE'), origenSalida: 'MANUAL', ticket: null, description: `Salida offline ${dto.id}; ${dto.occurredAt}`, exitOperatorName: operatorName });
         } else {
           if (!registration.pricingSnapshot) throw new ConflictException('La estadía no tiene una copia de tarifas. Requiere revisión online.');
           const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
@@ -190,7 +190,7 @@ export class OfflineService {
           const capturedShiftId = session.snapshot.shiftsEnabled === true ? shiftId ?? null : undefined;
           if (amount > 0) await this.movements.create({ ticketRegistrationId: registration.id, usuarioId: scope.userId, monto: amount, metodo: dto.method, tipo: 'SALDO', referencia: `Offline ${dto.id}; fecha ${dto.occurredAt}` }, manager, capturedShiftId, new Date(time));
           const box = await this.boxes.applyTicketPayment(date.format('YYYY-MM-DD'), dto.method === 'CASH' ? amount : 0, manager, capturedShiftId, scope.userId, 'COBRO', new Date(time));
-          Object.assign(registration, { exitTurnoId: capturedShiftId ?? null, departureDay: date.format('YYYY-MM-DD'), departureTime: date.format('HH:mm:ss'), dateNow: date.format('YYYY-MM-DD'), price: preview.price, pricingBreakdown: preview.breakdown, priceBracketLabel: preview.label, priceBracketFallbackUsed: preview.usedFallback, boxList: { id: box.id }, codeBarTicket: registration.ticket?.codeBar ?? registration.codeBarTicket, vehicleType: vehicle, entryMode: registration.entryMode ?? (registration.ticket ? 'BARCODE' : 'PLATE'), ticket: null, description: `Salida offline ${dto.id}; ${dto.occurredAt}`, exitOperatorName: operatorName });
+          Object.assign(registration, { exitTurnoId: capturedShiftId ?? null, departureDay: date.format('YYYY-MM-DD'), departureTime: date.format('HH:mm:ss'), dateNow: date.format('YYYY-MM-DD'), price: preview.price, pricingBreakdown: preview.breakdown, priceBracketLabel: preview.label, priceBracketFallbackUsed: preview.usedFallback, boxList: { id: box.id }, codeBarTicket: registration.ticket?.codeBar ?? registration.codeBarTicket, vehicleType: vehicle, entryMode: registration.entryMode ?? (registration.ticket ? 'BARCODE' : 'PLATE'), origenSalida: 'MANUAL', ticket: null, description: `Salida offline ${dto.id}; ${dto.occurredAt}`, exitOperatorName: operatorName });
         }
         registration = await repo.save(registration);
       }

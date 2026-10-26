@@ -5,6 +5,7 @@ import {
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -222,4 +223,54 @@ export class PagosSaasQueryDto {
 
   @Matches(FECHA, FECHA_INVALIDA)
   hasta: string;
+}
+
+const recortarTexto = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim() : value;
+
+// La caja del QR para pagar el plan, en la cuenta de MercadoPago de la plataforma: con la
+// ubicación del dispositivo (el resto lo resuelve el servidor)…
+export class UbicacionQrPlataformaDto {
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitud: number;
+
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitud: number;
+}
+
+// …o a mano. MercadoPago exige la dirección completa de la sucursal, con coordenadas.
+export class CajaQrPlataformaDto extends UbicacionQrPlataformaDto {
+  @Transform(recortarTexto)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(80)
+  calle: string;
+
+  @Transform(recortarTexto)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(10)
+  numero: string;
+
+  @Transform(recortarTexto)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  ciudad: string;
+
+  @Transform(recortarTexto)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  provincia: string;
+
+  @IsOptional()
+  @Transform(recortarTexto)
+  @IsString()
+  @MaxLength(80)
+  referencia?: string;
 }

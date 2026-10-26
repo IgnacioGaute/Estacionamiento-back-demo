@@ -13,7 +13,7 @@ import { esGratuita, estadiaConCobro, estadiaGratuita, leerModalidad, modalidadG
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { Ticket } from './entities/ticket.entity';
-import { TicketRegistration } from './entities/ticket-registration.entity';
+import { OrigenRegistro, TicketRegistration } from './entities/ticket-registration.entity';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { BoxListsService } from 'src/box-lists/box-lists.service';
@@ -509,7 +509,7 @@ async removeTicketPrice(id: string) {
         description: `Registro de ticket para vehículo tipo ${ticket.vehicleType}`, price: 0,
         entryDay: now.format('YYYY-MM-DD'), entryTime: now.format('HH:mm:ss'),
         ticket, vehicleType: ticket.vehicleType as any, codeBarTicket: ticket.codeBar,
-        pricingSnapshot, modalidad, entryMode: 'BARCODE',
+        pricingSnapshot, modalidad, entryMode: 'BARCODE', origenEntrada: 'TARJETA',
         entryOperatorName,
       }));
       return { registration, requiresClose: false };
@@ -1083,7 +1083,7 @@ async removePriceBracket(id: string) {
       const registration = repository.create({
         ...(operationContext.getStore() ? { id: operationContext.getStore()!.resourceId, createdAt: operationNow() } : {}),
         entryOperatorName,
-        pricingSnapshot, modalidad, entryMode: 'PLATE',
+        pricingSnapshot, modalidad, entryMode: 'PLATE', origenEntrada: dto.origen ?? null,
         description: `Registro por patente para vehículo tipo ${dto.vehicleType}`,
         price: 0,
         entryDay: argentinaTime.format('YYYY-MM-DD'),
@@ -1471,6 +1471,24 @@ async removePriceBracket(id: string) {
     });
     if (!saved.repetida) this.ticketGateway.emitNewRegistration(saved.registration);
     return saved.registration;
+  }
+
+  /**
+   * Cómo se inició la salida (escáner, lectura corregida, a mano o tarjeta), para las métricas. Se
+   * anota cuando el operador abre el cobro de la estadía, no al cerrarla: un cobro con QR o alias se
+   * cierra después, solo, cuando entra el pago. Si la vuelve a abrir desde otro lado, vale la última.
+   * Solo estadías abiertas de la playa del pedido; no toca importes ni la caja.
+   */
+  async marcarOrigenSalida(id: string, origen: OrigenRegistro) {
+    const playaId = tenantContext.getStore()?.playaId;
+    // Dentro de la operación en curso si la hay (la salida sin conexión lo anota antes de cerrar).
+    await operationTransaction(this.dataSource, manager =>
+      manager.getRepository(TicketRegistration).update(
+        { id, departureTime: IsNull(), ...(playaId ? { playaId } : {}) },
+        { origenSalida: origen },
+      ),
+    );
+    return { ok: true };
   }
 
   // Ambas identificaciones usan una operación atómica; reintentar un cierre no vuelve a cobrar.

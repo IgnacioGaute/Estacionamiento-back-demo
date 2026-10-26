@@ -1025,6 +1025,30 @@ export class SuscripcionesService {
     };
   }
 
+  /** La orden del QR para pagar el plan que la empresa tiene abierta, si hay. */
+  async ordenQr(empresaId: string) {
+    const [fila] = await this.dataSource.query(
+      'SELECT "qrOrdenId" FROM suscripciones WHERE "empresaId" = $1',
+      [empresaId],
+    );
+    return (fila?.qrOrdenId as string | null) ?? null;
+  }
+
+  async guardarOrdenQr(empresaId: string, ordenId: string) {
+    await this.dataSource.query(
+      'UPDATE suscripciones SET "qrOrdenId" = $2 WHERE "empresaId" = $1',
+      [empresaId, ordenId],
+    );
+  }
+
+  /** Solo si sigue siendo esa: un QR nuevo pedido mientras tanto no se pierde. */
+  async olvidarOrdenQr(empresaId: string, ordenId: string) {
+    await this.dataSource.query(
+      'UPDATE suscripciones SET "qrOrdenId" = NULL WHERE "empresaId" = $1 AND "qrOrdenId" = $2',
+      [empresaId, ordenId],
+    );
+  }
+
   /** De qué empresa es una suscripción de MercadoPago (para los avisos). */
   async empresaDeDebito(debitoId: string) {
     const [fila] = await this.dataSource.query(
@@ -1079,6 +1103,7 @@ export class SuscripcionesService {
       `SELECT s."empresaId" FROM suscripciones s JOIN empresas e ON e.id = s."empresaId"
        WHERE e.estado <> 'BAJA' AND (
          s."debitoEstado" IN ('pending', 'authorized')
+         OR s."qrOrdenId" IS NOT NULL
          OR EXISTS (SELECT 1 FROM facturas_saas f WHERE f."empresaId" = s."empresaId" AND f.estado = 'PENDIENTE')
        )`,
     );

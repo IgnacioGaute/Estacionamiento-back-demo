@@ -20,6 +20,20 @@ backend requiere elegir explícitamente una playa mediante `X-Playa-Id`.
 - Las conexiones de sockets se autentican y se unen a su playa. Antes de cada envío se
   revalida el acceso; usuarios revocados o con tokens vencidos dejan de recibir eventos.
 
+## Escáner de patentes en las métricas
+
+Cada estadía guarda cómo se cargó la entrada (`origenEntrada`) y cómo se inició la salida
+(`origenSalida`): `ESCANER` (la patente la leyó el escáner y quedó así), `CORREGIDA` (la leyó el
+escáner y el operador la cambió o eligió una patente parecida), `MANUAL` (escrita o elegida de una
+lista) o `TARJETA` (tarjeta física). La entrada la informa el panel al registrarla y la tarjeta la
+pone el servidor. La salida se anota al abrir el cobro (`POST /tickets/registrations/:id/origen-salida`,
+solo estadías abiertas de la playa del pedido): los cobros con QR o alias se cierran después, solos,
+y si el cobro se vuelve a abrir desde otro lado vale el último. Sin conexión no hay escáner (la
+lectura necesita internet): las entradas y salidas sincronizadas son `MANUAL`. Lo anterior a la
+migración 1790000046000 queda nulo («sin dato»); no se reconstruye. `GET /tenancy/metrics/detalle`
+devuelve `origenes` por playa (entradas por su día, salidas por el día de salida) y Métricas lo
+muestra en «Escáner de patentes»: el porcentaje con escáner se calcula sobre lo medido.
+
 ## Protección de base de datos
 
 La migración `TenantIsolation1790000001000` crea políticas PostgreSQL RLS y el rol

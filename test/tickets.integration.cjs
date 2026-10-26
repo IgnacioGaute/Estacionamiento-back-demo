@@ -122,8 +122,49 @@ test('tarjeta física: segundo escaneo prepara el cobro y usa el mismo libro que
   const registration = await ds.getRepository(Registration).findOne({ where: { id: first.registrationId }, relations: ['ticket'] });
   assert.equal(registration.ticket, null);
   assert.equal(registration.entryMode, 'BARCODE');
+  assert.equal(registration.origenEntrada, 'TARJETA', 'la tarjeta física se marca sola');
   assert.equal(registration.vehicleType, 'AUTO');
   assert.equal(registration.codeBarTicket, ticket.codeBar);
+});
+
+test('origen: la entrada guarda si fue con escáner, corregida o a mano; la salida, cómo se abrió su cobro', async () => {
+  const escaneada = await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'ESC' + (++counter), origen: 'ESCANER' });
+  const corregida = await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'COR' + (++counter), origen: 'CORREGIDA' });
+  const sinDato = await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'OLD' + (++counter) });
+  assert.equal(escaneada.origenEntrada, 'ESCANER');
+  assert.equal(corregida.origenEntrada, 'CORREGIDA');
+  assert.equal(sinDato.origenEntrada, null, 'un panel anterior no inventa el dato');
+
+  // Se abre el cobro desde la lista y después desde el escáner: vale el último.
+  await age(escaneada);
+  await tickets.marcarOrigenSalida(escaneada.id, 'MANUAL');
+  await tickets.marcarOrigenSalida(escaneada.id, 'ESCANER');
+  await tickets.closeRegistrationByPlate(escaneada.id, await payload(escaneada.id), user.id);
+  const cerrada = await ds.getRepository(Registration).findOneBy({ id: escaneada.id });
+  assert.equal(cerrada.origenSalida, 'ESCANER');
+  // Una estadía ya cerrada no cambia.
+  await tickets.marcarOrigenSalida(escaneada.id, 'MANUAL');
+  assert.equal((await ds.getRepository(Registration).findOneBy({ id: escaneada.id })).origenSalida, 'ESCANER');
+
+  // Las métricas de la plataforma las cuentan por playa (entradas por su día, salidas por el de salida).
+  const Empresa = load('tenancy/entities/empresa.entity', 'Empresa');
+  const Playa = load('tenancy/entities/playa.entity', 'Playa');
+  const UsuarioPlaya = load('tenancy/entities/usuario-playa.entity', 'UsuarioPlaya');
+  const TenancyService = load('tenancy/tenancy.service', 'TenancyService');
+  const empresa = await ds.getRepository(Empresa).save({ nombre: 'Métricas de origen' });
+  const playa = await ds.getRepository(Playa).save({ empresaId: empresa.id, nombre: 'Playa con escáner' });
+  await ds.query('UPDATE ticket_registrations SET "playaId" = $1 WHERE id = ANY($2)', [playa.id, [escaneada.id, corregida.id, sinDato.id]]);
+  // Las métricas leen también las preguntas al asistente: la tabla (de una migración que además da
+  // permisos a roles que esta base no tiene), con las columnas que se consultan.
+  await ds.query(`CREATE TABLE IF NOT EXISTS assistant_preguntas (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "playaId" uuid NOT NULL,
+    pregunta varchar(300) NOT NULL, clave varchar(300) NOT NULL, tema varchar(24) NOT NULL, respondida boolean NOT NULL DEFAULT false, "createdAt" timestamptz NOT NULL DEFAULT now())`);
+  const tenancy = new TenancyService(ds.getRepository(Empresa), ds.getRepository(Playa), ds.getRepository(UsuarioPlaya), ds.getRepository(User), ds, null);
+  const { origenes } = await tenancy.metricsDetalle(30, empresa.id);
+  assert.deepEqual(origenes, [{
+    playaId: playa.id, playa: 'Playa con escáner', empresaId: empresa.id,
+    entradas: { ESCANER: 1, CORREGIDA: 1, MANUAL: 0, TARJETA: 0, SIN_DATO: 1 },
+    salidas: { ESCANER: 1, CORREGIDA: 0, MANUAL: 0, TARJETA: 0, SIN_DATO: 0 },
+  }]);
 });
 
 test('dos cierres simultáneos cobran una sola vez', async () => {

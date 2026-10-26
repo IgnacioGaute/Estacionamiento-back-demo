@@ -38,6 +38,8 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     'registrarSalidaAnterior',
     // La salida de una estadía que ingresó gratis (ver registrarSalidaGratuita).
     'registrarSalida',
+    // Cómo se inició la salida, para las métricas (ver marcarOrigenSalida).
+    'marcarOrigenSalida',
     'getFrequentCustomers',
     'getPlateHistory',
     'findOne',
@@ -123,6 +125,8 @@ export const SUSPENDED_ENDPOINTS: Record<string, readonly string[]> = {
   MiPlanController: [
     'estado',
     'pagarConMercadoPago',
+    'pagarConQr',
+    'verificarQr',
     'verificarPagos',
     'desactivarDebito',
   ],
@@ -141,6 +145,7 @@ export const SUSPENDED_ENDPOINTS: Record<string, readonly string[]> = {
     'opcionesSalidaAnterior',
     'registrarSalidaAnterior',
     'registrarSalida',
+    'marcarOrigenSalida',
     'issueParkingReceipt',
     'findOne',
   ],

@@ -156,6 +156,8 @@ before(async () => {
     await new (load('database/migrations/1790000036000-turnos-diarios', 'TurnosDiarios1790000036000'))().up(migrationRunner);
     await new (load('database/migrations/1790000043000-superadmin-operativo', 'SuperadminOperativo1790000043000'))().up(migrationRunner);
     await new (load('database/migrations/1790000044000-datos-cliente-estadia', 'DatosClienteEstadia1790000044000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000045000-qr-plan', 'QrPlan1790000045000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000046000-origen-registro', 'OrigenRegistro1790000046000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }

@@ -1,9 +1,15 @@
 import { Matches } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { TicketType } from '../entities/ticket.entity';
 
 export class CreateRegistrationByPlateDto {
+  // Cómo se cargó la patente (métricas): con el escáner, con el escáner corrigiendo la lectura o a
+  // mano. La tarjeta física entra por otro camino. Sin dato, queda null (un panel anterior).
+  @IsOptional()
+  @IsIn(['ESCANER', 'CORREGIDA', 'MANUAL'])
+  origen?: 'ESCANER' | 'CORREGIDA' | 'MANUAL';
+
   @IsOptional()
   @Transform(({ value }) => typeof value === 'string' ? value.trim().replace(/[\s()+-]/g, '') || undefined : value)
   @Matches(/^[1-9]\d{7,14}$/, { message: 'Ingresá el teléfono con código de país, entre 8 y 15 dígitos.' })

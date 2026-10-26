@@ -639,6 +639,7 @@ export class TenancyService {
         empresas: [],
         horas: [],
         totales: { actual: 0, anterior: 0, estadias: 0, estadiasAnterior: 0 },
+        origenes: [],
       };
 
     const [
@@ -832,6 +833,35 @@ export class TenancyService {
       ),
     ]);
 
+    // Cómo se cargaron las entradas y las salidas del período, por playa: escáner de patentes,
+    // escáner corrigiendo la lectura, a mano o tarjeta. Las salidas por su día de salida (Argentina).
+    // Lo anterior a medirlo cuenta como SIN_DATO.
+    const origenesFilas: { playaId: string; tipo: 'entrada' | 'salida'; origen: string; n: number }[] =
+      await this.dataSource.query(
+        `SELECT "playaId", 'entrada' AS tipo, COALESCE("origenEntrada", 'SIN_DATO') AS origen, COUNT(*)::int AS n
+         FROM ticket_registrations
+         WHERE "playaId" = ANY($1) AND "createdAt" >= $2
+         GROUP BY 1, 3
+         UNION ALL
+         SELECT "playaId", 'salida' AS tipo, COALESCE("origenSalida", 'SIN_DATO') AS origen, COUNT(*)::int AS n
+         FROM ticket_registrations
+         WHERE "playaId" = ANY($1) AND "departureDay" IS NOT NULL
+           AND "departureDay"::date >= ($2::timestamptz AT TIME ZONE $3)::date
+         GROUP BY 1, 3`,
+        [ids, desde, zona],
+      );
+    const vacio = () => ({ ESCANER: 0, CORREGIDA: 0, MANUAL: 0, TARJETA: 0, SIN_DATO: 0 });
+    const origenes = new Map<string, { playaId: string; playa: string; empresaId: string; entradas: Record<string, number>; salidas: Record<string, number> }>();
+    for (const f of origenesFilas) {
+      const playa = playas.find((p) => p.id === f.playaId);
+      if (!playa) continue;
+      const fila = origenes.get(f.playaId) ?? { playaId: f.playaId, playa: playa.nombre, empresaId: playa.empresaId, entradas: vacio(), salidas: vacio() };
+      const destino = f.tipo === 'entrada' ? fila.entradas : fila.salidas;
+      const origen = f.origen in destino ? f.origen : 'SIN_DATO';
+      destino[origen] += Number(f.n);
+      origenes.set(f.playaId, fila);
+    }
+
     const corte = desde.toISOString().slice(0, 10);
     const dia = (f: any) => new Date(f.dia).toISOString().slice(0, 10);
     const actuales = serie.filter((f: any) => dia(f) >= corte);
@@ -926,6 +956,7 @@ export class TenancyService {
         estadias: Number(estadias[0]?.total ?? 0),
         estadiasAnterior: Number(estadias[0]?.anterior ?? 0),
       },
+      origenes: [...origenes.values()],
     };
   }
 

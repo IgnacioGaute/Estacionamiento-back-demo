@@ -161,6 +161,17 @@ esas credenciales ni al revés. Sin el token, Mi plan ofrece solo transferencia 
 - **Pago con MercadoPago.** `POST /mi-plan/pagar` arma una preferencia de Checkout Pro por lo que
   debe (la factura pendiente) o, si está al día, por el mes que viene. `external_reference` =
   `plan:<empresaId>:<desde>`; el link vence a los 3 días.
+- **Pago con QR.** Un QR estándar que se paga desde cualquier banco o billetera y cobra en la cuenta
+  de la plataforma. MercadoPago exige una sucursal y una caja en esa cuenta: el super admin las crea
+  una vez en Planes y cobros («Pago del plan con QR»: con la ubicación del dispositivo o a mano,
+  `POST /tenancy/plataforma/qr[/con-ubicacion]`), con identificadores fijos (`PLATAFORMA`,
+  `CAJAPLATAFORMA`) que se encuentran en MercadoPago sin guardarlos acá. Mi plan devuelve
+  `mercadoPagoQr` y `POST /mi-plan/qr` crea una orden (`/v1/orders`, 15 minutos) por lo mismo que el
+  link, con `external_reference` = `plan_<empresaId>_<desde sin guiones>` y la guarda en
+  `suscripciones.qrOrdenId` (cancela la anterior sin pagar). `GET /mi-plan/qr/:ordenId` la consulta
+  mientras está en pantalla y la revisión periódica revisa la orden abierta. Se asienta con el id de
+  pago de la orden; el aviso de pagos no la toma (su referencia no es `plan:`), así el mismo pago no
+  entra con dos ids. Solo se consulta una orden con la referencia de la empresa de la sesión.
 - **Débito automático.** `POST /mi-plan/debito { email, tarjeta? }` crea una suscripción de
   MercadoPago (`preapproval` sin plan asociado). Con `MERCADOPAGO_PLATAFORMA_PUBLIC_KEY`, el panel
   muestra el formulario de tarjeta de MercadoPago (Card Payment Brick, sus campos en sus marcos) y
