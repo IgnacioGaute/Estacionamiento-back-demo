@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 import { Empresa } from './empresa.entity';
 import type { Modalidad } from '../modalidad';
+import type { ConfiguracionInicial } from '../configuracion-inicial';
 
 export type ModulosPlaya = { inquilinos?: boolean };
 
@@ -42,6 +43,11 @@ export class Playa {
   // TenancyService.cambiarModalidad, que valida pendientes; nunca por updatePlaya.
   @Column('varchar', { length: 20, default: 'CON_COBRO' })
   modalidad: Modalidad;
+
+  // El avance del recorrido de configuración de una playa nueva (ver configuracion-inicial.ts).
+  // Sin `terminadaEn`, a su administrador se le muestran los pasos antes de entrar.
+  @Column('jsonb', { default: () => "'{}'::jsonb" })
+  configuracionInicial: ConfiguracionInicial;
 
   @CreateDateColumn()
   createdAt: Date;

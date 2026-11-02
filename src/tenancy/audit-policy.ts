@@ -350,4 +350,13 @@ export const AUDIT_RULES: Record<string, Record<string, AuditRule>> = {
       entidad: 'recibo',
     },
   },
+  // El nombre y la dirección que el administrador confirma en la configuración inicial de una
+  // playa nueva. El avance del recorrido (`avanzar`) no entra: no cambia ninguna regla.
+  ConfiguracionInicialController: {
+    guardarPlaya: {
+      accion: 'PLAYA_EDITADA',
+      entidad: 'playa',
+      campos: ['nombre', 'direccion'],
+    },
+  },
 };

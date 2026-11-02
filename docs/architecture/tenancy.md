@@ -85,6 +85,17 @@ sigue disponible para autoría y para las búsquedas internas de autenticación 
   `if (!req.user?.userId) throw new UnauthorizedException(...)` (see `TicketsController.closeRegistrationByPlate`,
   `requireUserId` in `TurnosController`) — `Movimiento.usuario` is not nullable.
 
+### Configuración inicial de una playa nueva
+
+`playas."configuracionInicial"` (jsonb) holds only the progress of the onboarding steps an administrator walks through
+the first time (`src/tenancy/configuracion-inicial.ts`: nombre, ubicacion, vehiculos, tarifas, turnos, mercadopago,
+usuarios; the last three can be skipped). Without `terminadaEn` the playa is pending: the context exposes
+`configuracionPendiente` and the panel sends its ADMIN to `/configuracion-inicial`. Each step's data is saved by its
+usual endpoint; `ConfiguracionInicialController` only writes `nombre`/`direccion` (audited as `PLAYA_EDITADA`) and the
+progress. `parking_scoped` still only reads `playas`: the service writes outside the scope (`tenantContext.exit`),
+always on the session's playa and empresa. Migration `ConfiguracionInicial1790000047000` marked every existing playa
+as finished; new playas start with `{}`.
+
 ### Modalidad de operación (con cobro / gratuito)
 
 `playas.modalidad` is set only by the super admin (`PATCH /tenancy/playas/:id/modalidad`; `parking_scoped` only reads

@@ -10,6 +10,8 @@ import { AuditLog } from './entities/audit-log.entity';
 import { User } from 'src/users/entities/user.entity';
 import { TenancyService } from './tenancy.service';
 import { TenancyController } from './tenancy.controller';
+import { ConfiguracionInicialController } from './configuracion-inicial.controller';
+import { ConfiguracionInicialService } from './configuracion-inicial.service';
 import { SaasModule } from 'src/saas/saas.module';
 import { PlateRecognizerCuentasModule } from 'src/plate-recognition/plate-recognizer-cuentas.module';
 
@@ -26,8 +28,8 @@ import { PlateRecognizerCuentasModule } from 'src/plate-recognition/plate-recogn
     SaasModule,
     PlateRecognizerCuentasModule,
   ],
-  controllers: [TenancyController, TenantContextController],
-  providers: [TenancyService, TenantAccessService, TenantSocketAccess, PlayaConfigGateway],
+  controllers: [TenancyController, TenantContextController, ConfiguracionInicialController],
+  providers: [TenancyService, TenantAccessService, TenantSocketAccess, PlayaConfigGateway, ConfiguracionInicialService],
   exports: [TypeOrmModule, TenancyService, TenantAccessService, TenantSocketAccess],
 })
 export class TenancyModule {}

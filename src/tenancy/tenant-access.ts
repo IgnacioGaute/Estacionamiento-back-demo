@@ -35,6 +35,9 @@ const reconocimientoPatentes = () =>
   alprConfigurado()
     ? 'true AS "reconocimientoPatentes"'
     : 'EXISTS(SELECT 1 FROM plate_recognizer_cuentas c WHERE c."playaId" = p.id) AS "reconocimientoPatentes"';
+// Si la playa todavía no terminó su configuración inicial: el panel lleva a su administrador a los
+// pasos antes de entrar (ver configuracion-inicial.ts). Solo el dato, no el avance.
+const configuracionPendiente = `NOT (p."configuracionInicial" ? 'terminadaEn') AS "configuracionPendiente"`;
 
 @Injectable()
 export class TenantAccessService {
@@ -50,7 +53,7 @@ export class TenantAccessService {
         user,
         empresa: null,
         playas: await this.ds.query(
-          `SELECT id, nombre, "empresaId", modulos, modalidad, ${reconocimientoPatentes()} FROM playas p ORDER BY nombre`,
+          `SELECT id, nombre, "empresaId", modulos, modalidad, ${reconocimientoPatentes()}, ${configuracionPendiente} FROM playas p ORDER BY nombre`,
         ),
       };
     // Suspendida sigue resolviendo su playa: TenantGuard ya acotó qué puede hacer.
@@ -61,7 +64,7 @@ export class TenantAccessService {
     if (!empresa)
       throw new ForbiddenException('Tu cuenta no tiene una empresa activa.');
     const playas = await this.ds.query(
-      `SELECT p.id,p.nombre,p."empresaId",p.modulos,p.modalidad,${reconocimientoPatentes()} FROM playas p WHERE p."empresaId"=$1 AND ($2='ADMIN' OR EXISTS(SELECT 1 FROM usuario_playas up WHERE up."playaId"=p.id AND up."usuarioId"=$3)) ORDER BY p.nombre,p.id`,
+      `SELECT p.id,p.nombre,p."empresaId",p.modulos,p.modalidad,${reconocimientoPatentes()},${configuracionPendiente} FROM playas p WHERE p."empresaId"=$1 AND ($2='ADMIN' OR EXISTS(SELECT 1 FROM usuario_playas up WHERE up."playaId"=p.id AND up."usuarioId"=$3)) ORDER BY p.nombre,p.id`,
       [empresa.id, user.role, user.id],
     );
     return { user, empresa, playas };
