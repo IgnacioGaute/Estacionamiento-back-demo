@@ -195,11 +195,12 @@ test('pasos obligatorios, omitibles y terminar', async () => {
   assert.equal(incompleta.code, 'CONFIGURACION_INCOMPLETA');
   assert.deepEqual(incompleta.faltan, ['vehiculos', 'tarifas']);
   await avance({ hecho: 'vehiculos', paso: 'tarifas' }).expect(200);
-  await avance({ hecho: 'tarifas', paso: 'turnos' }).expect(200);
+  await avance({ hecho: 'tarifas', paso: 'pases' }).expect(200);
+  await avance({ omitido: 'pases', paso: 'turnos' }).expect(200);
   await avance({ omitido: 'turnos', paso: 'mercadopago' }).expect(200);
   await avance({ omitido: 'mercadopago', paso: 'usuarios' }).expect(200);
   const intermedio = (await http('get', '/configuracion-inicial', adminA, nueva.id).expect(200)).body.configuracion;
-  assert.deepEqual(intermedio, { paso: 'usuarios', hechos: ['nombre', 'ubicacion', 'vehiculos', 'tarifas'], omitidos: ['turnos', 'mercadopago'] });
+  assert.deepEqual(intermedio, { paso: 'usuarios', hechos: ['nombre', 'ubicacion', 'vehiculos', 'tarifas'], omitidos: ['pases', 'turnos', 'mercadopago'] });
   assert.equal(await pendiente(adminA, nueva.id), true);
   const terminada = (await avance({ hecho: 'usuarios', terminar: true }).expect(200)).body.configuracion;
   assert.ok(terminada.terminadaEn);

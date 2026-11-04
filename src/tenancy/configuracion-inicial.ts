@@ -2,12 +2,13 @@ import { BadRequestException } from '@nestjs/common';
 
 // La configuración inicial de una playa nueva: los pasos que su administrador recorre al entrar
 // por primera vez. Los datos de cada paso se guardan en su lugar de siempre (la playa, los tipos
-// de vehículo, las tarifas, los turnos, MercadoPago, los usuarios); acá solo queda el avance, para
+// de vehículo, las tarifas, los pases, los turnos, MercadoPago, los usuarios); acá solo queda el avance, para
 // retomar donde quedó y saber cuándo dejar de mostrarla.
-export const PASOS_CONFIGURACION = ['nombre', 'ubicacion', 'vehiculos', 'tarifas', 'turnos', 'mercadopago', 'usuarios'] as const;
+export const PASOS_CONFIGURACION = ['nombre', 'ubicacion', 'vehiculos', 'tarifas', 'pases', 'turnos', 'mercadopago', 'usuarios'] as const;
 export type PasoConfiguracion = (typeof PASOS_CONFIGURACION)[number];
-// Turnos, MercadoPago y usuarios se pueden dejar para después; el resto hace falta para operar.
-export const PASOS_OMITIBLES: readonly PasoConfiguracion[] = ['turnos', 'mercadopago', 'usuarios'];
+// Los pases (día, semana, mes), turnos, MercadoPago y usuarios se pueden dejar para después; el
+// resto hace falta para operar.
+export const PASOS_OMITIBLES: readonly PasoConfiguracion[] = ['pases', 'turnos', 'mercadopago', 'usuarios'];
 export const PASOS_OBLIGATORIOS = PASOS_CONFIGURACION.filter((paso) => !PASOS_OMITIBLES.includes(paso));
 
 // Una playa sin `terminadaEn` todavía no terminó su configuración. Las que ya existían cuando

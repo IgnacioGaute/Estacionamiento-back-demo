@@ -11,8 +11,9 @@ describe('aplicarAvance', () => {
     expect(estado).toEqual({ hechos: ['nombre', 'ubicacion'], omitidos: [], paso: 'vehiculos' });
   });
 
-  it('omitir solo vale para turnos, MercadoPago y usuarios', () => {
+  it('omitir solo vale para pases, turnos, MercadoPago y usuarios', () => {
     expect(aplicarAvance({}, { omitido: 'mercadopago' }, ahora).omitidos).toEqual(['mercadopago']);
+    expect(aplicarAvance({}, { omitido: 'pases' }, ahora).omitidos).toEqual(['pases']);
     expect(() => aplicarAvance({}, { omitido: 'tarifas' }, ahora)).toThrow(BadRequestException);
   });
 
