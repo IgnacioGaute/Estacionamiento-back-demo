@@ -27,7 +27,9 @@ export class MovimientosService {
   // uno abierto se lo asocia igual, si no, el movimiento se crea sin turno (turno: null) en
   // vez de bloquear el cobro. Para retomar la exigencia, volver a llamar
   // turnosService.getOpenTurno (que tira NO_OPEN_TURNO) en vez de findOpenTurnoOrNull.
-  async create(dto: CreateMovimientoDto & { usuarioId: string }, manager?: EntityManager, turnoIdOverride?: string | null, occurredAt?: Date): Promise<Movimiento> {
+  // `nota` reemplaza la nota automática de un movimiento por una de quien la pida: el descuento de
+  // una estadía es uno solo aunque se corrija varias veces, así que su nota también.
+  async create(dto: CreateMovimientoDto & { usuarioId: string; nota?: { sourceKey: string; context: string } }, manager?: EntityManager, turnoIdOverride?: string | null, occurredAt?: Date): Promise<Movimiento> {
     if (operationContext.getStore()) occurredAt ??= operationNow();
     if ((dto.tipo === 'AJUSTE' || dto.tipo === 'CORTESIA' || dto.tipo === 'DESCUENTO') && !dto.motivo?.trim()) {
       throw new BadRequestException('El motivo es obligatorio para un ajuste o un descuento.');
@@ -58,7 +60,7 @@ export class MovimientosService {
     const saved = await repository.save(movimiento);
     if (dto.motivo?.trim()) {
       const registration = dto.ticketRegistrationId ? await manager!.query('SELECT "licensePlateOriginal", "codeBarTicket" FROM ticket_registrations WHERE id = $1', [dto.ticketRegistrationId]) : [];
-      await publishAutomaticNote(manager!, { sourceKey: `movimiento:${saved.id}`, origin: dto.tipo === 'DESCUENTO' || dto.tipo === 'CORTESIA' ? 'Descuento de vehículo' : 'Corrección de cobro', sourceType: 'TICKET', sourceId: dto.ticketRegistrationId ?? saved.id, usuarioId: dto.usuarioId, description: dto.motivo, context: `${registration[0]?.licensePlateOriginal || registration[0]?.codeBarTicket || 'Vehículo'} · $ ${Math.abs(dto.monto).toLocaleString('es-AR')}` });
+      await publishAutomaticNote(manager!, { sourceKey: dto.nota?.sourceKey ?? `movimiento:${saved.id}`, origin: dto.tipo === 'DESCUENTO' || dto.tipo === 'CORTESIA' ? 'Descuento de vehículo' : 'Corrección de cobro', sourceType: 'TICKET', sourceId: dto.ticketRegistrationId ?? saved.id, usuarioId: dto.usuarioId, description: dto.motivo, context: `${registration[0]?.licensePlateOriginal || registration[0]?.codeBarTicket || 'Vehículo'} · ${dto.nota?.context ?? `$ ${Math.abs(dto.monto).toLocaleString('es-AR')}`}` });
     }
     return saved;
   }

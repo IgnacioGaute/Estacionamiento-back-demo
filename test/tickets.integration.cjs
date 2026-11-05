@@ -789,6 +789,34 @@ test('descuento: valida límites, motivo y presupuesto, y dos solicitudes simult
   await assert.rejects(tickets.discountRegistration(r.id, dto, user.id), /cerrado/);
 });
 
+test('descuento: uno solo por estadía; cambiarlo lo reemplaza con un movimiento por la diferencia', async () => {
+  const r = await openPlate();
+  const dto = (monto, motivo, expectedPrice) => ({ monto, total: true, motivo, expectedPrice, expectedCollected: 0 });
+  let s = await tickets.discountRegistration(r.id, dto(300, 'Cliente frecuente', 1000), user.id);
+  assert.deepEqual(s.descuento, { monto: 300, motivo: 'Cliente frecuente' });
+  assert.equal(s.saldoACobrar, 700);
+  // El segundo reemplaza al primero: 200 de descuento, no 500.
+  s = await tickets.discountRegistration(r.id, dto(200, 'Lo corrigió el encargado', 700), user.id);
+  assert.deepEqual(s.descuento, { monto: 200, motivo: 'Lo corrigió el encargado' });
+  assert.equal(s.saldoACobrar, 800);
+  // El libro no se reescribe: el primero sigue y el segundo es la diferencia.
+  const libro = await ds.getRepository(Movimiento).find({ where: { ticketRegistration: { id: r.id } }, order: { sequence: 'ASC' } });
+  assert.deepEqual(libro.map(m => [m.tipo, m.monto]), [['DESCUENTO', 300], ['DESCUENTO', -100]]);
+  // Una sola nota, con el descuento que quedó.
+  const notas = await ds.query(`SELECT context FROM notes WHERE "sourceKey" = $1`, [`descuento:${r.id}`]);
+  assert.equal(notas.length, 1);
+  assert.match(notas[0].context, /descuento de \$ 200/);
+  await assert.rejects(tickets.discountRegistration(r.id, dto(200, 'Igual', 800), user.id), /ya tiene ese descuento/);
+  await assert.rejects(tickets.discountRegistration(r.id, dto(1001, 'Demasiado', 800), user.id), /superar/);
+  // La lista muestra la estadía con su descuento.
+  const lista = await tickets.findAllRegistrations(undefined, true);
+  assert.equal(lista.find(x => x.id === r.id).descuento, 200);
+  // Y se puede quitar.
+  s = await tickets.discountRegistration(r.id, dto(0, 'No correspondía', 800), user.id);
+  assert.equal(s.descuento, null);
+  assert.equal(s.saldoACobrar, 1000);
+});
+
 test('descuento: bloquea un cobro digital pendiente y guarda el autor de gastos y recibos nuevos', async () => {
   const r = await openPlate();
   const QR = load('mercadopago/entities/cobro-mercadopago.entity', 'CobroMercadoPago');
@@ -840,8 +868,8 @@ test('avisos de operador: descuento y entrada duplicada conservan autor, patente
     assert.equal(entrance.description, duplicate.duplicatePlateOverrideReason);
     const request = { monto: 200, motivo: 'Promoción del día', expectedPrice: 1000, expectedCollected: 0 };
     await tickets.discountRegistration(original.id, request, operator.id);
-    const movement = await ds.getRepository(Movimiento).findOneBy({ ticketRegistration: { id: original.id }, tipo: 'DESCUENTO' });
-    const discount = await ds.getRepository(Note).findOne({ where: { sourceKey: `movimiento:${movement.id}` }, relations: ['user'] });
+    // Una nota por estadía, no por movimiento: corregir el descuento la actualiza.
+    const discount = await ds.getRepository(Note).findOne({ where: { sourceKey: `descuento:${original.id}` }, relations: ['user'] });
     assert.equal(discount.description, request.motivo);
     assert.equal(discount.user.id, operator.id);
     assert.ok(discount.context.includes(original.licensePlateOriginal));

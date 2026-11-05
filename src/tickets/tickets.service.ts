@@ -879,6 +879,19 @@ async removePriceBracket(id: string) {
   });
 }
 
+  // El descuento de cada estadía, para que la lista la muestre con descuento. Solo lo informativo:
+  // el importe sigue saliendo del cobro (priceRegistration).
+  private async conDescuentos(registrations: TicketRegistration[]) {
+    if (!registrations.length) return registrations;
+    const filas: { id: string; total: string }[] = await this.ticketRegistrationRepository.manager.query(
+      `SELECT "ticketRegistrationId" AS id, SUM(monto) AS total FROM movimientos
+       WHERE tipo = 'DESCUENTO' AND "ticketRegistrationId" = ANY($1) GROUP BY 1 HAVING SUM(monto) > 0`,
+      [registrations.map(r => r.id)],
+    );
+    const porId = new Map(filas.map(f => [f.id, Number(f.total)]));
+    return registrations.map(r => Object.assign(r, { descuento: porId.get(r.id) ?? 0 }));
+  }
+
   async findAllRegistrations(pagination?: ListPagination, operation = false) {
     try{
         const query = this.ticketRegistrationRepository.createQueryBuilder('r').leftJoinAndSelect('r.ticket', 'ticket').leftJoinAndSelect('r.boxList', 'box');
@@ -886,9 +899,9 @@ async removePriceBracket(id: string) {
         // «Últimos movimientos» al abrir la pantalla, salidas incluidas.
         if (operation) query.where('r.departureTime IS NULL OR r.id IN (SELECT id FROM ticket_registrations ORDER BY "updatedAt" DESC, id DESC LIMIT 4)');
         query.orderBy('r.createdAt', 'DESC').addOrderBy('r.id', 'DESC');
-        if (!pagination) return query.getMany();
+        if (!pagination) return this.conDescuentos(await query.getMany());
         const [data, total] = await query.skip((pagination.page - 1) * pagination.limit).take(pagination.limit).getManyAndCount();
-        return listResult(data, total, pagination);
+        return listResult(await this.conDescuentos(data), total, pagination);
     } catch (error: any) {
         this.logger.error(error.message, error.stack);
     }
@@ -1205,8 +1218,14 @@ async removePriceBracket(id: string) {
     const preview = await this.priceRegistration(registration, manager);
     const totalCollectedSoFar = await this.collectedAmount(registration, manager);
     const saldoACobrar = Math.max(0, preview.price - totalCollectedSoFar);
+    // El descuento vigente y su último motivo, para mostrarlo y corregirlo en vez de sumar otro.
+    const [ultimo] = preview.descuentoTotal
+      ? await (manager ?? this.dataSource.manager).query(
+        `SELECT motivo FROM movimientos WHERE "ticketRegistrationId" = $1 AND tipo = 'DESCUENTO' ORDER BY sequence DESC LIMIT 1`, [id])
+      : [];
     return { registration, elapsedMinutes: preview.elapsedMinutes, previewBracket: preview,
       totalCollectedSoFar, saldoACobrar,
+      descuento: preview.descuentoTotal ? { monto: preview.descuentoTotal, motivo: ultimo?.motivo ?? null } : null,
       cambioARetornar: Math.max(0, totalCollectedSoFar - preview.price),
       tarifaAnterior: await this.tarifaAnterior(registration, preview, saldoACobrar, manager),
       pricingDayType: preview.ticketDayType, pricingDayTypeBasis: preview.pricingDayTypeBasis, tariffSnapshotUsed: preview.tariffSnapshotUsed };
@@ -1251,6 +1270,11 @@ async removePriceBracket(id: string) {
     registration.boxList = { id: box.id } as BoxList;
   }
 
+  private async descuentoDe(id: string, manager: EntityManager) {
+    const [fila] = await manager.query(`SELECT COALESCE(SUM(monto), 0) AS total FROM movimientos WHERE "ticketRegistrationId" = $1 AND tipo = 'DESCUENTO'`, [id]);
+    return Number(fila.total);
+  }
+
   async discountRegistration(id: string, dto: DiscountRegistrationDto, usuarioId: string) {
     const result = await operationTransaction(this.dataSource, async manager => {
       const repo = manager.getRepository(TicketRegistration);
@@ -1261,19 +1285,28 @@ async removePriceBracket(id: string) {
       if (summary.previewBracket.price !== dto.expectedPrice || summary.totalCollectedSoFar !== dto.expectedCollected) {
         throw new ConflictException('El importe cambió. Revisá el resumen antes de aplicar el descuento.');
       }
-      if (!Number.isInteger(dto.monto) || dto.monto <= 0 || dto.monto > summary.saldoACobrar) {
-        throw new BadRequestException('El descuento debe ser mayor a cero y no superar el saldo pendiente.');
+      // El libro no se reescribe: cambiar el descuento es un movimiento más por la diferencia (en
+      // menos si se achica). Para la estadía, el cobro y la planilla el descuento es la suma.
+      const actual = await this.descuentoDe(id, manager);
+      const diferencia = dto.total ? dto.monto - actual : dto.monto;
+      if (!Number.isInteger(dto.monto) || dto.monto < 0 || (!dto.total && dto.monto === 0) || diferencia > summary.saldoACobrar) {
+        throw new BadRequestException(dto.total
+          ? 'El descuento no puede superar lo que falta cobrar de la estadía.'
+          : 'El descuento debe ser mayor a cero y no superar el saldo pendiente.');
       }
+      if (diferencia === 0) throw new BadRequestException({ code: 'DESCUENTO_SIN_CAMBIOS', message: `La estadía ya tiene ese descuento.` });
       if (!dto.motivo?.trim() || dto.motivo.trim().length > 255) throw new BadRequestException('Ingresá el motivo del descuento.');
       const [pending] = await manager.query(`SELECT EXISTS (
         SELECT 1 FROM cobros_mercadopago WHERE "registrationId"=$1 AND tipo='HORA' AND estado='PENDIENTE'
         UNION ALL SELECT 1 FROM cobros_transferencia WHERE "registrationId"=$1 AND tipo='HORA' AND estado IN ('ESPERANDO','REVISION')
       ) AS present`, [id]);
       if (pending.present) throw new ConflictException('Cancelá el cobro pendiente antes de aplicar un descuento.');
-      await this.movimientosService.create({ ticketRegistrationId: id, monto: dto.monto, metodo: 'CASH', tipo: 'DESCUENTO', motivo: dto.motivo.trim(), usuarioId }, manager);
+      const nuevo = actual + diferencia;
+      await this.movimientosService.create({ ticketRegistrationId: id, monto: diferencia, metodo: 'CASH', tipo: 'DESCUENTO', motivo: dto.motivo.trim(), usuarioId,
+        nota: { sourceKey: `descuento:${id}`, context: nuevo ? `descuento de $ ${nuevo.toLocaleString('es-AR')}` : 'sin descuento' } }, manager);
       // El descuento no es un cobro ni una devolución: se conserva en el libro sin mover efectivo.
       await this.linkToTodaysBoxList(registration, 0, manager, usuarioId);
-      registration.price = summary.previewBracket.price - dto.monto;
+      registration.price = summary.previewBracket.price - diferencia;
       await repo.save(registration);
       return this.getCloseSummary(id, manager);
     });
