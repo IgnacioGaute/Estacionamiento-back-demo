@@ -19,6 +19,8 @@ import { OfflineDeviceDto, OfflineOperationDto, OfflineFinishDto } from './dto/o
 import { ParkingReceiptsService } from './parking-receipts.service';
 import { IssueParkingReceiptDto } from './dto/receipt-delivery.dto';
 import { ParseUUIDPipe } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+import { exigirTurnoParaSalida } from 'src/turnos/turno-requerido';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
 import { Ticket } from './entities/ticket.entity';
@@ -37,7 +39,7 @@ import { CreateTicketRegistrationForDayDto, UpdateTicketStatusDto } from './dto/
 @Controller('tickets')
 @UseGuards(AuthOrTokenAuthGuard)
 export class TicketsController {
-  constructor(private readonly ticketsService: TicketsService, private readonly parkingReceipts: ParkingReceiptsService, private readonly offline: OfflineService, private readonly tariffPlans: TariffPlanService) {}
+  constructor(private readonly ticketsService: TicketsService, private readonly parkingReceipts: ParkingReceiptsService, private readonly offline: OfflineService, private readonly tariffPlans: TariffPlanService, private readonly ds: DataSource) {}
 
   @Get('tariff-plan')
   getTariffPlan() { return this.tariffPlans.getPlan(); }
@@ -111,13 +113,14 @@ export class TicketsController {
 
   // Va antes de `registrationForDays/:id/status` para que "retire-many" no entre como un id.
   @Patch('registrationForDays/retire-many')
-  retireRegistrationsForDay(@Req() req: AuthenticatedRequest, @Body('ids') ids: string[]) {
+  async retireRegistrationsForDay(@Req() req: AuthenticatedRequest, @Body('ids') ids: string[]) {
     if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    await exigirTurnoParaSalida(this.ds);
     return this.ticketsService.retireRegistrationsForDay(ids, req.user.userId);
   }
 
   @Patch('registrationForDays/:id/status')
-  updateTicketStatus(
+  async updateTicketStatus(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() dto: UpdateTicketStatusDto,
@@ -125,6 +128,7 @@ export class TicketsController {
     if (!req.user?.userId) {
       throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
     }
+    await exigirTurnoParaSalida(this.ds);
     return this.ticketsService.updateTicketStatus(id, dto, req.user.userId);
   }
 
@@ -133,7 +137,7 @@ export class TicketsController {
     return this.ticketsService.update(id, updateTicketDto);
   }
   @Patch('registrations/:id/advance-payment')
-  addAdvancePayment(
+  async addAdvancePayment(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() dto: AdvancePaymentTicketRegistrationDto,
@@ -141,6 +145,7 @@ export class TicketsController {
     if (!req.user?.userId) {
       throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
     }
+    await exigirTurnoParaSalida(this.ds);
     return this.ticketsService.addAdvancePayment(id, dto, req.user.userId);
   }
 
@@ -267,8 +272,11 @@ export class TicketsController {
 
   // La salida de una estadía que ingresó en modalidad gratuita: sin importes, medio de pago ni caja.
   @Patch('registrations/:id/salida')
-  registrarSalida(@Req() req: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
+  // En una playa gratuita no hay turnos (el control no exige nada); si la playa ya cobra, la salida
+  // de una estadía que entró gratis también pide turno al operador.
+  async registrarSalida(@Req() req: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
     if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    await exigirTurnoParaSalida(this.ds);
     return this.ticketsService.registrarSalidaGratuita(id, req.user.userId);
   }
 
@@ -286,15 +294,17 @@ export class TicketsController {
   }
 
   @Post('registrations/:id/discount')
-  discountRegistration(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: DiscountRegistrationDto) {
+  async discountRegistration(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: DiscountRegistrationDto) {
     if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    await exigirTurnoParaSalida(this.ds);
     return this.ticketsService.discountRegistration(id, dto, req.user.userId);
   }
 
   // Pago híbrido con QR o alias: primero la parte en efectivo; el QR o el alias piden el resto.
   @Post('registrations/:id/pago-parcial')
-  pagoParcial(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: PagoParcialDto) {
+  async pagoParcial(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: PagoParcialDto) {
     if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    await exigirTurnoParaSalida(this.ds);
     return this.ticketsService.cobrarParteEnEfectivo(id, dto, req.user.userId);
   }
 
@@ -312,7 +322,7 @@ export class TicketsController {
   }
 
   @Patch('registrations/:id/close')
-  closeRegistrationByPlate(
+  async closeRegistrationByPlate(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() dto: CloseRegistrationDto,
@@ -320,14 +330,18 @@ export class TicketsController {
     if (!req.user?.userId) {
       throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
     }
+    // Con turnos activos, el operador necesita su turno abierto para cualquier salida (también
+    // sin cobro o por transferencia); administración no (ver exigirTurnoParaSalida).
+    await exigirTurnoParaSalida(this.ds);
     return this.ticketsService.closeRegistrationByPlate(id, dto, req.user.userId);
   }
 
   // «Se fue antes»: cobra lo que correspondía a la hora en que se fue y registra la salida con esa
   // hora (ver registrarSalidaAnterior). Operador incluido; queda en la Actividad (audit-policy).
   @Post('registrations/:id/salida-anterior')
-  registrarSalidaAnterior(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: SalidaAnteriorDto) {
+  async registrarSalidaAnterior(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: SalidaAnteriorDto) {
     if (!req.user?.userId) throw new UnauthorizedException('Esta acción requiere un usuario autenticado.');
+    await exigirTurnoParaSalida(this.ds);
     return this.ticketsService.registrarSalidaAnterior(id, dto, req.user.userId);
   }
 

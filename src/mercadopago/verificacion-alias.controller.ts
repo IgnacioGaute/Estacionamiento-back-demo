@@ -11,6 +11,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthOrTokenAuthGuard } from 'src/utils/guards/auth-or-token.guard';
+import { DataSource } from 'typeorm';
+import { cobroSinTurno, exigirTurnoParaSalida } from 'src/turnos/turno-requerido';
 import { VerificacionAliasService } from './verificacion-alias.service';
 import {
   AsignarTransferenciaDto,
@@ -27,7 +29,7 @@ import {
 @UseGuards(AuthOrTokenAuthGuard)
 @Controller('mercadopago/alias')
 export class VerificacionAliasController {
-  constructor(private readonly alias: VerificacionAliasService) {}
+  constructor(private readonly alias: VerificacionAliasService, private readonly ds: DataSource) {}
 
   @Get('disponibilidad')
   disponibilidad(@Req() req: any) {
@@ -36,8 +38,10 @@ export class VerificacionAliasController {
   }
 
   @Post('cobros')
-  iniciarCobro(@Req() req: any, @Body() dto: IniciarCobroAliasDto) {
+  async iniciarCobro(@Req() req: any, @Body() dto: IniciarCobroAliasDto) {
     usuario(req);
+    // Igual que el QR: cobrar una salida exige el turno abierto del operador (ver exigirTurnoParaSalida).
+    if (!cobroSinTurno(dto)) await exigirTurnoParaSalida(this.ds);
     return this.alias.iniciar(dto.registrationId, dto.tipo, dto);
   }
 

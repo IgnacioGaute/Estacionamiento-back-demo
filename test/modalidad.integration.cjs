@@ -517,6 +517,38 @@ test('la modalidad de una estadía no se puede cambiar después del ingreso, ni 
   await assert.rejects(ds.query(`UPDATE ticket_registrations SET modalidad = 'GRATUITO' WHERE id = $1`, [fila.id]), /no se puede cambiar/);
 });
 
+// Con turnos activos el operador no registra salidas ni cobros sin su turno abierto, con ningún
+// medio de pago: antes solo se frenaba el efectivo, y en una playa que nunca abrió un turno ni eso.
+// Administración sí puede. Es una playa con cobro nueva: nunca tuvo turnos.
+test('con turnos activos el operador sin turno no registra salidas ni cobros; administración sí', async () => {
+  const conTurnos = await ds.getRepository(Playa).save({ nombre: 'Con turnos', empresaId: cobra.empresaId });
+  const cajero = await ds.getRepository(User).save({ username: 'cajero', email: 'cajero@example.test', firstName: 'Caja', lastName: 'Sin turno', role: 'USER', empresaId: cobra.empresaId });
+  await ds.query(`INSERT INTO usuario_playas ("usuarioId","playaId","rolPlaya") VALUES ($1,$2,'OPERADOR')`, [cajero.id, conTurnos.id]);
+  await http('post', '/tickets/vehicle-types', adminA, conTurnos.id).send({ code: 'AUTO', name: 'Auto' }).expect(201);
+  await http('post', '/tickets/priceBrackets', adminA, conTurnos.id).send({ vehicleType: 'AUTO', label: 'Hora', uptoMinutes: 60, price: 1000 }).expect(201);
+  await http('patch', '/tickets/schedule-settings', adminA, conTurnos.id).send({ shiftsEnabled: true }).expect(200);
+  // La entrada no exige turno.
+  const entrada = (await http('post', '/tickets/registrations/by-plate', cajero).send({ licensePlate: 'TURN01', vehicleType: 'AUTO' }).expect(201)).body;
+  const sinTurno = [
+    ['patch', `/tickets/registrations/${entrada.id}/close`, { closeType: 'PAYMENT', metodo: 'TRANSFER', expectedPrice: 1000, expectedCollected: 0 }],
+    ['patch', `/tickets/registrations/${entrada.id}/close`, { closeType: 'PAYMENT', metodo: 'CASH', expectedPrice: 1000, expectedCollected: 0 }],
+    ['patch', `/tickets/registrations/${entrada.id}/close`, { closeType: 'NO_CHARGE', expectedPrice: 1000, expectedCollected: 0 }],
+    ['patch', `/tickets/registrations/${entrada.id}/advance-payment`, { advancePaidAmount: 100, metodo: 'CASH' }],
+    ['post', `/tickets/registrations/${entrada.id}/discount`, { monto: 100, motivo: 'x', expectedPrice: 1000, expectedCollected: 0 }],
+  ];
+  for (const [method, route, body] of sinTurno) {
+    const r = await http(method, route, cajero).send(body);
+    assert.equal(r.status, 403, `${method} ${route} ${JSON.stringify(body)}`);
+    assert.equal(r.body.code, 'TURNO_REQUERIDO', `${method} ${route}`);
+  }
+  assert.equal(await contar('movimientos', conTurnos.id), 0);
+  assert.equal(await contar('cash_entries', conTurnos.id), 0);
+  // Administración registra la salida sin turno abierto.
+  await http('patch', `/tickets/registrations/${entrada.id}/close`, adminA, conTurnos.id)
+    .send({ closeType: 'PAYMENT', metodo: 'TRANSFER', expectedPrice: 1000, expectedCollected: 0 }).expect(200);
+  assert.equal(await contar('movimientos', conTurnos.id), 1);
+});
+
 test('ingresos digitales y su reversión también se cortan dentro de la transacción en una playa gratuita', async () => {
   const { recordDigital } = require('../dist/turnos/turno-book');
   await assert.rejects(scoped({ empresaId: gratis.empresaId, playaId: gratis.id, userId: adminA.id }, () =>
