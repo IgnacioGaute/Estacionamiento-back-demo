@@ -95,7 +95,11 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     await page.addScriptTag({ path: path.join(output, 'bundle.js') });
     const mount = async (data = plan(), types = vehicles, prices = []) => {
       await page.evaluate((p, v, prices) => window.mount(p, v, prices), data, types, prices);
-      await page.waitForSelector('button[role="tab"]');
+      // Si la página tiró un error al montar, que la falla lo diga en vez de solo «timeout».
+      await page.waitForSelector('button[role="tab"]').catch(async (e) => {
+        await page.screenshot({ path: path.join(output, 'mount-fallido.png'), fullPage: true }).catch(() => {});
+        throw new Error(errors.join('\n') || e.message);
+      });
     };
     // El pie del Stepper queda fijo abajo: se centra cada control para que el clic no caiga en él.
     const center = selector => page.$eval(selector, e => e.scrollIntoView({ block: 'center' }));
@@ -420,7 +424,7 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
       { ...row('s-extra',null,500), recurringUnitMinutes:60 }, { ...row('s-night-extra',null,700,'NIGHT'), recurringUnitMinutes:30 },
       { ...row('s-moto',60,800), vehicleType:'MOTO' }, { ...row('s-moto-night',60,900,'NIGHT'), vehicleType:'MOTO' }];
     await mount(summaryPlan, [...vehicles, {code:'MOTO',name:'Moto',enabled:true}, {code:'CAMIONETA',name:'Camioneta / utilitario',enabled:true}]);
-    const summaryText = () => page.$eval('[data-tariff-summary] [role="tabpanel"]', e => e.textContent);
+    const summaryText = () => page.$eval('[data-tariff-summary] [role="region"]', e => e.textContent);
     assert.match(await summaryText(), /2\.300/); assert.doesNotMatch(await summaryText(), /3\.000|2\.000/);
     assert.match(await summaryText(), /1\.000/); assert.match(await summaryText(), /500/);
     assert.equal(await page.$$eval('[data-tariff-summary] tbody tr', rows => rows.length), 3);
@@ -436,8 +440,7 @@ test('tarifas: editar, comparar, aplicar, conflicto, borrador y ancho móvil', {
     await page.keyboard.press('End');
     assert.match(await summaryText(), /No hay precios/);
     await page.keyboard.press('Home');
-    assert.match(await summaryText(), /3\.000/);
-    assert.equal(await page.evaluate(() => window.__saves.length), 0);
+    assert.match(await summaryText(), /3\.000/);    assert.equal(await page.evaluate(() => window.__saves.length), 0);
     for (const width of [320,390,768,1280]) { await page.setViewport({width,height:900}); await overflow(); }
     await page.$eval('[data-tariff-summary]', e => e.scrollIntoView());
     await page.screenshot({ path:path.join(output,'tarifas-tabs-noche.png') });

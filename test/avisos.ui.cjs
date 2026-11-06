@@ -90,7 +90,8 @@ test('avisos: grupos, lectura tocando el aviso, filtros y móvil', { timeout: 12
     await page.evaluate(() => [...document.querySelectorAll('article p')].find(p => p.textContent.startsWith('Faltaron')).click());
     await page.waitForFunction(() => window.__leidos.includes('n2'));
     assert.equal(await page.$$eval('article[data-pendiente]', els => els.length), 1);
-    assert.match(await page.$eval('section[aria-label="Resumen"]', e => e.textContent), /Sin leer1/);
+    // El resumen es una línea: «1 sin leer · 3 publicados hoy · 24 en la cartelera».
+    assert.match(await page.$eval('section[aria-label="Resumen"]', e => e.textContent), /1 sin leer/);
     // Editar un aviso propio no marca nada.
     await page.click('article button[aria-label="Editar aviso"]');
     await page.waitForSelector('[role="dialog"]'); await page.keyboard.press('Escape'); await page.waitForSelector('[role="dialog"]', { hidden: true });
@@ -101,6 +102,11 @@ test('avisos: grupos, lectura tocando el aviso, filtros y móvil', { timeout: 12
 
     for (const width of [320, 390, 768, 1024]) { await page.setViewport({ width, height: 850 }); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'desborde en ' + width); }
     await page.setViewport({ width: 390, height: 850 });
+    // En el celular, período, origen y autor esperan detrás de «Más filtros».
+    const periodoVisible = () => page.$eval('[role="group"][aria-label="Período"]', e => getComputedStyle(e).display !== 'none');
+    assert.equal(await periodoVisible(), false);
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.startsWith('Más filtros')).click());
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('[role="group"][aria-label="Período"]')).display !== 'none');
     await page.screenshot({ path: path.join(output, 'avisos-mobile.png'), fullPage: true });
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
