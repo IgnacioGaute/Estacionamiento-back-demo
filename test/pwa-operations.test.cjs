@@ -12,7 +12,7 @@ test('operación completa en navegador sin red, persistencia y pantalla móvil',
     if (pathname.startsWith('/api/')) { res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({message:'Servidor sin conexión'}));return; }
     const file = path.join(publicDir,pathname === '/' ? 'offline.html' : pathname.slice(1));
     if (!file.startsWith(publicDir + path.sep) || !fs.existsSync(file)) {res.writeHead(404);res.end();return;}
-    res.setHeader('content-type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');res.end(fs.readFileSync(file));
+    res.setHeader('content-type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.woff2')?'font/woff2':'text/html');res.end(fs.readFileSync(file));
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const origin='http://127.0.0.1:'+server.address().port;

@@ -38,6 +38,8 @@ El historial local permite buscar por patente, filtrar entradas/salidas, estado 
 ## Despliegue
 Aplicar las migraciones `1790000010000-offline-sessions` y `1790000013000-offline-multiple-devices` al iniciar el backend. Cada renovación conserva la sesión previa para no invalidar operaciones de una pestaña en carrera; no borrar sesiones sin auditar pendientes. Mantener frontend y backend en la misma versión de pricing. El archivo público `sw.js` no debe cachearse por CDN. Solo se almacenan archivos del shell público en Cache Storage: nunca API, HTML autenticado, RSC o mutaciones.
 
+La pantalla local (`public/offline.html` y `offline.css` del frontend) no usa Tailwind: sus colores copian los tokens de `src/app/globals.css` con los mismos nombres y sus tipografías (`offline-archivo.woff2`, `offline-oswald.woff2`, `offline-mono.woff2`) son copias de `src/fonts`, guardadas por el service worker con el resto del shell. Al cambiar un token o una tipografía de la app, actualizar también esas copias y subir la versión de `CACHE` en `sw.js`.
+
 HTTPS es necesario salvo localhost para desarrollo. HTTP por IP local no sirve para probar desde celulares. Referencia: [Service Worker API](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API).
 
 ## Pruebas

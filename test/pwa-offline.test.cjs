@@ -18,10 +18,12 @@ test('PWA operativa: entradas, salidas, persistencia offline, cifrado y reintent
       if (loseReply) { loseReply = false; res.destroy(); return; }
       res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ status: 'SYNCED', operationId: op.id })); return;
     }
-    if (pathname === '/sw.js' || /^\/offline[-.][a-z.\-]+$/.test(pathname) || ['/icon-192.png', '/icon-512.png'].includes(pathname)) {
+    // Incluye las tipografías del shell (offline-archivo.woff2, …): el service worker las guarda
+    // con el resto y su instalación falla si alguna no responde.
+    if (pathname === '/sw.js' || /^\/offline[-.][a-z0-9.\-]+$/.test(pathname) || ['/icon-192.png', '/icon-512.png'].includes(pathname)) {
       const file = path.join(publicDir, pathname);
       if (!fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
-      res.setHeader('Content-Type', pathname.endsWith('.js') ? 'text/javascript' : pathname.endsWith('.html') ? 'text/html' : pathname.endsWith('.css') ? 'text/css' : 'image/png');
+      res.setHeader('Content-Type', pathname.endsWith('.js') ? 'text/javascript' : pathname.endsWith('.html') ? 'text/html' : pathname.endsWith('.css') ? 'text/css' : pathname.endsWith('.woff2') ? 'font/woff2' : 'image/png');
       res.end(fs.readFileSync(file)); return;
     }
     if (pathname === '/api/private') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ secret: 'do-not-cache' })); return; }
