@@ -309,6 +309,20 @@ test('sueldo insuficiente: no descuenta ni paga parcialmente y persiste la alert
   assert.equal(await ds.getRepository(SessionMovement).count({ where: { turnoId: t.id } }), 0);
 });
 
+test('con arqueo el sueldo se compara con lo que deja el operador, no con el fondo configurado', async () => {
+  // Sueldo 25.000 y fondo 15.000. Contó 35.000 y deja 10.000: sobran 25.000, justo el sueldo.
+  // Con la regla anterior (35.000 − fondo 15.000 = 20.000) el sueldo «no alcanzaba».
+  const t = await openCash(user.id, 15000);
+  assert.equal(t.sueldoPrevisto, 25000);
+  await cash(user.id, 20000);
+  await assert.rejects(shifts.close(t.id, user.id, { efectivoContado: 35000, efectivoEsperado: 35000, efectivoParaSiguiente: 10000, sueldoEsperado: 0 }), /sueldo actualizado/);
+  const closed = await shifts.close(t.id, user.id, { efectivoContado: 35000, efectivoEsperado: 35000, efectivoParaSiguiente: 10000, sueldoEsperado: 25000 });
+  assert.equal(closed.sueldoRetirado, 25000);
+  assert.equal(closed.efectivoParaSiguiente, 10000);
+  assert.equal(closed.alertaSueldo, null);
+  assert.equal(await ds.getRepository(SessionMovement).count({ where: { turnoId: t.id, tipo: 'SUELDO' } }), 1);
+});
+
 test('sueldo opcional: si alcanza, el operador puede no retirarlo y el efectivo queda para el retiro', async () => {
   const t = await openCash(user.id, 15000);
   await cash(user.id, 90000);

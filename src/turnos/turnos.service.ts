@@ -293,7 +293,15 @@ export class TurnosService {
       if (turno.estado === 'CERRADO') throw new BadRequestException('Este turno ya está cerrado.');
       const caja = turno.cajaId ? await manager.getRepository(CashRegister).findOneBy({ id: turno.cajaId }) : null;
       const available = dto.efectivoContado ?? await this.cashTotal(turno, manager);
-      const alcanza = salaryWithdrawal(available, caja?.fondoObjetivo ?? 0, turno.sueldoPrevisto);
+      // Con arqueo el operador elige cuánto deja (el fondo es una referencia: puede dejar más, menos
+      // o $0). Dejar menos que el fondo libera efectivo para el sueldo; dejar más no lo saca: se
+      // compara con el menor de los dos. Antes era siempre contra el fondo, y dejando menos que el
+      // fondo el sueldo «no alcanzaba» aunque sobrara efectivo. Sin arqueo (la caja compartida sigue
+      // abierta) se protege el fondo.
+      const conArqueo = dto.efectivoContado !== undefined && dto.efectivoParaSiguiente !== undefined;
+      const fondo = caja?.fondoObjetivo ?? 0;
+      const reserva = conArqueo ? Math.min(dto.efectivoParaSiguiente!, fondo) : fondo;
+      const alcanza = salaryWithdrawal(available, reserva, turno.sueldoPrevisto);
       // Aunque alcance, el operador puede elegir no retirarlo ahora; el efectivo queda en la caja.
       const salary = dto.sinSueldo ? 0 : alcanza;
       if (turno.sueldoPrevisto > 0 && dto.sueldoEsperado !== salary) throw new ConflictException('Revisá el retiro de sueldo actualizado antes de confirmar.');
@@ -301,7 +309,9 @@ export class TurnosService {
       turno.alertaSueldo = turno.sueldoPrevisto > 0 && !salary
         ? alcanza
           ? `No se retiró el sueldo de $${turno.sueldoPrevisto}: el operador eligió no retirarlo en este cierre.`
-          : `No se retiró el sueldo de $${turno.sueldoPrevisto}: el efectivo no alcanza para preservar el fondo de $${caja?.fondoObjetivo ?? 0}.`
+          : conArqueo
+            ? `No se retiró el sueldo de $${turno.sueldoPrevisto}: el efectivo no alcanza después de dejar $${reserva} en la caja.`
+            : `No se retiró el sueldo de $${turno.sueldoPrevisto}: el efectivo no alcanza para preservar el fondo de $${caja?.fondoObjetivo ?? 0}.`
         : null;
       turno.vehiculosFin = await occupancyAt(manager, operationNow());
       turno.salidasRegistradas = await exitCount(manager, turno.id);
