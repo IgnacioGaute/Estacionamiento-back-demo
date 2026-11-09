@@ -496,6 +496,21 @@ test('corrección de varios conserva el gasto neto y no fabrica ingresos', async
   await closeCash(user.id, 14600);
 });
 
+// Cualquier diferencia pide motivo (sin tolerancia), con código para el front; «No sé el motivo»
+// alcanza y la diferencia queda registrada igual.
+test('cierre con diferencia: pide motivo con código y acepta «No sé el motivo»', async () => {
+  const t = await openCash(user.id, 15000);
+  await cash(user.id, 1000);
+  assert.equal((await context()).efectivoDisponible, 16000);
+  const sinMotivo = { cerrarCaja: true, efectivoEsperado: 16000, efectivoContado: 15500, efectivoParaSiguiente: 15000 };
+  const pideMotivo = (e) => e.getResponse?.().code === 'MOTIVO_DIFERENCIA_REQUERIDO';
+  await assert.rejects(shifts.close(t.id, user.id, sinMotivo), pideMotivo);
+  await assert.rejects(shifts.close(t.id, user.id, { ...sinMotivo, observaciones: '   ' }), pideMotivo);
+  const closed = await shifts.close(t.id, user.id, { ...sinMotivo, observaciones: 'No sé el motivo' });
+  assert.equal(closed.diferencia, 500);
+  assert.equal(closed.observaciones, 'No sé el motivo');
+});
+
 test('acreditación tardía: conserva el turno que inició el pago aunque haya otro abierto', async () => {
   const previous = await openCash(user.id, 15000);
   // Una fecha dentro de este turno, sin superponer artificialmente los anteriores.

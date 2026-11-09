@@ -332,7 +332,15 @@ export class TurnosService {
       if (paraSiguiente + salary > dto.efectivoContado) throw new BadRequestException('No podés entregar más efectivo del que contaste.');
       const teorico = await this.cashTotal(turno, manager);
       if (turno.cashVersion === 2 && dto.efectivoEsperado !== teorico) throw new ConflictException('El efectivo esperado cambió. Actualizá el arqueo antes de confirmar.');
-      if (teorico !== dto.efectivoContado && !dto.observaciones?.trim()) throw new BadRequestException('Explicá la diferencia entre el efectivo esperado y el contado.');
+      // Cualquier diferencia pide motivo, sin tolerancia. El front ofrece motivos rápidos, incluido
+      // «No sé el motivo», para que el operador no quede trabado; el código le permite al front
+      // reconocer el caso.
+      if (teorico !== dto.efectivoContado && !dto.observaciones?.trim()) {
+        throw new BadRequestException({
+          code: 'MOTIVO_DIFERENCIA_REQUERIDO',
+          message: 'Escribí el motivo de la diferencia entre lo contado y lo esperado.',
+        });
+      }
       Object.assign(turno, { usuarioCierre: { id: usuarioId }, fechaCierre: operationNow(), efectivoContado: dto.efectivoContado,
         efectivoTeorico: teorico, diferencia: teorico - dto.efectivoContado, efectivoParaSiguiente: paraSiguiente,
         efectivoRetirado: dto.efectivoContado - paraSiguiente, observaciones: dto.observaciones ?? null, estado: 'CERRADO',
