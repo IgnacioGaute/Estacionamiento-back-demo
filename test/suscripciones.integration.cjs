@@ -47,6 +47,8 @@ before(async () => {
   const runner = ds.createQueryRunner();
   try {
     await new (load('database/migrations/1790000001000-tenant-isolation', 'TenantIsolation1790000001000'))().up(runner);
+    // Simula una base existente: la nueva columna debe aparecer al migrar, con el valor previo.
+    await runner.query('ALTER TABLE suscripciones DROP COLUMN "primerMesCompleto"');
     // Dos arranques simultáneos pueden correrlas dos veces: no tienen que romper ni duplicar.
     for (let i = 0; i < 2; i++) {
       await new (load('database/migrations/1790000021000-suscripciones', 'Suscripciones1790000021000'))().up(runner);
@@ -55,6 +57,7 @@ before(async () => {
       await new (load('database/migrations/1790000024000-debito-automatico', 'DebitoAutomatico1790000024000'))().up(runner);
       await new (load('database/migrations/1790000025000-periodos-de-pago', 'PeriodosDePago1790000025000'))().up(runner);
       await new (load('database/migrations/1790000045000-qr-plan', 'QrPlan1790000045000'))().up(runner);
+      await new (load('database/migrations/1790000049000-primer-mes-completo', 'PrimerMesCompleto1790000049000'))().up(runner);
     }
   } finally {
     await runner.release();
@@ -64,6 +67,7 @@ before(async () => {
   superUser = await ds.getRepository(User).save({ username: 'root', email: 'root@example.test', firstName: 'Root', lastName: 'Test', role: 'SUPER_ADMIN' });
   const cuenta = await servicio.resumen(vieja.id);
   assert.equal(cuenta.estado, 'SIN_ACTIVAR');
+  assert.equal(cuenta.primerMesCompleto, false);
   assert.equal(cuenta.alta, hoy, 'el alta sale del día en que se creó la empresa');
 });
 
@@ -129,6 +133,60 @@ test('reglas: alta y prueba, factura el día del vencimiento, más de 5 días de
   assert.deepEqual(reglas.periodoDelPago({ ...base, pagadoHasta: '2026-04-10' }, 1, '2026-04-13'), { desde: '2026-04-11', hasta: '2026-05-10' });
   // Estuvo cortado: el período arranca el día del pago.
   assert.deepEqual(reglas.periodoDelPago({ ...base, empresaEstado: 'SUSPENDIDA', motivoSuspension: 'FALTA_DE_PAGO', pagadoHasta: '2026-04-10' }, 3, '2026-05-20'), { desde: '2026-05-20', hasta: '2026-08-19' });
+});
+
+test('primer mes: permite cobrar la mensualidad entera por adelantado y después sigue el trimestre', async () => {
+  const { empresa, playas } = await nuevaEmpresa('Primer mes completo');
+  const chica = await plan('CHICA');
+  await servicio.asignarPlan(empresa.id, playas[0].id, { planId: chica.id, precio: 70000 }, superUser.id);
+  await servicio.editar(empresa.id, { periodo: 'TRIMESTRAL', primerMesCompleto: true }, superUser.id);
+  const cuenta = await servicio.resumen(empresa.id);
+  assert.equal(cuenta.primerMesCompleto, true);
+  assert.equal(cuenta.facturaPendiente, null, 'en prueba todavía no se factura');
+  assert.equal(cuenta.proximaFactura.importe, 63000, 'un mes con el descuento del trimestre');
+  assert.equal(cuenta.proximaFactura.proporcional, false);
+  assert.equal(cuenta.proximaFactura.hasta, reglas.finDeMes(cuenta.proximaFactura.desde));
+  const detalle = await servicio.registrarPago(empresa.id, { meses: 3, importe: 63000, medio: 'TRANSFERENCIA', fecha: hoy }, superUser.id);
+  const pagada = detalle.facturas.find(f => f.estado === 'PAGADA');
+  assert.equal(pagada.meses, 1);
+  assert.equal(pagada.hasta, cuenta.proximaFactura.hasta);
+  assert.equal(detalle.cuenta.proximaFactura.importe, 189000);
+  assert.equal(detalle.cuenta.proximaFactura.desde, reglas.sumarDias(pagada.hasta, 1));
+  await assert.rejects(servicio.editar(empresa.id, { primerMesCompleto: false }, superUser.id), e => e.getResponse().code === 'PRIMER_MES_YA_PAGADO');
+  assert.deepEqual((await servicio.detalle(empresa.id)).facturas.find(f => f.id === pagada.id), pagada, 'el pago conserva su historia');
+});
+
+test('primer mes: recalcula la pendiente, audita y cobra el mismo importe por link y QR', async () => {
+  const { empresa, playas } = await nuevaEmpresa('Elegir proporcional');
+  const chica = await plan('CHICA');
+  await servicio.asignarPlan(empresa.id, playas[0].id, { planId: chica.id, precio: 70000 }, superUser.id);
+  await fijar(empresa.id, { alta: dia(-7), pruebaHasta: dia(-1) });
+  await servicio.revisarVencimientos();
+  const antes = await servicio.resumen(empresa.id);
+  const completo = await servicio.editar(empresa.id, { primerMesCompleto: true }, superUser.id);
+  assert.equal(completo.cuenta.facturaPendiente.id, antes.facturaPendiente.id);
+  assert.equal(completo.cuenta.facturaPendiente.importe, 70000);
+  assert.equal(completo.cuenta.facturaPendiente.desde, antes.facturaPendiente.desde);
+  assert.equal(completo.cuenta.facturaPendiente.hasta, antes.facturaPendiente.hasta);
+  assert.equal(completo.cuenta.suspendeEl, antes.suspendeEl);
+  assert.ok(completo.historial.some(h => h.accion === 'SUSCRIPCION_EDITADA' && h.detalle.primerMesCompleto === true && h.detalle.primerMesCompletoAnterior === false));
+  const pedidos = [];
+  const mp = {
+    configurado: () => true,
+    cajaQr: async () => ({ direccion: 'Test' }),
+    crearPago: async (p) => { pedidos.push(p); return { url: 'https://mp.test/pagar' }; },
+    crearOrdenQr: async (p) => { pedidos.push(p); return { ordenId: 'primer-mes-qr', qrData: 'qr-test' }; },
+  };
+  const cobros = new CobrosPlataformaService(servicio, mp);
+  await cobros.pagar(empresa.id);
+  await cobros.pagarConQr(empresa.id);
+  assert.deepEqual(pedidos.map(p => p.importe), [70000, 70000]);
+  const proporcional = await servicio.editar(empresa.id, { primerMesCompleto: false }, superUser.id);
+  assert.equal(proporcional.cuenta.facturaPendiente.importe, antes.facturaPendiente.importe);
+  const pago = { id: 'primer-mes-mp', monto: antes.facturaPendiente.importe, fecha: hoy, debito: false };
+  assert.equal(await servicio.acreditarPagoMercadoPago(empresa.id, pago), true);
+  assert.equal(await servicio.acreditarPagoMercadoPago(empresa.id, pago), false, 'el pago sigue siendo idempotente');
+  assert.equal((await servicio.resumen(empresa.id)).pagadoHasta, antes.facturaPendiente.hasta);
 });
 
 test('la migración carga los seis planes con los rangos de la landing, una sola vez', async () => {

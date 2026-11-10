@@ -49,6 +49,10 @@ export class Suscripcion {
   @Column('date', { nullable: true })
   pagadoHasta: string | null;
 
+  // Solo cambia el importe del primer mes; el tramo sigue terminando a fin de mes.
+  @Column('boolean', { default: false })
+  primerMesCompleto: boolean;
+
   // Días de acceso regalados a una empresa vencida, sin mover su fecha de vencimiento: la
   // próxima factura sigue arrancando donde terminó lo pagado.
   @Column('date', { nullable: true })

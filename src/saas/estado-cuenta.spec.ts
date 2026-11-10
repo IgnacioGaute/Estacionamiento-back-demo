@@ -144,6 +144,21 @@ describe('Estado de la cuenta con la plataforma', () => {
     expect(importeDeFactura(proximoPeriodo({ ...prueba, pagadoHasta: '2026-10-31' }, 1)!, 31000, 1, 0)).toBe(31000);
   });
 
+  test.each([
+    ['2026-10-22', '2026-10-23', '2026-10-31', '2026-11-01'],
+    ['2026-10-31', '2026-11-01', '2026-11-30', '2026-12-01'],
+    ['2028-02-14', '2028-02-15', '2028-02-29', '2028-03-01'],
+  ])('mensualidad entera al terminar la prueba el %s, sin extender el tramo', (pruebaHasta, desde, hasta, siguienteDesde) => {
+    const datos = cuenta({ alta: '2026-10-13', pruebaHasta, primerMesCompleto: true });
+    const primero = proximoPeriodo(datos, 3)!;
+    expect(primero).toEqual({ desde, hasta, proporcional: false });
+    expect(importeDeFactura(primero, 31000, 1, 10)).toBe(27900);
+    expect(periodoDelPago(datos, 3, '2028-04-01')).toEqual({ desde, hasta });
+    const siguiente = proximoPeriodo({ ...datos, pagadoHasta: hasta }, 3)!;
+    expect(siguiente.desde).toBe(siguienteDesde);
+    expect(importeDeFactura(siguiente, 31000, 3, 10)).toBe(83700);
+  });
+
   test('una prueba que cruza de mes cobra lo que queda del mes en que termina', () => {
     const prueba = cuenta({ alta: '2026-10-25', pruebaHasta: finDePrueba('2026-10-25', 10) });
     const primero = proximoPeriodo(prueba, 1)!;

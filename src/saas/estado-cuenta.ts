@@ -12,7 +12,7 @@ dayjs.extend(timezone);
 // se pueden probar solas.
 //
 // El ciclo: alta → días de prueba gratis (opcionales) → al terminar la prueba se emite el primer
-// pago, que vence ese mismo día y cubre lo que queda del mes, en proporción → desde ahí cada
+// pago, que vence ese mismo día y cubre hasta fin de mes (proporcional o mensualidad entera) → cada
 // período arranca el día 1 → con más de DIAS_DE_GRACIA de atraso se suspende.
 //
 // Todas las fechas son días de Argentina ("YYYY-MM-DD") y se comparan como texto.
@@ -77,6 +77,7 @@ export type DatosCuenta = {
   bonificada: boolean;
   pruebaHasta: string | null;
   pagadoHasta: string | null;
+  primerMesCompleto?: boolean;
   prorrogaHasta: string | null;
   motivoSuspension: MotivoSuspension | null;
   // Tiene el débito automático de MercadoPago autorizado.
@@ -197,7 +198,7 @@ export const primerPeriodo = (alta: string, pruebaHasta: string | null) => {
 export type PeriodoAFacturar = {
   desde: string;
   hasta: string;
-  // El primer pago, en proporción a sus días; los demás son períodos enteros.
+  // El primer pago es proporcional salvo que el super admin cobre la mensualidad entera.
   proporcional: boolean;
 };
 
@@ -206,13 +207,16 @@ export type PeriodoAFacturar = {
  * Null si la cuenta todavía no arrancó (sin alta).
  */
 export function proximoPeriodo(
-  d: Pick<DatosCuenta, 'alta' | 'pruebaHasta' | 'pagadoHasta'>,
+  d: Pick<DatosCuenta, 'alta' | 'pruebaHasta' | 'pagadoHasta' | 'primerMesCompleto'>,
   meses = 1,
 ): PeriodoAFacturar | null {
   if (d.pagadoHasta)
     return { ...periodoSiguiente(d.pagadoHasta, meses), proporcional: false };
   if (!d.pruebaHasta) return null;
-  return { ...primerPeriodo(d.alta, d.pruebaHasta), proporcional: true };
+  return {
+    ...primerPeriodo(d.alta, d.pruebaHasta),
+    proporcional: !d.primerMesCompleto,
+  };
 }
 
 /** Lo que cuesta un período a facturar: el proporcional del primero o el período entero. */

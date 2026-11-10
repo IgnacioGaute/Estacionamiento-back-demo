@@ -68,7 +68,7 @@ export class CobrosPlataformaService {
 
   /**
    * Lo que hay para pagar ahora: lo que debe o, si está al día, su próxima factura (en prueba, el
-   * primer pago: lo que queda del mes cuando termina la prueba, proporcional).
+   * primer pago hasta fin de mes, proporcional o mensualidad entera según lo acordado).
    */
   private aPagar(cuenta: ResumenCuenta) {
     const pendiente = cuenta.facturaPendiente;
@@ -267,8 +267,8 @@ export class CobrosPlataformaService {
         message:
           'Primero pagá lo pendiente; después activás el débito para los meses que siguen.',
       });
-    // El débito cobra siempre el mismo importe, el día 1. El primer pago es proporcional (desde
-    // el alta hasta fin de mes): se paga aparte y recién después arranca el débito.
+    // El débito cobra siempre el mismo importe, el día 1. El primer pago hasta fin de mes se paga
+    // aparte (proporcional o mensualidad entera) y recién después arranca el débito.
     if (!cuenta.pagadoHasta)
       throw new BadRequestException({
         code: 'PRIMER_PAGO_PENDIENTE',

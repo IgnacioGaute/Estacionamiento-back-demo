@@ -6,7 +6,10 @@ What the platform bills the empresa for using the system — not what a playa bi
 `receipts`/`cuentas`). Lifecycle: **alta** (editable `suscripciones.alta`) → optional free-trial days (no plan
 needed; `diasPrueba` on empresa creation or `POST …/suscripcion/alta`) → when the trial ends the **first
 payment** is issued and due that same day: the rest of that month, prorated per day
-(`primerPeriodo`/`importeProporcional`/`proximoPeriodo` in `estado-cuenta.ts`; trial days are not charged) →
+(`primerPeriodo`/`importeProporcional`/`proximoPeriodo` in `estado-cuenta.ts`). Before the first payment,
+the super admin can set `suscripciones.primerMesCompleto` to bill one full monthly price instead,
+with the account's period discount and the same dates through month end. The default stays prorated;
+pending invoices and new payment links/QR follow the choice, which is audited and locked after payment →
 from then on each period starts on the 1st → days of delay
 count from the due date → more than 5 days late, the daily `@Cron` (`SuscripcionesScheduler`, outside any tenant
 scope, advisory-locked, idempotent) suspends it (`FALTA_DE_PAGO`); 60 days suspended → `BAJA`. Every payment

@@ -24,10 +24,19 @@ Alta ──(días de prueba gratis, opcionales)──▶ Fin de la prueba ──
   mes, es el mes siguiente entero. Sin prueba, desde el alta. Es un solo tramo (`meses = 1`) aunque
   pague trimestral, y vence el día en que empieza. Llegue cuando llegue (aunque la cuenta esté
   cortada), cubre lo mismo. `proximaFactura` en el resumen lo anticipa («Si seguís, tu primer pago»).
-  Se eligió no cobrar los días de prueba: la prueba gratis convierte mejor y lo que se resigna es
-  poco y por única vez.
+  Este es el cálculo por defecto; el super admin también puede acordar cobrar la mensualidad
+  entera para ese primer mes, como se explica abajo.
 - **Después, el día 1**: lo pagado termina a fin de mes y `sumarMeses` conserva el fin de mes, así
   que cada período siguiente arranca el 1. Las cuentas que ya pagaban por aniversario lo conservan.
+- **Mes completo o proporcional**: antes del primer pago, el super admin elige en la ficha de
+  la empresa → Plan → Ajustes de la cuenta → «Cobro del primer mes». Por defecto sigue siendo
+  proporcional; con `primerMesCompleto = true` se cobra una mensualidad entera, con el descuento
+  del período contratado. El tramo cubierto y el vencimiento no cambian: desde el fin de la prueba
+  hasta fin de ese mes, incluso si paga trimestral o anual. Por ejemplo, del 23 al 31 de octubre
+  con un mensual de $31.000: proporcional $9.000 o mes completo $31.000. La elección actualiza la
+  factura pendiente, la vista de Mi plan y los nuevos links/QR de pago, y queda en el historial.
+  Después de pagar no se puede cambiar (`PRIMER_MES_YA_PAGADO`); no se reescriben pagos anteriores.
+  API: `PATCH /tenancy/empresas/:id/suscripcion` con `{ primerMesCompleto: boolean }`.
 - **Factura**: se emite el día en que vence (al terminar la prueba o lo pagado). Mientras no se
   pague sigue al plan; su fecha no se corre aunque la cuenta se suspenda (dice desde cuándo debe).
 - **Atraso y suspensión**: desde el vencimiento se cuentan los días de atraso. Con 5 sigue

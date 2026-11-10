@@ -52,6 +52,7 @@ export const DESCUENTO_PLAYA_ADICIONAL = 0.3;
 const ALTA = `COALESCE(s.alta, ((e."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE '${ZONA}')::date)::text AS alta`;
 const CAMPOS_CUENTA = `e.estado AS "empresaEstado", ${ALTA},
   s."pruebaHasta"::text AS "pruebaHasta", s."pagadoHasta"::text AS "pagadoHasta",
+  COALESCE(s."primerMesCompleto", false) AS "primerMesCompleto",
   s."prorrogaHasta"::text AS "prorrogaHasta", COALESCE(s.bonificada, false) AS bonificada,
   s."motivoSuspension", s."suspendidaEl", s.notas,
   COALESCE(s."debitoEstado" = 'authorized', false) AS "conDebito",
@@ -91,7 +92,7 @@ const importeDeCuenta = (
 const proximaFactura = (
   cuenta: Pick<
     FilaCuenta,
-    'alta' | 'pruebaHasta' | 'pagadoHasta' | 'periodoMeses' | 'periodoDescuento'
+    'alta' | 'pruebaHasta' | 'pagadoHasta' | 'primerMesCompleto' | 'periodoMeses' | 'periodoDescuento'
   >,
   mensual: number,
 ) => {
@@ -103,7 +104,7 @@ const proximaFactura = (
     importe: importeDeFactura(
       periodo,
       mensual,
-      meses,
+      !cuenta.pagadoHasta && cuenta.pruebaHasta ? 1 : meses,
       Number(cuenta.periodoDescuento ?? 0),
     ),
   };
@@ -125,6 +126,7 @@ type LineaPlan = {
 export type ResumenCuenta = SituacionCuenta & {
   alta: string;
   pruebaHasta: string | null;
+  primerMesCompleto: boolean;
   pagadoHasta: string | null;
   prorrogaHasta: string | null;
   bonificada: boolean;
@@ -136,8 +138,8 @@ export type ResumenCuenta = SituacionCuenta & {
   periodo: { codigo: string; nombre: string; meses: number; descuento: number };
   // Lo que paga cada período: lo mensual por los meses, con el descuento.
   importePeriodo: number;
-  // La próxima factura, emitida o no: en prueba es el primer pago (lo que queda del mes al terminar,
-  // proporcional), lo que la empresa ve como «si seguís, tu primer pago».
+  // La próxima factura, emitida o no: en prueba es el primer pago hasta fin de mes, proporcional
+  // o mensualidad entera, lo que la empresa ve como «si seguís, tu primer pago».
   proximaFactura: {
     desde: string;
     hasta: string;
@@ -238,6 +240,7 @@ export class SuscripcionesService {
         ...situacionDeCuenta(fila, hoy),
         alta: fila.alta,
         pruebaHasta: fila.pruebaHasta,
+        primerMesCompleto: !!fila.primerMesCompleto,
         pagadoHasta: fila.pagadoHasta,
         prorrogaHasta: fila.prorrogaHasta,
         bonificada: !!fila.bonificada,
@@ -865,6 +868,19 @@ export class SuscripcionesService {
     await this.enCuenta(empresaId, async (m, cuenta) => {
       const cambios: Record<string, unknown> = {};
       const set: Partial<Suscripcion> = {};
+      if (
+        dto.primerMesCompleto !== undefined &&
+        dto.primerMesCompleto !== cuenta.primerMesCompleto
+      ) {
+        if (cuenta.pagadoHasta)
+          throw new BadRequestException({
+            code: 'PRIMER_MES_YA_PAGADO',
+            message: 'El primer mes ya está pago: no se puede cambiar cómo se cobró.',
+          });
+        set.primerMesCompleto = dto.primerMesCompleto;
+        cambios.primerMesCompleto = dto.primerMesCompleto;
+        cambios.primerMesCompletoAnterior = cuenta.primerMesCompleto;
+      }
       if (dto.alta !== undefined && dto.alta !== cuenta.alta) {
         if (diasEntre(hoyAR(), dto.alta) > 60)
           throw new BadRequestException(
@@ -1202,8 +1218,8 @@ export class SuscripcionesService {
   ) {
     const empresaId = cuenta.empresaId;
     const periodo = periodoDelPago(cuenta, dto.meses, hoyAR());
-    // El primer pago de una cuenta con prueba es un solo tramo proporcional (lo que queda del mes
-    // al terminar la prueba), aunque pague trimestral: los períodos enteros arrancan el día 1.
+    // El primer pago es un solo tramo hasta fin de mes, con importe proporcional o mensualidad
+    // entera, aunque pague trimestral: los períodos enteros arrancan el día 1.
     const primerPago = !cuenta.pagadoHasta && !!cuenta.pruebaHasta;
     const meses = primerPago ? 1 : dto.meses;
     const repo = m.getRepository(FacturaSaas);
@@ -1524,10 +1540,13 @@ export class SuscripcionesService {
     });
     const detalle = await this.lineasDeFactura(m, cuenta.empresaId);
     // Un período entero por factura (tres meses con su descuento si paga trimestral), salvo el
-    // primer pago: lo que queda del mes al terminar la prueba, en proporción y como un solo tramo.
+    // primer pago: hasta fin de mes, proporcional o mensualidad entera, como un solo tramo.
     const descuento = Number(cuenta.periodoDescuento ?? 0);
     const periodo = proximoPeriodo(cuenta, Number(cuenta.periodoMeses ?? 1));
-    const meses = periodo?.proporcional ? 1 : Number(cuenta.periodoMeses ?? 1);
+    const meses =
+      !cuenta.pagadoHasta && cuenta.pruebaHasta
+        ? 1
+        : Number(cuenta.periodoMeses ?? 1);
     const importe = periodo
       ? importeDeFactura(
           periodo,

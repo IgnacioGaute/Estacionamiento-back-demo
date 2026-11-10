@@ -58,6 +58,10 @@ export class EditarSuscripcionDto {
   @IsBoolean()
   bonificada?: boolean;
 
+  @ValidateIf((_, v) => v !== undefined)
+  @IsBoolean()
+  primerMesCompleto?: boolean;
+
   // Cada cuánto paga: el código de un período del catálogo (MENSUAL, TRIMESTRAL, ANUAL).
   @IsOptional()
   @Matches(/^[A-Z_]{3,20}$/, { message: 'Elegí un período de pago.' })
