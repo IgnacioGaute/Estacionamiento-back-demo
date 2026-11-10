@@ -165,6 +165,7 @@ export class TenancyService {
           email: u.email,
           username: u.username,
           role: u.role,
+          lastAccessAt: u.lastAccessAt ? new Date(u.lastAccessAt).toISOString() : null,
           playaIds: asignaciones
             .filter((a) => a.usuarioId === u.id)
             .map((a) => a.playaId),
@@ -173,9 +174,12 @@ export class TenancyService {
   }
 
   async createEmpresa(dto: CreateEmpresaDto) {
+    // La prueba gratis la da el controlador con SuscripcionesService; el resto son datos de la empresa.
+    const { diasPrueba: _diasPrueba, nombre, estado, ...datos } = dto;
     const empresa = this.empresaRepository.create({
-      nombre: dto.nombre.trim(),
-      estado: dto.estado ?? 'ACTIVA',
+      ...datos,
+      nombre: nombre.trim(),
+      estado: estado ?? 'ACTIVA',
     });
     return this.empresaRepository.save(empresa);
   }
@@ -229,6 +233,7 @@ export class TenancyService {
       empresaId,
       nombre: dto.nombre.trim(),
       direccion: dto.direccion?.trim() || null,
+      capacidad: dto.capacidad ?? null,
     });
     return this.dataSource.transaction(async (manager) => {
       const saved = await manager.getRepository(Playa).save(playa);

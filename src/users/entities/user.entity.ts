@@ -58,6 +58,11 @@ export class User {
   @Column('enum', { enum: USER_ROLES, default: USER_ROLES[0] })
   role: UserRole;
 
+  // La última vez que usó el sistema con su sesión, con una precisión de minutos: JwtStrategy lo
+  // escribe como mucho cada 10. El login solo no alcanza: una sesión dura semanas en la tablet.
+  @Column('timestamptz', { nullable: true })
+  lastAccessAt: Date | null;
+
   @OneToMany(() => Note, (notes) => notes.user, { cascade: true })
   notes: Note[]
 

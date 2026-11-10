@@ -1562,3 +1562,23 @@ test('el rol operativo guarda DNI y modelo de la estadía, y otra empresa no los
   });
   await scoped(b, async () => assert.equal(await ds.getRepository(Registration).findOneBy({ id }), null));
 });
+
+test('datos fiscales, capacidad y último acceso: el rol operativo los lee de su empresa, no los de otra, y no los cambia', async () => {
+  await ds.getRepository(Empresa).update(a.empresaId, { cuit: '20123456786', contactoTelefono: '+54 9 11 5555-0000' });
+  await ds.getRepository(Empresa).update(b.empresaId, { cuit: '20000000060' });
+  await ds.getRepository(Playa).update(a.playaId, { capacidad: 40 });
+  await scoped(a, async () => {
+    const [propia] = await ds.query('SELECT cuit, "contactoTelefono" FROM empresas WHERE id = $1', [a.empresaId]);
+    assert.deepEqual(propia, { cuit: '20123456786', contactoTelefono: '+54 9 11 5555-0000' });
+    assert.deepEqual(await ds.query('SELECT cuit FROM empresas WHERE id = $1', [b.empresaId]), []);
+    const [playa] = await ds.query('SELECT capacidad FROM playas WHERE id = $1', [a.playaId]);
+    assert.equal(playa.capacidad, 40);
+    await assert.rejects(
+      ds.query('UPDATE empresas SET cuit = $2 WHERE id = $1', [a.empresaId, '20000000060']),
+      /permission denied/,
+    );
+    await assert.rejects(ds.query('UPDATE playas SET capacidad = 1 WHERE id = $1', [a.playaId]), /permission denied/);
+  });
+  const [otra] = await ds.query('SELECT cuit FROM empresas WHERE id = $1', [b.empresaId]);
+  assert.equal(otra.cuit, '20000000060');
+});

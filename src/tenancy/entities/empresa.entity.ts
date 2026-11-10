@@ -14,6 +14,10 @@ import { Playa } from './playa.entity';
 export const EMPRESA_ESTADO = ['ACTIVA', 'SUSPENDIDA', 'BAJA'] as const;
 export type EmpresaEstado = (typeof EMPRESA_ESTADO)[number];
 
+// Condición frente al IVA, como la pide una factura argentina.
+export const CONDICIONES_IVA = ['RESPONSABLE_INSCRIPTO', 'MONOTRIBUTO', 'EXENTO', 'CONSUMIDOR_FINAL'] as const;
+export type CondicionIva = (typeof CONDICIONES_IVA)[number];
+
 // La empresa es el cliente que paga el plan y el límite de aislamiento: nada de una empresa
 // tiene que ser visible desde otra.
 @Entity({ name: 'empresas' })
@@ -35,6 +39,34 @@ export class Empresa {
 
   @Column('varchar', { length: 20, default: 'ACTIVA' })
   estado: EmpresaEstado;
+
+  // Datos para cobrarle y contactarla (migración 1790000048000). Opcionales: las empresas de
+  // antes no los tienen y la ficha los muestra «sin cargar».
+  @Column('varchar', { length: 255, nullable: true })
+  razonSocial: string | null;
+
+  // Solo los 11 números; se muestra con guiones.
+  @Column('varchar', { length: 11, nullable: true })
+  cuit: string | null;
+
+  @Column('varchar', { length: 30, nullable: true })
+  condicionIva: CondicionIva | null;
+
+  @Column('varchar', { length: 255, nullable: true })
+  contactoNombre: string | null;
+
+  @Column('varchar', { length: 255, nullable: true })
+  contactoEmail: string | null;
+
+  // Se usa para escribirle por WhatsApp.
+  @Column('varchar', { length: 30, nullable: true })
+  contactoTelefono: string | null;
+
+  @Column('varchar', { length: 120, nullable: true })
+  ciudad: string | null;
+
+  @Column('varchar', { length: 60, nullable: true })
+  provincia: string | null;
 
   @OneToMany(() => Playa, (playa) => playa.empresa)
   playas: Playa[];

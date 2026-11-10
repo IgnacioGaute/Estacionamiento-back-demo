@@ -28,6 +28,17 @@ backend requiere elegir explícitamente una playa mediante `X-Playa-Id`.
   `EMPRESA_ACTIVA`, y la Actividad de la ficha lo muestra.
 - Dar de baja a un usuario también pide confirmación.
 
+## Datos de cada empresa, capacidad y último acceso
+
+- Empresa (migración `DatosEmpresa1790000048000`): razón social, CUIT (solo los 11 números, con
+  el dígito verificador validado en `src/tenancy/cuit.ts`), condición frente al IVA, persona de
+  contacto con email y WhatsApp, ciudad y provincia. Todo opcional; vacío o null lo borra. Se
+  cargan en el alta o en «Editar datos» y la ficha los muestra en «Contacto y facturación».
+- Playa: `capacidad` (lugares, 1 a 100.000, opcional). La ficha muestra adentro/capacidad.
+- Usuario: `lastAccessAt`, que escribe `JwtStrategy` como mucho cada 10 minutos con SQL directo
+  (no toca `updatedAt`). No hay dato anterior a la migración.
+- El rol operativo los lee de su propia empresa (GRANT SELECT de tabla) y no los modifica.
+
 ## Ventana de las métricas de la plataforma
 
 `GET /tenancy/metrics` y `GET /tenancy/metrics/detalle` cuentan «N días» como hoy y los N − 1

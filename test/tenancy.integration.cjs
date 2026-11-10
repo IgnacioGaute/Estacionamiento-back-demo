@@ -271,3 +271,86 @@ test('alta de empresa: la prueba gratis es opcional', async () => {
   await call('post', `empresas/${sin.id}/suscripcion/dias-gracia`, adminUser).send({ dias: 5, motivo: 'intento' }).expect(403);
   await call('patch', `empresas/${sin.id}/suscripcion`).send({ alta: 'ayer' }).expect(400);
 });
+
+test('datos de la empresa: CUIT con verificador, contacto y capacidad; vacío o null los borra', async () => {
+  const e = (await call('post', 'empresas').send({ nombre: 'Con datos', cuit: '20-12345678-6', condicionIva: 'MONOTRIBUTO', contactoTelefono: ' +54 9 11 5555-0000 ' }).expect(201)).body;
+  assert.equal(e.cuit, '20123456786');
+  assert.equal(e.contactoTelefono, '+54 9 11 5555-0000');
+  await call('patch', `empresas/${e.id}`).send({ cuit: '20-12345678-7' }).expect(400);
+  await call('patch', `empresas/${e.id}`).send({ condicionIva: 'OTRA' }).expect(400);
+  await call('patch', `empresas/${e.id}`).send({ contactoEmail: 'sin-arroba' }).expect(400);
+  await call('patch', `empresas/${e.id}`).send({ contactoTelefono: 'llamar a Juan' }).expect(400);
+  const editada = (await call('patch', `empresas/${e.id}`).send({ razonSocial: 'Con Datos SRL', contactoEmail: 'pagos@condatos.test', ciudad: 'Rosario', provincia: 'Santa Fe', cuit: '' }).expect(200)).body;
+  assert.equal(editada.razonSocial, 'Con Datos SRL');
+  assert.equal(editada.cuit, null);
+  const p = (await call('post', `empresas/${e.id}/playas`).send({ nombre: 'Centro', capacidad: 40 }).expect(201)).body;
+  assert.equal(p.capacidad, 40);
+  await call('patch', `playas/${p.id}`).send({ capacidad: 0 }).expect(400);
+  await call('patch', `playas/${p.id}`).send({ capacidad: 2.5 }).expect(400);
+  assert.equal((await call('patch', `playas/${p.id}`).send({ capacidad: null }).expect(200)).body.capacidad, null);
+  const listada = (await call('get', 'empresas').expect(200)).body.data.find((x) => x.id === e.id);
+  assert.equal(listada.contactoEmail, 'pagos@condatos.test');
+  assert.equal(listada.condicionIva, 'MONOTRIBUTO');
+  assert.equal(listada.playas[0].capacidad, null);
+});
+
+test('último acceso: lo anota cada pedido autenticado, como mucho cada 10 minutos y sin tocar updatedAt', async () => {
+  const repo = ds.getRepository(User);
+  const leer = async () => (await ds.query('SELECT "lastAccessAt", "updatedAt" FROM users WHERE id = $1', [superUser.id]))[0];
+  const esperar = async (condicion) => {
+    for (let i = 0; i < 40; i++) {
+      const fila = await leer();
+      if (condicion(fila)) return fila;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return leer();
+  };
+  await ds.query('UPDATE users SET "lastAccessAt" = NULL WHERE id = $1', [superUser.id]);
+  const antes = await leer();
+  await call('get', 'empresas').expect(200);
+  const primero = await esperar((f) => f.lastAccessAt !== null);
+  assert.ok(primero.lastAccessAt, 'anota el primer acceso');
+  assert.equal(primero.updatedAt.getTime(), antes.updatedAt.getTime());
+  await call('get', 'empresas').expect(200);
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal((await leer()).lastAccessAt.getTime(), primero.lastAccessAt.getTime(), 'antes de 10 minutos no reescribe');
+  await ds.query(`UPDATE users SET "lastAccessAt" = now() - interval '20 minutes' WHERE id = $1`, [superUser.id]);
+  const viejo = await leer();
+  await call('get', 'empresas').expect(200);
+  const nuevo = await esperar((f) => f.lastAccessAt.getTime() > viejo.lastAccessAt.getTime());
+  assert.ok(nuevo.lastAccessAt.getTime() > viejo.lastAccessAt.getTime(), 'pasados 10 minutos lo actualiza');
+  assert.ok(await repo.findOneBy({ id: superUser.id }));
+});
+
+test('migración de datos de empresa: agrega las columnas con sus controles, repetirla no rompe y conserva lo cargado', async () => {
+  const Migration = load('database/migrations/1790000048000-datos-empresa', 'DatosEmpresa1790000048000');
+  const runner = ds.createQueryRunner();
+  await runner.connect();
+  await runner.startTransaction();
+  try {
+    const migration = new Migration();
+    await migration.down(runner);
+    const [e] = await runner.query(`INSERT INTO empresas (nombre) VALUES ('Antes de la migración') RETURNING id`);
+    await migration.up(runner);
+    await migration.up(runner);
+    const [nueva] = await runner.query('SELECT cuit, "razonSocial", "contactoTelefono" FROM empresas WHERE id = $1', [e.id]);
+    assert.deepEqual(nueva, { cuit: null, razonSocial: null, contactoTelefono: null });
+    await runner.query('UPDATE empresas SET cuit = $2 WHERE id = $1', [e.id, '20123456786']);
+    await runner.query('SAVEPOINT controles');
+    await assert.rejects(runner.query('UPDATE empresas SET cuit = $2 WHERE id = $1', [e.id, '2012345678a']), /empresas_cuit_formato/);
+    await runner.query('ROLLBACK TO SAVEPOINT controles');
+    await assert.rejects(runner.query(`UPDATE empresas SET "condicionIva" = 'OTRA' WHERE id = $1`, [e.id]), /empresas_condicion_iva/);
+    await runner.query('ROLLBACK TO SAVEPOINT controles');
+    const [playa] = await runner.query(`INSERT INTO playas ("empresaId", nombre) VALUES ($1, 'Centro') RETURNING id`, [e.id]);
+    await runner.query('SAVEPOINT controles');
+    await assert.rejects(runner.query('UPDATE playas SET capacidad = 0 WHERE id = $1', [playa.id]), /playas_capacidad_positiva/);
+    await runner.query('ROLLBACK TO SAVEPOINT controles');
+    const [guardada] = await runner.query('SELECT cuit FROM empresas WHERE id = $1', [e.id]);
+    assert.equal(guardada.cuit, '20123456786');
+    const [columna] = await runner.query(`SELECT data_type FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'lastAccessAt'`);
+    assert.equal(columna.data_type, 'timestamp with time zone');
+  } finally {
+    await runner.rollbackTransaction();
+    await runner.release();
+  }
+});

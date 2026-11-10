@@ -35,6 +35,11 @@ export class Playa {
   @Column('varchar', { length: 255, nullable: true })
   direccion: string | null;
 
+  // Cuántos vehículos entran a la vez. Con esto el super admin ve la ocupación; sin cargar, solo
+  // los vehículos adentro.
+  @Column('int', { nullable: true })
+  capacidad: number | null;
+
   // Secciones opcionales que el super admin prende por playa. Ausente = apagada.
   @Column('jsonb', { default: () => "'{}'::jsonb" })
   modulos: ModulosPlaya;
