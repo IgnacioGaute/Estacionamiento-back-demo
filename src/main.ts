@@ -27,7 +27,8 @@ async function bootstrap() {
   // Local files must never bypass authentication and tenant authorization.
 
   const port = configService.get('app.port');
-  await app.listen(port, '0.0.0.0');
+  // La red privada de Railway puede resolver IPv6; :: también admite conexiones IPv4.
+  await app.listen(port, '::');
   logger.log(`Application is running on port ${port}`);
 }
 bootstrap();

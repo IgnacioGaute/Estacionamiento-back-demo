@@ -97,6 +97,10 @@ matched nothing is created and the manual form (lists, not free text) takes over
 
 `scripts/start-compiled.cjs` registers `tsconfig-paths` before `dist/main` — sources import each other as
 `src/...`, so plain `node dist/main` only works where those paths resolve.
+El servidor escucha en `::` para admitir IPv4 e IPv6, incluida la red privada de Railway.
+El frontend puede configurar `API_INTERNAL_URL=http://estacionamiento-back-demo.railway.internal:3030`
+si ese es el dominio privado y `PORT=3030`, manteniendo su `NEXT_PUBLIC_API_URL` pública para
+el navegador y los sockets. Ambos servicios deben estar en el mismo proyecto y entorno.
 `node --env-file=.env scripts/assign-legacy-tenant.cjs <empresaId> <playaId>` back-fills pre-tenancy rows (backup
 first, one transaction, only unassigned rows, safe to rerun).
 
