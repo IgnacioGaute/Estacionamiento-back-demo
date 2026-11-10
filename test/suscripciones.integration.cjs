@@ -226,6 +226,24 @@ test('termina la prueba: primer pago proporcional hasta fin de mes, días de atr
   assert.equal(await estadoEmpresa(empresa.id), 'SUSPENDIDA');
 });
 
+test('vista previa de la revisión: dice qué factura y suspende, con nombres, y no guarda nada', async () => {
+  const { empresa, playas } = await nuevaEmpresa('Previa');
+  await servicio.asignarPlan(empresa.id, playas[0].id, { planId: (await plan('CHICA')).id }, superUser.id);
+  // La prueba terminó hace 7 días: la revisión emitiría la factura y la suspendería.
+  await fijar(empresa.id, { alta: dia(-16), pruebaHasta: dia(-7) });
+  const facturasAntes = (await servicio.detalle(empresa.id)).facturas.length;
+  const previa = await servicio.revisarVencimientos(undefined, { simular: true });
+  assert.ok(previa.empresas.suspende.includes('Previa'), 'la lista la nombra entre las que suspende');
+  assert.ok(previa.empresas.factura.includes('Previa'), 'y entre las que factura');
+  assert.ok(previa.suspendidas >= 1 && previa.facturas >= 1);
+  assert.equal(await estadoEmpresa(empresa.id), 'ACTIVA', 'la simulación no suspende');
+  assert.equal((await servicio.detalle(empresa.id)).facturas.length, facturasAntes, 'ni emite facturas');
+  // La revisión de verdad hace lo mismo que mostró.
+  const real = await servicio.revisarVencimientos();
+  assert.ok(real.empresas.suspende.includes('Previa'));
+  assert.equal(await estadoEmpresa(empresa.id), 'SUSPENDIDA');
+});
+
 test('pago atrasado sin cortar: sigue desde su vencimiento; varios meses en una factura', async () => {
   const { empresa, playas } = await nuevaEmpresa('Tardía');
   await servicio.asignarPlan(empresa.id, playas[0].id, { planId: (await plan('GRANDE')).id }, superUser.id);

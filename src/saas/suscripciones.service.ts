@@ -59,6 +59,9 @@ const CAMPOS_CUENTA = `e.estado AS "empresaEstado", ${ALTA},
   COALESCE(s.periodo, 'MENSUAL') AS periodo, COALESCE(s."periodoMeses", 1) AS "periodoMeses",
   COALESCE(s."periodoDescuento", 0) AS "periodoDescuento"`;
 
+// Corta la transacción de una revisión simulada para que nada de lo que hizo quede guardado.
+class SimulacionTerminada extends Error {}
+
 type FilaCuenta = DatosCuenta & {
   empresaId: string;
   suspendidaEl: Date | null;
@@ -1314,8 +1317,17 @@ export class SuscripcionesService {
    * idempotente: correrla dos veces el mismo día no hace nada la segunda, y dos instancias a la
    * vez se ordenan por el lock.
    */
-  async revisarVencimientos(hoy = hoyAR()) {
-    const resultado = { suspendidas: 0, bajas: 0, facturas: 0 };
+  async revisarVencimientos(hoy = hoyAR(), opciones: { simular?: boolean } = {}) {
+    // Con `simular` corre exactamente lo mismo dentro de la transacción y la deshace al final: así
+    // el super admin ve qué va a suspender, dar de baja y facturar con las mismas reglas, antes
+    // de confirmar. Las empresas van con su nombre para mostrarlo.
+    const resultado = {
+      suspendidas: 0,
+      bajas: 0,
+      facturas: 0,
+      empresas: { suspende: [] as string[], baja: [] as string[], factura: [] as string[] },
+    };
+    try {
     await this.dataSource.transaction(async (m) => {
       const [{ tomado }] = await m.query(
         `SELECT pg_try_advisory_xact_lock(hashtext('suscripciones:revision')) AS tomado`,
@@ -1324,15 +1336,17 @@ export class SuscripcionesService {
       await m.query(
         `INSERT INTO suscripciones ("empresaId") SELECT id FROM empresas ON CONFLICT ("empresaId") DO NOTHING`,
       );
-      const cuentas: FilaCuenta[] = await m.query(
-        `SELECT s."empresaId", ${CAMPOS_CUENTA}
+      const cuentas: (FilaCuenta & { empresaNombre: string })[] = await m.query(
+        `SELECT s."empresaId", e.nombre AS "empresaNombre", ${CAMPOS_CUENTA}
          FROM suscripciones s JOIN empresas e ON e.id = s."empresaId"
          FOR UPDATE OF s`,
       );
       const limiteBaja = Date.now() - DIAS_HASTA_BAJA * 24 * 60 * 60 * 1000;
       for (const cuenta of cuentas) {
-        if (await this.sincronizarPendiente(m, cuenta, hoy))
+        if (await this.sincronizarPendiente(m, cuenta, hoy)) {
           resultado.facturas++;
+          resultado.empresas.factura.push(cuenta.empresaNombre);
+        }
         const situacion = situacionDeCuenta(cuenta, hoy);
         if (cuenta.empresaEstado === 'ACTIVA' && situacion.debeSuspenderse) {
           await m.query(
@@ -1351,6 +1365,7 @@ export class SuscripcionesService {
             diasDeAtraso: situacion.diasDeAtraso,
           });
           resultado.suspendidas++;
+          resultado.empresas.suspende.push(cuenta.empresaNombre);
         } else if (
           cuenta.empresaEstado === 'SUSPENDIDA' &&
           cuenta.motivoSuspension === 'FALTA_DE_PAGO' &&
@@ -1366,9 +1381,15 @@ export class SuscripcionesService {
             dias: DIAS_HASTA_BAJA,
           });
           resultado.bajas++;
+          resultado.empresas.baja.push(cuenta.empresaNombre);
         }
       }
+      if (opciones.simular) throw new SimulacionTerminada();
     });
+    } catch (error) {
+      if (!(error instanceof SimulacionTerminada)) throw error;
+      return resultado;
+    }
     if (resultado.suspendidas || resultado.bajas || resultado.facturas)
       this.logger.log(
         `Revisión de cuentas: ${resultado.suspendidas} suspendidas, ${resultado.bajas} bajas, ${resultado.facturas} facturas emitidas.`,

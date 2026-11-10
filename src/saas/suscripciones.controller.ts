@@ -97,6 +97,14 @@ export class SuscripcionesController {
     return this.suscripciones.pagos(query.desde, query.hasta);
   }
 
+  // Lo que haría la revisión ahora, sin guardar nada: la pantalla lo muestra para confirmar.
+  // No consulta MercadoPago (eso sí tiene efectos afuera); lo que esté por acreditarse se ve al
+  // correrla de verdad.
+  @Get('suscripciones/revisar/previa')
+  previaRevision() {
+    return this.suscripciones.revisarVencimientos(undefined, { simular: true });
+  }
+
   // Corre ahora la misma revisión que la tarea diaria: asentar lo pagado por MercadoPago, emitir
   // facturas y suspender lo que pasó la gracia.
   @Post('suscripciones/revisar')

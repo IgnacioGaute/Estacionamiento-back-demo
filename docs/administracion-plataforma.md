@@ -20,6 +20,21 @@ backend requiere elegir explícitamente una playa mediante `X-Playa-Id`.
 - Las conexiones de sockets se autentican y se unen a su playa. Antes de cada envío se
   revalida el acceso; usuarios revocados o con tokens vencidos dejan de recibir eventos.
 
+## Acciones del super admin que piden confirmación
+
+- Suspender una empresa muestra el impacto (usuarios, turnos abiertos, vehículos adentro) y pide
+  un motivo. `PATCH /tenancy/empresas/:id` acepta `motivo` (hasta 255 caracteres) junto con
+  `estado`; no se guarda en la empresa sino en `audit_log.detalle` de `EMPRESA_SUSPENDIDA` o
+  `EMPRESA_ACTIVA`, y la Actividad de la ficha lo muestra.
+- Dar de baja a un usuario también pide confirmación.
+
+## Ventana de las métricas de la plataforma
+
+`GET /tenancy/metrics` y `GET /tenancy/metrics/detalle` cuentan «N días» como hoy y los N − 1
+anteriores, desde la medianoche de Argentina (`ventana-metricas.ts`), y el período anterior con el
+mismo largo. Son los días que dibuja el eje del front. Antes se contaba desde «ahora menos N×24 h»
+y se colaba parte del día N + 1: el KPI lo sumaba y el gráfico no.
+
 ## Escáner de patentes en las métricas
 
 Cada estadía guarda cómo se cargó la entrada (`origenEntrada`) y cómo se inició la salida

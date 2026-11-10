@@ -24,6 +24,8 @@ import { CreatePlayaDto } from './dto/create-playa.dto';
 import { UpdatePlayaDto } from './dto/update-playa.dto';
 import { AsignarPlayasDto } from './dto/asignar-playas.dto';
 import { SuscripcionesService } from 'src/saas/suscripciones.service';
+import { ZONA } from 'src/saas/estado-cuenta';
+import { inicioVentana } from './ventana-metricas';
 
 // Administración de la plataforma. Todo lo de acá lo usa únicamente el super admin.
 @Injectable()
@@ -181,8 +183,10 @@ export class TenancyService {
   async updateEmpresa(id: string, dto: UpdateEmpresaDto) {
     const empresa = await this.empresaRepository.findOne({ where: { id } });
     if (!empresa) throw new NotFoundException('Empresa no encontrada.');
+    // El motivo va a la auditoría (lo registra el controlador), no a la empresa.
+    const { motivo: _motivo, ...cambios } = dto;
     return this.empresaRepository.save(
-      this.empresaRepository.merge(empresa, dto),
+      this.empresaRepository.merge(empresa, cambios),
     );
   }
 
@@ -463,6 +467,7 @@ export class TenancyService {
     accion: string;
     entidad: string;
     entidadId?: string | null;
+    detalle?: Record<string, unknown> | null;
   }) {
     try {
       await this.dataSource.getRepository(AuditLog).insert({
@@ -472,6 +477,7 @@ export class TenancyService {
         accion: entrada.accion,
         entidad: entrada.entidad,
         entidadId: entrada.entidadId ?? null,
+        detalle: entrada.detalle ?? null,
       });
     } catch (error) {
       this.logger.warn(
@@ -532,7 +538,7 @@ export class TenancyService {
   // seguir siendo de solo lectura.
   async metrics(dias: number) {
     const ventana = Math.min(Math.max(Math.trunc(dias) || 30, 1), 365);
-    const desde = new Date(Date.now() - ventana * 24 * 60 * 60 * 1000);
+    const desde = inicioVentana(ventana);
 
     const [cobros, estadias, turnos, tarifas, comprobantes] = await Promise.all([
       // CORTESIA es una estadía bonificada: figura como movimiento pero no es plata cobrada.
@@ -609,11 +615,9 @@ export class TenancyService {
   // la hace Postgres y no hay que recalcular nada acá.
   async metricsDetalle(dias: number, empresaId?: string) {
     const ventana = Math.min(Math.max(Math.trunc(dias) || 30, 1), 365);
-    const zona = 'America/Argentina/Buenos_Aires';
-    const desde = new Date(Date.now() - ventana * 24 * 60 * 60 * 1000);
-    const desdePrevio = new Date(
-      Date.now() - ventana * 2 * 24 * 60 * 60 * 1000,
-    );
+    const zona = ZONA;
+    const desde = inicioVentana(ventana);
+    const desdePrevio = inicioVentana(ventana, 2);
 
     // Un filtro por empresa se resuelve con las playas de esa empresa: los movimientos no
     // guardan empresaId.

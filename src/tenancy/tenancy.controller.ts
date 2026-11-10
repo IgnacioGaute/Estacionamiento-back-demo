@@ -232,6 +232,7 @@ export class TenancyController {
       accion: dto.estado ? `EMPRESA_${dto.estado}` : 'EMPRESA_EDITADA',
       entidad: empresa.nombre,
       entidadId: id,
+      detalle: dto.estado && dto.motivo ? { motivo: dto.motivo } : null,
     });
     return empresa;
   }

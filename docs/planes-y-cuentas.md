@@ -75,6 +75,13 @@ Sin `tenantContext`, con lock asesor e idempotente: primero asienta lo pagado po
 después emite o corrige la factura pendiente de cada cuenta, suspende lo que pasó la gracia y da
 de baja lo que lleva 60 días suspendido por falta de pago.
 
+El botón del panel no corre la revisión de un clic: antes pide
+`GET /tenancy/suscripciones/revisar/previa`, que hace la misma revisión dentro de una
+transacción y la deshace al final (`simular`), y muestra a quién va a suspender, dar de baja y
+facturar, con nombres. Los pagos de MercadoPago se consultan recién al aplicar, así que la vista
+previa puede anunciar una suspensión que un pago acreditado termine evitando. `POST
+/tenancy/suscripciones/revisar` devuelve las mismas listas en `empresas`.
+
 ## Empresa suspendida
 
 No es un bloqueo total. JwtStrategy y el login aceptan `SUSPENDIDA` (no `BAJA`) y `TenantGuard`
@@ -133,11 +140,18 @@ landing» apagado) deja de mostrarse. Lo pactado con cada playa no cambia.
 - Las tarjetas de planes son las de la landing en los colores del panel
   (`src/components/plataforma/planes-landing.tsx`: nombre y tamaño, precio por mes, total del
   período con el ahorro, tres puntos y una acción; selectores «Qué incluye» y «Período de pago»).
-- Super admin: `/admin/planes` (ingreso mensual, por cobrar, cobrado por mes, cuentas por estado,
-  cuentas ordenadas por urgencia, lista de precios y períodos editables en el lugar con vista previa
-  de la landing y «Guardar y publicar», pagos), columna «Plan» y filtro «Cobro» en
+- Super admin: `/admin/planes` (ingreso mensual, por cobrar, pagos recibidos por mes, cuentas por
+  estado, cuentas ordenadas por urgencia, lista de precios y períodos editables en el lugar con
+  vista previa de la landing y «Guardar y publicar», pagos), columna «Plan» y filtro «Deben» en
   `/admin/empresas`, solapa «Plan» en la ficha (estado, ciclo con hoy marcado, plan de cada playa
   con el período de la empresa, uso, ajustes, facturas con días de atraso, historial).
+- «Debe» es una sola regla en el front (`cuentaDebe`): `VENCIDA`, o `SUSPENDIDA` por
+  `FALTA_DE_PAGO`. La usan el filtro «Deben», «Para cobrar» de Planes, el número de la barra
+  lateral y «Requiere atención», que además avisa la prueba o el período que vence en 3 días o
+  menos sin débito confirmado y el débito pausado.
+- «Pagos recibidos» es lo que las empresas pagan a la plataforma; «Recaudado» (Métricas, Empresas,
+  ficha) es lo que las playas cobran a sus clientes.
+- Bonificar una cuenta pide confirmación: anula la factura pendiente.
 - Administrador: `/admin/plan` («Mi plan»), con las tarjetas de la landing y su plan resaltado.
   Datos de transferencia y WhatsApp desde `PLATAFORMA_DATOS_PAGO` y `PLATAFORMA_WHATSAPP`.
 - Administrador: `/admin/plan/pagar`, a donde lleva el aviso: importe, qué cubre, vencimiento o
