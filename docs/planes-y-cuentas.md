@@ -151,6 +151,14 @@ landing» apagado) deja de mostrarse. Lo pactado con cada playa no cambia.
   menos sin débito confirmado y el débito pausado.
 - «Pagos recibidos» es lo que las empresas pagan a la plataforma; «Recaudado» (Métricas, Empresas,
   ficha) es lo que las playas cobran a sus clientes.
+- «Facturas que vencen en …» (Planes y cobros) sale de `GET /tenancy/suscripciones/facturas?mes=AAAA-MM`:
+  las facturas de todas las empresas cuyo período empieza en ese mes, con `diasDeAtraso` en las
+  pendientes vencidas. Muestra facturado, cobrado, pendiente sin vencer y vencido (lo que pasó los
+  días de gracia, aparte), y cuántas cuentas que pagan tienen débito automático. Las anuladas se
+  listan pero no suman. «Pagos recibidos» cuenta por fecha de pago; esta vista, por vencimiento.
+- El listado de empresas (`GET /tenancy/empresas`) trae `pico30` en cada playa (`usoDePlayas`, el
+  mismo cálculo de la solapa Plan) y la tabla muestra el de la playa más cargada contra el límite
+  de su plan.
 - Bonificar una cuenta pide confirmación: anula la factura pendiente.
 - Administrador: `/admin/plan` («Mi plan»), con las tarjetas de la landing y su plan resaltado.
   Datos de transferencia y WhatsApp desde `PLATAFORMA_DATOS_PAGO` y `PLATAFORMA_WHATSAPP`.

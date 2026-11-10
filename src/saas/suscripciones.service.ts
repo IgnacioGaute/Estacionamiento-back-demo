@@ -717,6 +717,28 @@ export class SuscripcionesService {
     }));
   }
 
+  /**
+   * Las facturas de todas las empresas que vencen en `mes` (AAAA-MM): la factura vence el día en
+   * que empieza su período (`desde`). Para la vista de cobros del mes: cuánto se facturó, cuánto
+   * se cobró, qué falta y qué está vencido. `diasDeAtraso` solo en las pendientes ya vencidas.
+   */
+  async facturasDelMes(mes: string, hoy = hoyAR()) {
+    const filas = await this.dataSource.query(
+      `SELECT f.id, f."empresaId", e.nombre AS empresa, f.importe, f.meses, f.estado, f.medio,
+              f.desde::text AS desde, f.hasta::text AS hasta, f."pagadaEl"::text AS "pagadaEl"
+       FROM facturas_saas f JOIN empresas e ON e.id = f."empresaId"
+       WHERE f.desde >= $1::date AND f.desde < ($1::date + interval '1 month')
+       ORDER BY f.desde, e.nombre, f.id`,
+      [`${mes}-01`],
+    );
+    return filas.map((f: any) => ({
+      ...f,
+      importe: Number(f.importe),
+      meses: Number(f.meses),
+      diasDeAtraso: f.estado === 'PENDIENTE' && f.desde < hoy ? diasEntre(f.desde, hoy) : 0,
+    }));
+  }
+
   // ─── Escritura ──────────────────────────────────────────────────────────
 
   /**

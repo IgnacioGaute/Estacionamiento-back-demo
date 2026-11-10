@@ -136,8 +136,13 @@ export class TenancyService {
        WHERE "empresaId" = ANY($1)`,
       [empresas.map((e) => e.id)],
     );
-    // Plan, vencimiento y estado de la cuenta con la plataforma, en lote.
-    const cuentas = await this.suscripciones.resumenes(empresas.map((e) => e.id));
+    // Plan, vencimiento y estado de la cuenta con la plataforma, en lote. Y el pico de vehículos a
+    // la vez de cada playa en 30 días (la misma cuenta que la solapa Plan), para compararlo con el
+    // límite del plan en el listado sin abrir cada ficha.
+    const [cuentas, uso] = await Promise.all([
+      this.suscripciones.resumenes(empresas.map((e) => e.id)),
+      this.suscripciones.usoDePlayas(empresas.flatMap((e) => (e.playas ?? []).map((p) => p.id))),
+    ]);
 
     return empresas.map((empresa) => ({
       ...empresa,
@@ -153,9 +158,9 @@ export class TenancyService {
             }
           : null;
       })(),
-      playas: [...(empresa.playas ?? [])].sort((a, b) =>
-        a.nombre.localeCompare(b.nombre),
-      ),
+      playas: [...(empresa.playas ?? [])]
+        .sort((a, b) => a.nombre.localeCompare(b.nombre))
+        .map((p) => ({ ...p, pico30: uso.get(p.id)?.pico ?? 0 })),
       usuarios: usuarios
         .filter((u) => u.empresaId === empresa.id)
         .map((u) => ({

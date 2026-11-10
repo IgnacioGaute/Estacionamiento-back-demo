@@ -244,6 +244,24 @@ test('vista previa de la revisión: dice qué factura y suspende, con nombres, y
   assert.equal(await estadoEmpresa(empresa.id), 'SUSPENDIDA');
 });
 
+test('facturas del mes: de todas las empresas, en el mes en que vencen y con el atraso de las pendientes', async () => {
+  const { empresa, playas } = await nuevaEmpresa('Factura del mes');
+  await servicio.asignarPlan(empresa.id, playas[0].id, { planId: (await plan('CHICA')).id }, superUser.id);
+  await fijar(empresa.id, { alta: dia(-16), pruebaHasta: dia(-7) });
+  await servicio.revisarVencimientos();
+  const vence = dia(-6);
+  const facturas = await servicio.facturasDelMes(vence.slice(0, 7));
+  const suya = facturas.find((f) => f.empresaId === empresa.id);
+  assert.ok(suya, 'aparece en el mes en que vence');
+  assert.equal(suya.empresa, 'Factura del mes');
+  assert.equal(suya.estado, 'PENDIENTE');
+  assert.equal(suya.desde, vence);
+  assert.equal(suya.diasDeAtraso, 6);
+  assert.equal(typeof suya.importe, 'number');
+  assert.ok(facturas.every((f) => f.desde.startsWith(vence.slice(0, 7))), 'solo las de ese mes');
+  assert.ok(!(await servicio.facturasDelMes(dia(45).slice(0, 7))).some((f) => f.id === suya.id));
+});
+
 test('pago atrasado sin cortar: sigue desde su vencimiento; varios meses en una factura', async () => {
   const { empresa, playas } = await nuevaEmpresa('Tardía');
   await servicio.asignarPlan(empresa.id, playas[0].id, { planId: (await plan('GRANDE')).id }, superUser.id);

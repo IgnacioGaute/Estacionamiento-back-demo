@@ -23,6 +23,7 @@ import {
   EditarPlanDto,
   EditarSuscripcionDto,
   ActivarCuentaDto,
+  FacturasMesQueryDto,
   PagosSaasQueryDto,
   DiasDeGraciaDto,
   DiasExtraDto,
@@ -95,6 +96,12 @@ export class SuscripcionesController {
   @Get('suscripciones/pagos')
   pagos(@Query() query: PagosSaasQueryDto) {
     return this.suscripciones.pagos(query.desde, query.hasta);
+  }
+
+  // Facturas de todas las empresas que vencen en un mes: facturado, cobrado, pendiente y vencido.
+  @Get('suscripciones/facturas')
+  facturasDelMes(@Query() query: FacturasMesQueryDto) {
+    return this.suscripciones.facturasDelMes(query.mes);
   }
 
   // Lo que haría la revisión ahora, sin guardar nada: la pantalla lo muestra para confirmar.

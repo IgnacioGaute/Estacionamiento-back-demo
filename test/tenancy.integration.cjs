@@ -292,6 +292,8 @@ test('datos de la empresa: CUIT con verificador, contacto y capacidad; vacío o 
   assert.equal(listada.contactoEmail, 'pagos@condatos.test');
   assert.equal(listada.condicionIva, 'MONOTRIBUTO');
   assert.equal(listada.playas[0].capacidad, null);
+  // El pico de 30 días de cada playa viaja en el listado (lo calcula usoDePlayas, probado en suscripciones).
+  assert.equal(listada.playas[0].pico30, 0);
 });
 
 test('último acceso: lo anota cada pedido autenticado, como mucho cada 10 minutos y sin tocar updatedAt', async () => {

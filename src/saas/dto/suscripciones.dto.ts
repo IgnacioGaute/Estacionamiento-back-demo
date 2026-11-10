@@ -239,6 +239,12 @@ export class PagosSaasQueryDto {
   hasta: string;
 }
 
+// Las facturas que vencen en un mes: «2026-10».
+export class FacturasMesQueryDto {
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'El mes tiene que ser AAAA-MM.' })
+  mes: string;
+}
+
 const recortarTexto = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
