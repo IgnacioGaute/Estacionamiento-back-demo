@@ -54,6 +54,25 @@ export async function physicalCash(m: EntityManager, sessionId: string, at = new
   return Number(row.total);
 }
 
+// El tramo que sigue al corte copia las referencias del turno cortado (operador, caja, sesión), que
+// ya se validaron al abrirlo. La revisión de referencias de la base las vuelve a mirar con el
+// alcance de quien dispara el corte (el cron o cualquier operador de la playa), y el operador que
+// abrió puede no ser visible ahí: un super admin que trabajó en la playa no pertenece a la empresa.
+// Así el corte fallaba cada minuto desde las 00:00 y con él la caja de toda la playa (12/11/2026).
+// Solo esta inserción se hace sin esa revisión, y solo dentro de la playa del alcance.
+async function referenciasDelCorte<T>(m: EntityManager, playaId: string | null, insertar: () => Promise<T>): Promise<T> {
+  const [{ playa, plataforma }] = await m.query(
+    `SELECT current_setting('parking.playa', true) AS playa, current_setting('parking.platform', true) AS plataforma`);
+  if (!playa || plataforma === 'yes' || !m.queryRunner?.isTransactionActive) return insertar();
+  if (playa !== playaId) throw new ConflictException('El turno a cortar no es de esta playa.');
+  await m.query(`SELECT set_config('parking.platform', 'yes', true)`);
+  // Si la inserción falla, la transacción se revierte y con ella este ajuste (es local a la
+  // transacción): no hace falta restaurarlo, y hacerlo taparía el error real.
+  const resultado = await insertar();
+  await m.query(`SELECT set_config('parking.platform', $1, true)`, [plataforma ?? 'no']);
+  return resultado;
+}
+
 // Llamar dentro de la transacción del cobro/cierre. El cron y las peticiones usan el mismo
 // bloqueo: aunque el servidor haya estado apagado, cada operación encuentra el tramo correcto.
 export async function rolloverShifts(m: EntityManager, now = new Date()) {
@@ -70,11 +89,12 @@ export async function rolloverShifts(m: EntityManager, now = new Date()) {
       const balance = await physicalCash(m, turno.cashSessionId, end);
       await repo.update(turno.id, { estado: 'CERRADO', fechaCierre: end, cierreAutomatico: true,
         cierreCaja: false, vehiculosFin: vehicles, saldoAlCorte: balance, salidasRegistradas: await exitCount(m, turno.id) });
-      turno = await repo.save(repo.create({ nombre: turno.nombre, playaId: turno.playaId,
-        usuarioAperturaId: turno.usuarioAperturaId, cajaId: turno.cajaId, cashSessionId: turno.cashSessionId,
+      const anterior = turno;
+      turno = await referenciasDelCorte(m, anterior.playaId, () => repo.save(repo.create({ nombre: anterior.nombre, playaId: anterior.playaId,
+        usuarioAperturaId: anterior.usuarioAperturaId, cajaId: anterior.cajaId, cashSessionId: anterior.cashSessionId,
         cashVersion: 2, fechaApertura: end, fechaOperativa: boundary.format('YYYY-MM-DD'),
-        fondoInicial: 0, fondoRecibido: 0, continuacionDeId: turno.id, jornadaId: turno.jornadaId ?? turno.id,
-        sueldoPrevisto: turno.sueldoPrevisto, vehiculosInicio: vehicles, saldoAlCorte: balance, estado: 'ABIERTO' }));
+        fondoInicial: 0, fondoRecibido: 0, continuacionDeId: anterior.id, jornadaId: anterior.jornadaId ?? anterior.id,
+        sueldoPrevisto: anterior.sueldoPrevisto, vehiculosInicio: vehicles, saldoAlCorte: balance, estado: 'ABIERTO' })));
       boundary = boundary.add(1, 'day');
     }
   }

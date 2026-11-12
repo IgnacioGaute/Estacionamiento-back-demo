@@ -1582,3 +1582,41 @@ test('datos fiscales, capacidad y último acceso: el rol operativo los lee de su
   const [otra] = await ds.query('SELECT cuit FROM empresas WHERE id = $1', [b.empresaId]);
   assert.equal(otra.cuit, '20000000060');
 });
+
+test('corte de medianoche: un turno que abrió el super admin en la playa se corta con el alcance de la playa', async () => {
+  // Incidente del 12/11/2026: el super admin no es visible para la empresa y la revisión de
+  // referencias rechazaba el tramo nuevo; el corte fallaba cada minuto y la caja de la playa también.
+  const Turno = load('turnos/entities/turno.entity', 'Turno');
+  const CashRegister = load('turnos/entities/cash-register.entity', 'CashRegister');
+  const CashSession = load('turnos/entities/cash-session.entity', 'CashSession');
+  const { rolloverShifts } = require('../dist/turnos/turno-book');
+  const caja = await ds.getRepository(CashRegister).save({ playaId: b.playaId, nombre: 'Caja del corte', principal: false, activa: true });
+  const sesion = await ds.getRepository(CashSession).save({ playaId: b.playaId, cajaId: caja.id, fondoInicial: 0, estado: 'ABIERTO' });
+  const ayer = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day').subtract(4, 'hour');
+  const abierto = await ds.getRepository(Turno).save({ playaId: b.playaId, usuarioApertura: { id: superUser.id }, cajaId: caja.id,
+    cashSessionId: sesion.id, cashVersion: 2, fondoInicial: 0, estado: 'ABIERTO', fechaOperativa: ayer.format('YYYY-MM-DD') });
+  await ds.getRepository(Turno).update(abierto.id, { fechaApertura: ayer.toDate() });
+  try {
+    // El cron corre con el alcance de la playa (rol parking_scoped), igual que la caja de un operador.
+    await scoped({ playaId: b.playaId, empresaId: b.empresaId, userId: '', role: 'ADMIN' }, () => ds.transaction((m) => rolloverShifts(m)));
+    const cortado = await ds.getRepository(Turno).findOneByOrFail({ id: abierto.id });
+    assert.equal(cortado.estado, 'CERRADO');
+    assert.equal(cortado.cierreAutomatico, true);
+    const sigue = await ds.getRepository(Turno).findOneByOrFail({ continuacionDeId: abierto.id });
+    assert.equal(sigue.estado, 'ABIERTO');
+    assert.equal(sigue.usuarioAperturaId, superUser.id);
+    assert.equal(sigue.playaId, b.playaId);
+    assert.equal(sigue.cashSessionId, sesion.id);
+    // El ajuste es solo para esa inserción: la referencia ajena sigue rechazándose después.
+    await assert.rejects(
+      scoped({ playaId: b.playaId, empresaId: b.empresaId, userId: '', role: 'ADMIN' }, () => ds.transaction(async (m) => {
+        await rolloverShifts(m);
+        await m.getRepository(Turno).save({ playaId: b.playaId, usuarioApertura: { id: adminA.id }, fondoInicial: 0, estado: 'CERRADO' });
+      })),
+      /Referencia fuera/,
+    );
+  } finally {
+    await ds.query(`UPDATE turnos SET estado = 'CERRADO' WHERE "cashSessionId" = $1`, [sesion.id]);
+    await ds.getRepository(CashSession).update(sesion.id, { estado: 'CERRADO' });
+  }
+});
