@@ -352,7 +352,7 @@ test('pago por QR de MercadoPago: si cubre el saldo registra la salida en la mis
   const movs = await ds.getRepository(Movimiento).find({ where: { ticketRegistration: { id: pagada.id } } });
   assert.deepEqual(movs.map(m => [m.metodo, m.monto]), [['MERCADOPAGO', 1000]], 'el cierre no agrega otro cobro');
   assert.equal(await totalBox(), caja, 'MercadoPago no suma al efectivo');
-  await assert.rejects(tickets.registrarPagoExterno(pagada.id, 1000, 'MERCADOPAGO', 'MercadoPago QR-2', user.id), /ya está cerrado/);
+  await assert.rejects(tickets.registrarPagoExterno(pagada.id, 1000, 'MERCADOPAGO', 'MercadoPago QR-2', user.id), /salida registrada/);
 
   // Se pagó menos de lo que cuesta: queda el pago y el saldo, y la salida la registra el cajero.
   const parcial = await openPlate();
@@ -786,7 +786,7 @@ test('descuento: valida límites, motivo y presupuesto, y dos solicitudes simult
   assert.equal((await tickets.getCloseSummary(r.id)).previewBracket.price, 700);
   assert.equal(await ds.getRepository(Movimiento).count({ where: { ticketRegistration: { id: r.id } } }), 1);
   await tickets.closeRegistrationByPlate(r.id, await payload(r.id), user.id);
-  await assert.rejects(tickets.discountRegistration(r.id, dto, user.id), /cerrado/);
+  await assert.rejects(tickets.discountRegistration(r.id, dto, user.id), /salida registrada/);
 });
 
 test('descuento: uno solo por estadía; cambiarlo lo reemplaza con un movimiento por la diferencia', async () => {
@@ -942,5 +942,5 @@ test('corregir datos al cobrar: otro tipo pasa a sus tarifas y la patente se nor
     await tickets.closeRegistrationByPlate(r.id, await payload(r.id), user.id);
     await tickets.closeRegistrationByPlate(otra.id, await payload(otra.id), user.id);
   }
-  await assert.rejects(tickets.corregirDatosEstadia(r.id, { vehicleType: 'AUTO' }, user.id), /ya está cerrado/);
+  await assert.rejects(tickets.corregirDatosEstadia(r.id, { vehicleType: 'AUTO' }, user.id), /salida registrada/);
 });

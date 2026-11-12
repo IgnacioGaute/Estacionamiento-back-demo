@@ -54,6 +54,12 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 dayjs.extend(isBetween);
 
+// La estadía ya salió: otro equipo, un reintento o un cobro cuya respuesta no llegó al celular.
+// Con el código, el mostrador lo muestra como «ya estaba registrada» (no se cobró de nuevo) y saca
+// el vehículo de la lista, en vez de un error que invita a cobrar otra vez.
+const estadiaCerrada = () =>
+  new BadRequestException({ code: 'ESTADIA_CERRADA', message: 'Esta estadía ya tiene la salida registrada.' });
+
 @Injectable()
 export class TicketsService {
   private readonly logger = new Logger(TicketsService.name);
@@ -768,7 +774,7 @@ async addAdvancePayment(id: string, dto: AdvancePaymentTicketRegistrationDto, us
     const repository = manager.getRepository(TicketRegistration);
     const registration = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
     if (!registration) throw new NotFoundException('Registro no encontrado.');
-    if (registration.departureTime) throw new BadRequestException('El ticket ya está cerrado.');
+    if (registration.departureTime) throw estadiaCerrada();
     if (esGratuita(registration.modalidad)) throw estadiaGratuita();
     const collected = await this.collectedAmount(registration, manager);
     if (dto.chargeFullPlannedStay && dto.advancePaidAmount !== undefined) {
@@ -818,7 +824,7 @@ async addAdvancePayment(id: string, dto: AdvancePaymentTicketRegistrationDto, us
   async previewPlannedPrice(id: string, minutes: number) {
     const registration = await this.ticketRegistrationRepository.findOne({ where: { id }, relations: ['ticket'] });
     if (!registration) throw new NotFoundException('Registro no encontrado.');
-    if (registration.departureTime) throw new BadRequestException('El ticket ya está cerrado.');
+    if (registration.departureTime) throw estadiaCerrada();
     const result = await this.plannedPriceForRegistration(registration, minutes);
     return { price: result.price, ticketDayType: result.ticketDayType };
   }
@@ -840,7 +846,7 @@ async registrarPagoExterno(
   usuarioId: string,
 ) {
   const r = await operationTransaction(this.dataSource, manager => this.acreditarPagoEn(manager, registrationId, monto, metodo, referencia, usuarioId));
-  if (r.yaCerrada) throw new BadRequestException('El ticket ya está cerrado.');
+  if (r.yaCerrada) throw estadiaCerrada();
   this.ticketGateway.emitNewRegistration(r.registration);
   return { cerrada: r.cerrada, saldoPendiente: r.saldoPendiente };
 }
@@ -1205,7 +1211,7 @@ async removePriceBracket(id: string) {
   async getResumenSalida(id: string, manager?: EntityManager) {
     const registration = await (manager ? manager.getRepository(TicketRegistration) : this.ticketRegistrationRepository).findOne({ where: { id }, relations: ['ticket'] });
     if (!registration) throw new NotFoundException('Registro no encontrado.');
-    if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
+    if (registration.departureTime) throw estadiaCerrada();
     if (!esGratuita(registration.modalidad)) return { ...(await this.getCloseSummary(id, manager)), modalidad: registration.modalidad };
     const entrada = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', 'America/Argentina/Buenos_Aires');
     return { registration, modalidad: registration.modalidad, elapsedMinutes: Math.max(0, dayjs(operationNow()).diff(entrada, 'minute')) };
@@ -1214,7 +1220,7 @@ async removePriceBracket(id: string) {
   async getCloseSummary(id: string, manager?: EntityManager) {
     const registration = await (manager ? manager.getRepository(TicketRegistration) : this.ticketRegistrationRepository).findOne({ where: { id }, relations: ['ticket'] });
     if (!registration) throw new NotFoundException('Registro no encontrado.');
-    if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
+    if (registration.departureTime) throw estadiaCerrada();
     const preview = await this.priceRegistration(registration, manager);
     const totalCollectedSoFar = await this.collectedAmount(registration, manager);
     const saldoACobrar = Math.max(0, preview.price - totalCollectedSoFar);
@@ -1280,7 +1286,7 @@ async removePriceBracket(id: string) {
       const repo = manager.getRepository(TicketRegistration);
       const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!registration) throw new NotFoundException('Registro no encontrado.');
-      if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
+      if (registration.departureTime) throw estadiaCerrada();
       const summary = await this.getCloseSummary(id, manager);
       if (summary.previewBracket.price !== dto.expectedPrice || summary.totalCollectedSoFar !== dto.expectedCollected) {
         throw new ConflictException('El importe cambió. Revisá el resumen antes de aplicar el descuento.');
@@ -1326,7 +1332,7 @@ async removePriceBracket(id: string) {
       const repo = manager.getRepository(TicketRegistration);
       const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!registration) throw new NotFoundException('Registro no encontrado.');
-      if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
+      if (registration.departureTime) throw estadiaCerrada();
       const summary = await this.getCloseSummary(id, manager);
       if (summary.previewBracket.price !== dto.expectedPrice || summary.totalCollectedSoFar !== dto.expectedCollected) {
         throw new ConflictException({ code: 'TICKET_PRICE_CHANGED', message: 'El importe cambió. Revisá el resumen actualizado antes de confirmar.' });
@@ -1364,7 +1370,7 @@ async removePriceBracket(id: string) {
       const repo = manager.getRepository(TicketRegistration);
       const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!registration) throw new NotFoundException('Registro no encontrado.');
-      if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
+      if (registration.departureTime) throw estadiaCerrada();
       if (!registration.entryDay || !registration.entryTime) throw new BadRequestException('La estadía no tiene hora de entrada.');
       const ahora = dayjs(operationNow()).tz(TZ);
       const actual = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', TZ);
@@ -1418,7 +1424,7 @@ async removePriceBracket(id: string) {
       const repo = manager.getRepository(TicketRegistration);
       const registration = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!registration) throw new NotFoundException('Registro no encontrado.');
-      if (registration.departureTime) throw new BadRequestException('Este ticket ya está cerrado.');
+      if (registration.departureTime) throw estadiaCerrada();
       const conTicket = await repo.findOne({ where: { id }, relations: ['ticket'] });
       const tipoAnterior = registration.vehicleType ?? conTicket?.ticket?.vehicleType ?? null;
       const patenteAnterior = registration.licensePlateOriginal || null;
@@ -1542,7 +1548,7 @@ async removePriceBracket(id: string) {
   async opcionesSalidaAnterior(id: string) {
     const registration = await this.ticketRegistrationRepository.findOne({ where: { id }, relations: ['ticket'] });
     if (!registration) throw new NotFoundException('Registro no encontrado.');
-    if (registration.departureTime) throw new BadRequestException({ code: 'ESTADIA_CERRADA', message: 'Esta estadía ya tiene la salida registrada.' });
+    if (registration.departureTime) throw estadiaCerrada();
     const vehicle = registration.vehicleType ?? registration.ticket?.vehicleType;
     if (!vehicle) throw new BadRequestException('El registro no tiene tipo de vehículo.');
     const snapshot = registration.pricingSnapshot ?? await this.capturePricing(vehicle, undefined, false);
@@ -1642,7 +1648,7 @@ async removePriceBracket(id: string) {
     const resultado = await operationTransaction(this.dataSource, async manager => {
       const registration = await manager.getRepository(TicketRegistration).findOne({ where: { id }, relations: ['ticket'] });
       if (!registration) throw new NotFoundException('Registro no encontrado.');
-      if (registration.departureTime) throw new BadRequestException({ code: 'ESTADIA_CERRADA', message: 'Esta estadía ya tiene la salida registrada.' });
+      if (registration.departureTime) throw estadiaCerrada();
       this.validarSalidaAnterior(registration, salidaEn);
       // Un QR o un alias esperando el pago cobraría otro importe sobre la misma estadía.
       const [enCurso] = await manager.query(
@@ -1715,7 +1721,7 @@ async removePriceBracket(id: string) {
   async montoAnticipo(registrationId: string, minutos: number) {
     const registration = await this.ticketRegistrationRepository.findOne({ where: { id: registrationId }, relations: ['ticket'] });
     if (!registration) throw new NotFoundException('Registro no encontrado.');
-    if (registration.departureTime) throw new BadRequestException('El ticket ya está cerrado.');
+    if (registration.departureTime) throw estadiaCerrada();
     const planned = await this.plannedPriceForRegistration(registration, minutos);
     const monto = planned.price - await this.collectedAmount(registration);
     if (monto <= 0) throw new BadRequestException('Lo ya cobrado cubre esta duración: no hay anticipo para cobrar.');
@@ -1747,7 +1753,7 @@ async removePriceBracket(id: string) {
   /** El anticipo por QR ya acreditado por MercadoPago (ver acreditarAnticipoEn). */
   async registrarAnticipoExterno(registrationId: string, monto: number, metodo: MovimientoMetodo, referencia: string, usuarioId: string, anticipo: { minutos: number; etiqueta?: string | null }) {
     const r = await operationTransaction(this.dataSource, manager => this.acreditarAnticipoEn(manager, registrationId, monto, metodo, referencia, usuarioId, anticipo));
-    if (r.yaCerrada) throw new BadRequestException('El ticket ya está cerrado.');
+    if (r.yaCerrada) throw estadiaCerrada();
     this.ticketGateway.emitNewRegistration(r.registration);
     return { cerrada: false, saldoPendiente: 0 };
   }
