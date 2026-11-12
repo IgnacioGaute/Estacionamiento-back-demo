@@ -3,6 +3,7 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { installTenantConnections } from './tenancy/tenant-context';
 import { TenantGuard, TenantInterceptor } from './tenancy/tenant-access';
 import { AuditInterceptor } from './tenancy/audit-interceptor';
+import { SaludController } from './common/salud.controller';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AppConfig, DatabaseConfig } from './config';
@@ -63,7 +64,7 @@ import { MercadoPagoModule } from './mercadopago/mercadopago.module';
   CuentasModule,
   MercadoPagoModule
 ],
-  controllers: [],
+  controllers: [SaludController],
   providers: [
     { provide: APP_GUARD, useClass: TenantGuard },
     { provide: APP_INTERCEPTOR, useClass: TenantInterceptor },

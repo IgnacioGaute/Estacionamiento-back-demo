@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
+import { solicitudMiddleware } from './common/solicitud.middleware';
 import { NestExpressApplication } from '@nestjs/platform-express';
 
 
@@ -11,6 +12,8 @@ async function bootstrap() {
   const logger = new Logger('NestApplication');
   const configService = app.get(ConfigService);
 
+  // Primero: el id de correlación queda también en las respuestas que cortan helmet o CORS.
+  app.use(solicitudMiddleware);
   app.use(helmet());
   
   app.enableCors({

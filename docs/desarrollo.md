@@ -101,6 +101,13 @@ El servidor escucha en `::` para admitir IPv4 e IPv6, incluida la red privada de
 El frontend puede configurar `API_INTERNAL_URL=http://estacionamiento-back-demo.railway.internal:3030`
 si ese es el dominio privado y `PORT=3030`, manteniendo su `NEXT_PUBLIC_API_URL` pública para
 el navegador y los sockets. Ambos servicios deben estar en el mismo proyecto y entorno.
+`GET /salud` es público y sin datos: `{ estado: 'listo', version }` (commit de Railway) o 503
+`BASE_NO_DISPONIBLE` si la base no contesta. Usarlo como Healthcheck Path del servicio en Railway y
+en la prueba de humo del frontend (`scripts/humo-despliegue.mjs`, solo lecturas). Un despliegue
+marcado como exitoso no prueba los flujos: correr esa prueba después de cada despliegue.
+`src/common/solicitud.middleware.ts` reutiliza el `X-Request-Id` que manda el servidor del frontend
+(o crea uno), lo devuelve en la respuesta y registra cada 5xx con ruta sanitizada, estado y duración,
+sin encabezados, consulta ni cuerpo. El mismo id aparece en el log `[fallo-backend]` del frontend.
 `node --env-file=.env scripts/assign-legacy-tenant.cjs <empresaId> <playaId>` back-fills pre-tenancy rows (backup
 first, one transaction, only unassigned rows, safe to rerun).
 

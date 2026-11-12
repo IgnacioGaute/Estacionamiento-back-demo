@@ -201,6 +201,8 @@ export class TenantGuard implements CanActivate {
     // La lista de precios que muestra la landing: solo lectura, sin datos de nadie.
     if (controller === 'PlanesPublicosController' && handler === 'catalogo')
       return true;
+    // Disponibilidad para el healthcheck y las pruebas de humo: sin datos de nadie.
+    if (controller === 'SaludController' && handler === 'estado') return true;
     const serviceSecret = this.config.getOrThrow<string>('API_SECRET_TOKEN');
     if (controller === 'AuthController' && handler === 'login') {
       limitLogin(
@@ -269,6 +271,7 @@ export class TenantInterceptor implements NestInterceptor {
         'PublicParkingReceiptsController',
         'AvisoMercadoPagoController',
         'PlanesPublicosController',
+        'SaludController',
       ].includes(controller) ||
       req.platformAccountService
     )
