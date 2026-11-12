@@ -311,7 +311,10 @@ export class TurnosService {
           ? `No se retiró el sueldo de $${turno.sueldoPrevisto}: el operador eligió no retirarlo en este cierre.`
           : conArqueo
             ? `No se retiró el sueldo de $${turno.sueldoPrevisto}: el efectivo no alcanza después de dejar $${reserva} en la caja.`
-            : `No se retiró el sueldo de $${turno.sueldoPrevisto}: el efectivo no alcanza para preservar el fondo de $${caja?.fondoObjetivo ?? 0}.`
+            : fondo > 0
+              ? `No se retiró el sueldo de $${turno.sueldoPrevisto}: el efectivo no alcanza para preservar el fondo de $${fondo}.`
+              // Fondo protegido desactivado (0): no hay nada que preservar, solo falta efectivo.
+              : `No se retiró el sueldo de $${turno.sueldoPrevisto}: el efectivo de la caja no alcanza.`
         : null;
       turno.vehiculosFin = await occupancyAt(manager, operationNow());
       turno.salidasRegistradas = await exitCount(manager, turno.id);

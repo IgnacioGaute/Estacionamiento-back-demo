@@ -9,7 +9,7 @@ En Administración → Configuración → Operación:
 1. Activar «Activar turnos de caja» para exigir turno propio al operar.
 2. Elegir «Permitir turnos múltiples» según cómo trabajan y guardar configuración.
 3. Configurar «Sueldo retirado de caja» si corresponde, con el importe por jornada de operador. Apagado por defecto; el importe se guarda al abrir y los cambios se aplican a las nuevas jornadas.
-4. En «Cajas físicas», elegir el fondo objetivo (por defecto $15.000) y nombrar una caja por cada cajón real. En la primera apertura de cada caja se ofrece como «Fondo sugerido»; después lo propone el cierre como «Usar sugerido». Caja principal siempre permanece disponible. Se pueden agregar y desactivar las otras cajas.
+4. En «Cajas físicas», elegir el fondo objetivo (por defecto $15.000; «Proteger un fondo» apagado lo guarda en $0: sin fondo sugerido y el sueldo solo exige que alcance el efectivo) y nombrar una caja por cada cajón real. En la primera apertura de cada caja se ofrece como «Fondo sugerido»; después lo propone el cierre como «Usar sugerido». Caja principal siempre permanece disponible. Se pueden agregar y desactivar las otras cajas.
 
 | Caso | Turnos múltiples | Cajas |
 | --- | --- | --- |

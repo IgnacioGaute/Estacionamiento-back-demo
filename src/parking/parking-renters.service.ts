@@ -99,7 +99,8 @@ export class ParkingRentersService {
           renterRepo.create({
             customer,
             garageNumber,
-            licensePlate: renterDto.licensePlate,
+            // Opcional e independiente del número de cochera: una cochera puede no tener auto fijo.
+            licensePlate: renterDto.licensePlate?.replace(/[\s-]/g, '').toUpperCase() || undefined,
             amount: renterDto.amount,
             owner: null,
             parkingType: null,

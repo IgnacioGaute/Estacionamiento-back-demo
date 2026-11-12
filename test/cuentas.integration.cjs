@@ -501,11 +501,14 @@ test('cocheras de inquilino con número y precio, sin propietario', { timeout: 3
   );
   const c = await alta({
     firstName: 'Libre', lastName: 'Cochera', numberOfVehicles: 2,
-    parkingRenters: [{ garageNumber: 'SD-1', amount: 45000 }, { garageNumber: 'SD-2', amount: 5000 }],
+    // La patente es opcional y aparte del número: se guarda normalizada.
+    parkingRenters: [{ garageNumber: 'SD-1', licensePlate: 'ab 123-cd', amount: 45000 }, { garageNumber: 'SD-2', amount: 5000 }],
   });
   const cocheras = await ds.getRepository(ParkingRenter).find({ where: { customer: { id: c.id } }, order: { garageNumber: 'ASC' } });
-  assert.deepEqual(cocheras.map((r) => [r.garageNumber, r.amount, r.owner]), [['SD-1', 45000, null], ['SD-2', 5000, null]]);
-  assert.equal((await enPlaya(() => cuentas.estado(c.id))).cliente.abono, 50000);
+  assert.deepEqual(cocheras.map((r) => [r.garageNumber, r.licensePlate, r.amount, r.owner]), [['SD-1', 'AB123CD', 45000, null], ['SD-2', null, 5000, null]]);
+  const estadoLibre = await enPlaya(() => cuentas.estado(c.id));
+  assert.equal(estadoLibre.cliente.abono, 50000);
+  assert.deepEqual(estadoLibre.cliente.cocheras.map((x) => x.patente).sort(), ['AB123CD', null].sort());
   const plan = await enPlaya(() => cuentas.previsualizarAbonos(mes(1)));
   assert.equal(plan.aCargar.find((x) => x.id === c.id)?.importe, 50000, 'sin dueño igual se le cargan los abonos');
   await assert.rejects(

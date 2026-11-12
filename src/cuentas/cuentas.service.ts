@@ -458,6 +458,7 @@ export class CuentasService {
           abono: baja ? 0 : cocheras.reduce((s, r) => s + (r.amount ?? 0), 0),
           cocheras: cocheras.map((r) => ({
             numero: r.garageNumber ?? null,
+            patente: r.licensePlate || null,
             duenio: r.parkingOwner?.customer
               ? `${r.parkingOwner.customer.lastName} ${r.parkingOwner.customer.firstName}`.trim()
               : r.owner || null,

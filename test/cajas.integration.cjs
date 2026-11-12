@@ -336,6 +336,24 @@ test('sueldo opcional: si alcanza, el operador puede no retirarlo y el efectivo 
   assert.equal(await ds.getRepository(SessionMovement).count({ where: { turnoId: t.id, tipo: 'SUELDO' } }), 0);
 });
 
+test('fondo protegido apagado (0): el sueldo no reserva efectivo para un fondo', async () => {
+  const register = await principal();
+  await shifts.saveCaja({ nombre: register.nombre, fondoObjetivo: 0 }, register.id);
+  try {
+    const t = await openCash(user.id, 15000);
+    await cash(user.id, 10000);
+    const activo = (await context()).active;
+    assert.equal(activo.fondoObjetivo, 0);
+    // Con fondo de $15.000 no alcanzaría (25.000 − 15.000 < 25.000); sin fondo protegido, sí.
+    assert.equal(activo.sueldoSugerido, 25000);
+    const closed = await shifts.close(t.id, user.id, { efectivoContado: 25000, efectivoEsperado: 25000, efectivoParaSiguiente: 0, sueldoEsperado: 25000 });
+    assert.equal(closed.sueldoRetirado, 25000);
+    assert.equal(closed.alertaSueldo, null);
+  } finally {
+    await shifts.saveCaja({ nombre: register.nombre, fondoObjetivo: 15000 }, register.id);
+  }
+});
+
 test('medianoche: corta una vez, conserva caja y jornada y no retira sueldo', async () => {
   const t = await openCash(user.id, 15000);
   const today = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day');
