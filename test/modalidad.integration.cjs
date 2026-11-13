@@ -11,6 +11,14 @@ require('reflect-metadata');
 require('tsconfig-paths').register({ baseUrl: path.resolve('dist'), paths: { 'src/*': ['*'] } });
 const { DataSource } = require('typeorm');
 const load = (p, name) => require('../dist/' + p)[name];
+// Media hora adentro: una estadía más corta que la tolerancia ya no se cobra (sinCobroEnTolerancia),
+// y estas pruebas cobran estadías recién creadas.
+async function mediaHoraAdentro(id) {
+  const hace30 = new Date(Date.now() - 30 * 60000);
+  const enBsAs = (opciones) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires', ...opciones }).format(hace30);
+  await ds.query('UPDATE ticket_registrations SET "entryDay" = $2, "entryTime" = $3 WHERE id = $1',
+    [id, enBsAs({ year: 'numeric', month: '2-digit', day: '2-digit' }), enBsAs({ hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })]);
+}
 const Ticket = load('tickets/entities/ticket.entity', 'Ticket');
 const Registration = load('tickets/entities/ticket-registration.entity', 'TicketRegistration');
 const User = load('users/entities/user.entity', 'User');
@@ -45,6 +53,10 @@ before(async () => {
     migrationsRun: true, synchronize: true,
   });
   await ds.initialize();
+  // Estas pruebas cubren otras reglas con estadías de pocos minutos: sin cobro dentro de la
+  // tolerancia (activo por defecto) se prueba aparte (stay-pricing.spec y tickets.integration).
+  await ds.query('ALTER TABLE ticket_schedule_settings ALTER COLUMN "sinCobroEnTolerancia" SET DEFAULT false');
+  await ds.query('UPDATE ticket_schedule_settings SET "sinCobroEnTolerancia" = false');
   const { Test } = require('@nestjs/testing');
   const { TypeOrmModule } = require('@nestjs/typeorm');
   const { ConfigModule } = require('@nestjs/config');
@@ -75,6 +87,8 @@ before(async () => {
       ['1790000034000-alias-abonos', 'AliasAbonos1790000034000'],
       ['1790000035000-alias-inquilinos', 'AliasInquilinos1790000035000'],
       ['1790000036000-turnos-diarios', 'TurnosDiarios1790000036000'],
+      ['1790000050000-conteos-caja', 'ConteosCaja1790000050000'],
+      ['1790000051000-tolerancia-sin-cobro', 'ToleranciaSinCobro1790000051000'],
       ['1790000042000-modalidad-operacion', 'ModalidadOperacion1790000042000'],
       ['1790000043000-superadmin-operativo', 'SuperadminOperativo1790000043000'],
       ['1790000044000-datos-cliente-estadia', 'DatosClienteEstadia1790000044000'],
@@ -297,6 +311,7 @@ test('la otra playa de la empresa y la otra empresa siguen cobrando igual; las e
   const entrada = (await http('post', '/tickets/registrations/by-plate', adminA, cobra.id).send({ licensePlate: 'PAY01', vehicleType: 'AUTO' }).expect(201)).body;
   assert.equal(entrada.modalidad, 'CON_COBRO');
   assert.ok(entrada.pricingSnapshot);
+  await mediaHoraAdentro(entrada.id);
   const resumen = (await http('get', `/tickets/registrations/${entrada.id}/close-summary`, adminA, cobra.id).expect(200)).body;
   assert.equal(resumen.modalidad, 'CON_COBRO');
   assert.equal(resumen.saldoACobrar, 1000);
@@ -314,6 +329,7 @@ test('la otra playa de la empresa y la otra empresa siguen cobrando igual; las e
   await http('get', '/tenant/context', operador).expect(200);
   await http('get', '/tickets/vehicle-types', operador, otraEmpresa.id).expect(403);
   conCobroAbierta = (await http('post', '/tickets/registrations/by-plate', adminA, cobra.id).send({ licensePlate: 'PAY02', vehicleType: 'AUTO' }).expect(201)).body;
+  await mediaHoraAdentro(conCobroAbierta.id);
 });
 
 test('pasar a gratuita se bloquea con turnos abiertos, estadías con cobro adentro o cobros pendientes, sin tocar la historia', async () => {

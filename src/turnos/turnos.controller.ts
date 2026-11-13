@@ -22,7 +22,14 @@ export class TurnosController {
 
   @Post('open')
   open(@Req() req: AuthenticatedRequest, @Body() dto: OpenTurnoDto) {
-    return this.turnosService.open(requireUserId(req), dto);
+    return this.turnosService.open(requireUserId(req), dto, req.user?.role);
+  }
+
+  // Cómo se llega al efectivo esperado, con conteos de relevo y estadías para revisar. La pide el
+  // cierre después de que el operador carga el conteo.
+  @Get(':id/conciliacion')
+  conciliacion(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.turnosService.conciliacion(id, requireUserId(req), req.user?.role);
   }
 
   @Patch(':id/close')

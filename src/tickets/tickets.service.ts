@@ -57,6 +57,9 @@ dayjs.extend(isBetween);
 // La estadía ya salió: otro equipo, un reintento o un cobro cuya respuesta no llegó al celular.
 // Con el código, el mostrador lo muestra como «ya estaba registrada» (no se cobró de nuevo) y saca
 // el vehículo de la lista, en vez de un error que invita a cobrar otra vez.
+// Sin fila de configuración (playa nueva) vale el default de la base: activo.
+const sinCobroEnTolerancia = (schedule: object) => (schedule as { sinCobroEnTolerancia?: boolean }).sinCobroEnTolerancia ?? true;
+
 const estadiaCerrada = () =>
   new BadRequestException({ code: 'ESTADIA_CERRADA', message: 'Esta estadía ya tiene la salida registrada.' });
 
@@ -292,7 +295,7 @@ async removeTicketPrice(id: string) {
     const brackets = await repository.find({ where: { vehicleType: vehicleType as any } });
     const snapshot: PricingSnapshot = {
       version: 1, capturedAt: operationNow().toISOString(),
-      schedule: { dayStartHour: schedule.dayStartHour, dayEndHour: schedule.dayEndHour, graceMinutes: schedule.graceMinutes, pricingDayTypeBasis: schedule.pricingDayTypeBasis ?? 'EXIT', pricingOptions: schedule.pricingOptions },
+      schedule: { dayStartHour: schedule.dayStartHour, dayEndHour: schedule.dayEndHour, graceMinutes: schedule.graceMinutes, sinCobroEnTolerancia: sinCobroEnTolerancia(schedule), pricingDayTypeBasis: schedule.pricingDayTypeBasis ?? 'EXIT', pricingOptions: schedule.pricingOptions },
       brackets,
     };
     const dayType = resolveDayType(snapshot.schedule, dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').hour());
@@ -326,7 +329,7 @@ async removeTicketPrice(id: string) {
   // sin precios) conserva la suya: cobrarla después fallaría.
   async repriceActiveStays(manager: EntityManager): Promise<{ actualizadas: number; omitidas: number }> {
     const settings = await this.getSchedule(manager);
-    const schedule = { dayStartHour: settings.dayStartHour, dayEndHour: settings.dayEndHour, graceMinutes: settings.graceMinutes, pricingDayTypeBasis: settings.pricingDayTypeBasis ?? 'EXIT', pricingOptions: settings.pricingOptions };
+    const schedule = { dayStartHour: settings.dayStartHour, dayEndHour: settings.dayEndHour, graceMinutes: settings.graceMinutes, sinCobroEnTolerancia: sinCobroEnTolerancia(settings), pricingDayTypeBasis: settings.pricingDayTypeBasis ?? 'EXIT', pricingOptions: settings.pricingOptions };
     const brackets = await manager.getRepository(TicketPriceBracket).find();
     const repository = manager.getRepository(TicketRegistration);
     let actualizadas = 0, omitidas = 0;
@@ -1153,7 +1156,27 @@ async removePriceBracket(id: string) {
       .filter((r) => !!r.licensePlateNormalized && patentesParecidas(plate, r.licensePlateNormalized))
       .sort((a, b) => `${a.entryDay} ${a.entryTime}`.localeCompare(`${b.entryDay} ${b.entryTime}`))
       .slice(0, 5);
-    return { plate, hourly, daily, similares };
+    // No está adentro pero salió hace poco: una entrada nueva o una «salida sin entrada» con esa
+    // patente suele ser un error (el auto ya se cobró o se dejó salir sin cobro). Se avisa, no se
+    // bloquea: también puede volver de verdad. MLT748, 12/11/2026: salió con descuento total y en
+    // el mismo minuto se cargó y cobró otra estadía de 0 minutos.
+    const salidaReciente = hourly.length ? null : await this.salidaReciente(plate);
+    return { plate, hourly, daily, similares, salidaReciente };
+  }
+
+  private async salidaReciente(plate: string) {
+    const desde = dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').subtract(30, 'minute').format('YYYY-MM-DD HH:mm:ss');
+    const [fila]: { id: string; hora: string; cobrado: string; descuento: string; motivo: string | null }[] = await this.dataSource.query(`
+      SELECT r.id, to_char(r."departureDay" + r."departureTime", 'HH24:MI') AS hora,
+        COALESCE((SELECT SUM(m.monto) FROM movimientos m WHERE m."ticketRegistrationId" = r.id AND m.tipo IN ('ANTICIPO', 'SALDO', 'AJUSTE')), 0) AS cobrado,
+        COALESCE((SELECT SUM(m.monto) FROM movimientos m WHERE m."ticketRegistrationId" = r.id AND m.tipo = 'DESCUENTO'), 0) AS descuento,
+        (SELECT m.motivo FROM movimientos m WHERE m."ticketRegistrationId" = r.id AND m.tipo = 'DESCUENTO' ORDER BY m.sequence DESC LIMIT 1) AS motivo
+      FROM ticket_registrations r
+      WHERE r."licensePlateNormalized" = $1 AND r."departureDay" IS NOT NULL AND r."departureTime" IS NOT NULL
+        AND (r."departureDay" + r."departureTime") >= $2::timestamp
+      ORDER BY r."departureDay" DESC, r."departureTime" DESC LIMIT 1`, [plate, desde]);
+    if (!fila) return null;
+    return { id: fila.id, hora: fila.hora, cobrado: Number(fila.cobrado), descuento: Number(fila.descuento), motivoDescuento: fila.motivo };
   }
 
   async searchActiveRegistrations(q: string) {
@@ -1249,7 +1272,10 @@ async removePriceBracket(id: string) {
     if (saldo <= 0) return null;
     const vehicle = registration.vehicleType ?? registration.ticket?.vehicleType;
     if (!vehicle) return null;
-    const snapshot = registration.pricingSnapshot ?? await this.capturePricing(vehicle, manager, false);
+    const copia = registration.pricingSnapshot ?? await this.capturePricing(vehicle, manager, false);
+    // El escalón anterior de la escalera, no «se fue dentro de la tolerancia»: con esa regla el
+    // primer escalón ofrecía como anterior un precio de $0.
+    const snapshot = { ...copia, schedule: { ...copia.schedule, sinCobroEnTolerancia: false } };
     const entry = dayjs.tz(`${registration.entryDay} ${registration.entryTime}`, 'YYYY-MM-DD HH:mm:ss', 'America/Argentina/Buenos_Aires');
     const bruto = preview.price + preview.descuentoTotal;
     const calcular = (minutos: number) => calculateStayPrice(snapshot, vehicle, entry.toDate(), entry.add(minutos, 'minute').toDate());

@@ -10,4 +10,8 @@ export class OpenTurnoDto {
   @IsUUID() @IsOptional() sesionActivaId?: string;
   @IsInt() @Min(0) @IsOptional() cambioAgregado?: number;
   @IsString() @MaxLength(255) @IsOptional() motivoApertura?: string;
+  // Se suma a una caja compartida abierta: cuenta el cajón (conteo de relevo). Una diferencia
+  // exige motivoConteoRelevo.
+  @IsInt() @Min(0) @IsOptional() conteoRelevo?: number;
+  @IsString() @MaxLength(255) @IsOptional() motivoConteoRelevo?: string;
 }

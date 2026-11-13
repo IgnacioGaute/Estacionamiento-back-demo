@@ -36,6 +36,7 @@ export function cambiosDeTarifas(
     'dayStartHour',
     'dayEndHour',
     'graceMinutes',
+    'sinCobroEnTolerancia',
     'pricingDayTypeBasis',
   ] as const)
     anotar(campo, antes.schedule[campo], despues.schedule[campo]);

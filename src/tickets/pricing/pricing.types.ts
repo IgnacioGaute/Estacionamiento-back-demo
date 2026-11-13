@@ -17,6 +17,9 @@ export interface PricingSchedule {
   dayStartHour: number;
   dayEndHour: number;
   graceMinutes: number;
+  // El auto que se va antes de la tolerancia no paga. Ausente en las copias anteriores (11/2026):
+  // esas estadías se cobran como entonces.
+  sinCobroEnTolerancia?: boolean;
   pricingDayTypeBasis: PricingBasis;
   pricingOptions?: PricingOptions | null;
 }

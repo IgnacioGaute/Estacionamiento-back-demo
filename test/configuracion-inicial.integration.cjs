@@ -78,6 +78,8 @@ before(async () => {
       ['1790000034000-alias-abonos', 'AliasAbonos1790000034000'],
       ['1790000035000-alias-inquilinos', 'AliasInquilinos1790000035000'],
       ['1790000036000-turnos-diarios', 'TurnosDiarios1790000036000'],
+      ['1790000050000-conteos-caja', 'ConteosCaja1790000050000'],
+      ['1790000051000-tolerancia-sin-cobro', 'ToleranciaSinCobro1790000051000'],
       ['1790000042000-modalidad-operacion', 'ModalidadOperacion1790000042000'],
       ['1790000043000-superadmin-operativo', 'SuperadminOperativo1790000043000'],
       ['1790000044000-datos-cliente-estadia', 'DatosClienteEstadia1790000044000'],

@@ -32,6 +32,12 @@ export function calculateStayPrice(snapshot: PricingSnapshot, vehicle: string, e
   const elapsedMinutes = end.diff(start, 'minute');
   const basis = options.crossing.enabled ? options.crossing.mode : schedule.pricingDayTypeBasis;
   const fixedDay = resolveDayType(schedule, (basis === 'ENTRY' ? start : end).hour());
+  // Llegó y se fue antes de la tolerancia: no se cobra (la playa lo puede apagar en Tarifas).
+  if (schedule.sinCobroEnTolerancia && schedule.graceMinutes > 0 && elapsedMinutes < schedule.graceMinutes) {
+    return { price: 0, label: 'Dentro de la tolerancia', usedFallback: false,
+      breakdown: [{ label: `Se fue antes de los ${schedule.graceMinutes} min de tolerancia: no se cobra`, minutes: elapsedMinutes, amount: 0 }] as PricingLine[],
+      elapsedMinutes, billableMinutes: 0, pricingDayTypeBasis: basis, ticketDayType: fixedDay };
+  }
   const breakdown: PricingLine[] = [];
   const free = options.stay.enabled ? Math.min(elapsedMinutes, options.stay.freeMinutes) : 0;
   const remaining = elapsedMinutes - free;

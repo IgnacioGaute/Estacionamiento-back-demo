@@ -41,6 +41,7 @@ export class TariffPlanService {
       dayStartHour: schedule.dayStartHour,
       dayEndHour: schedule.dayEndHour,
       graceMinutes: schedule.graceMinutes,
+      sinCobroEnTolerancia: schedule.sinCobroEnTolerancia,
       pricingDayTypeBasis: schedule.pricingDayTypeBasis,
       pricingOptions: {
         charging: { ...options.charging, rates: options.charging.rates.map(row => ({ ...row })) },

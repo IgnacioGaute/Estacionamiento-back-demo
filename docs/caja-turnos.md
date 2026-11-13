@@ -21,6 +21,16 @@ Una puerta no necesariamente equivale a una caja: dos puertas pueden compartir e
 
 ## Fondo y traspaso
 
+El efectivo recibido se escribe después de contar: no hay atajo para copiar el saldo anterior ni el fondo sugerido. Se conserva la opción explícita de recibir cero. Si lo contado coincide, se muestra «Coincide» con un tilde verde; si no, el motivo se elige con botones (cierre y relevo: `MOTIVOS_DIFERENCIA`, apertura: `MOTIVOS_APERTURA`, ambos con «Error del sistema» y «No sé el motivo») o se escribe.
+
+Al cerrar se cuenta todo el cajón antes de separar sueldo y recaudación, sin sumar retiros ya realizados. Los conteos son ciegos hasta «Comparar con lo esperado» (al abrir, «Comparar con lo que dejó»): antes la diferencia aparecía al escribir el primer dígito y cualquier número revelaba el esperado. El arqueo final guarda `primerConteo` (turno y sesión): el primer importe comparado; si el operador lo corrige después de ver lo esperado, la nota del cierre en Avisos lo dice.
+
+Después de comparar, `GET /turnos/:id/conciliacion` (responsable o administración) devuelve el fondo, entradas y salidas físicas con responsable y horario, los conteos de relevo y «Para revisar»: salidas sin cobro por descuento total, cobros de estadías de 0 a 2 minutos y patentes que vuelven a entrar dentro de los 15 minutos de salir. No viaja en `GET /turnos/caja`, que se consulta cada minuto y llegaría antes de contar. Sale del mismo libro de efectivo del cierre, incluyendo todos los participantes de la sesión y los sueldos ya retirados. No incluye pagos digitales ni modifica arqueos históricos. Los retiros durante la jornada siguen siendo exclusivos de administración y se registran antes del cierre.
+
+Conteo de relevo (`cash_session_counts`, migración 1790000050000): quien se suma a una caja compartida abierta (`conteoRelevo` en `POST /turnos/open`) y quien la deja mientras otros siguen (`conteoRelevo` en el cierre sin arqueo) cuenta el cajón. No mueve dinero ni cambia el esperado; guarda contado, esperado y diferencia, y una diferencia exige `motivoConteoRelevo` (`MOTIVO_CONTEO_RELEVO_REQUERIDO`) y se publica en Avisos. No lo pide el cierre de un administrador sobre un turno ajeno ni las operaciones sin conexión guardadas antes del cambio.
+
+El super admin no abre turnos de caja (`SUPER_ADMIN_SIN_TURNO`): no pertenece a la empresa y su turno mezclaba su efectivo con el de la playa; abierto, además trabó el corte de medianoche de toda la playa el 12/11/2026. Registra entradas y salidas sin turno, como administración.
+
 El fondo sigue al último cierre de la caja física, independientemente del operador. Si A deja $20.000 y luego B deja $40.000 en la misma caja, cuando vuelve A recibe la referencia de $40.000. Los fondos de otras cajas no se mezclan.
 
 La apertura muestra quién dejó la caja, el efectivo que dejó y los vehículos que quedaron dentro al cerrar. Si la ocupación cambió, también muestra la cantidad actual; no inventa datos de cierres antiguos.

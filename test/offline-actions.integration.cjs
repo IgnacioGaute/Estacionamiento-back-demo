@@ -45,6 +45,10 @@ before(async () => {
     migrationsRun: true, synchronize: true,
   });
   await ds.initialize();
+  // Estas pruebas cubren otras reglas con estadías de pocos minutos: sin cobro dentro de la
+  // tolerancia (activo por defecto) se prueba aparte (stay-pricing.spec y tickets.integration).
+  await ds.query('ALTER TABLE ticket_schedule_settings ALTER COLUMN "sinCobroEnTolerancia" SET DEFAULT false');
+  await ds.query('UPDATE ticket_schedule_settings SET "sinCobroEnTolerancia" = false');
   const { Test } = require('@nestjs/testing');
   const { TypeOrmModule } = require('@nestjs/typeorm');
   const { ConfigModule } = require('@nestjs/config');
@@ -78,6 +82,8 @@ before(async () => {
       ['1790000042000-modalidad-operacion', 'ModalidadOperacion1790000042000'],
       ['1790000045000-qr-plan', 'QrPlan1790000045000'],
       ['1790000046000-origen-registro', 'OrigenRegistro1790000046000'],
+      ['1790000050000-conteos-caja', 'ConteosCaja1790000050000'],
+      ['1790000051000-tolerancia-sin-cobro', 'ToleranciaSinCobro1790000051000'],
     ]) await new (load('database/migrations/' + file, name))().up(runner);
   } finally { await runner.release(); }
   installTenantConnections(ds);

@@ -52,6 +52,10 @@ before(async () => {
   pgStarted = true;
   ds = new DataSource({ type: 'postgres', host: '127.0.0.1', port, username: 'postgres', database: 'postgres', entities: [path.resolve('dist/**/*.entity.js')], migrations: [load('database/migrations/1790000000000-flexible-vehicle-types', 'FlexibleVehicleTypes1790000000000')], migrationsRun: true, synchronize: true });
   await ds.initialize();
+  // Estas pruebas cubren otras reglas con estadías de pocos minutos: sin cobro dentro de la
+  // tolerancia (activo por defecto) se prueba aparte (stay-pricing.spec y tickets.integration).
+  await ds.query('ALTER TABLE ticket_schedule_settings ALTER COLUMN "sinCobroEnTolerancia" SET DEFAULT false');
+  await ds.query('UPDATE ticket_schedule_settings SET "sinCobroEnTolerancia" = false');
   const repo = entity => ds.getRepository(entity);
   shifts = new TurnosService(repo(Turno), repo(Movimiento), ds);
   movements = new MovimientosService(repo(Movimiento), shifts);
@@ -96,7 +100,9 @@ async function context(id = user.id) { return shifts.getCashContext(id); }
 async function principal() { return (await context()).cajas.find(c => c.principal); }
 async function openCash(id, received, caja) {
   caja ??= await principal();
-  return shifts.open(id, { cajaId: caja.id, fondoInicial: caja.session ? 0 : received, cambioAgregado: caja.session ? 0 : Math.max(0, received - caja.efectivoDisponible), sesionActivaId: caja.session?.id, sesionAnteriorId: caja.pending?.id, turnoAnteriorId: caja.legacyPending?.id });
+  return shifts.open(id, { cajaId: caja.id, fondoInicial: caja.session ? 0 : received, cambioAgregado: caja.session ? 0 : Math.max(0, received - caja.efectivoDisponible), sesionActivaId: caja.session?.id, sesionAnteriorId: caja.pending?.id, turnoAnteriorId: caja.legacyPending?.id,
+    // Sumarse a una caja abierta pide contarla: acá coincide con lo esperado.
+    conteoRelevo: caja.session ? caja.efectivoDisponible : undefined });
 }
 async function closeCash(id, retained = 0) {
   const ctx = await context(id);
@@ -155,10 +161,25 @@ test('misma caja: dos usuarios, fondo único, operaciones propias y arqueo del �
   const current = await context();
   assert.equal(current.cajas[0].efectivoDisponible, 14000);
   assert.equal(current.active.efectivoOperado, 5000);
+  // La conciliación no viaja en el contexto (se pide cada minuto, antes de contar): se pide aparte.
+  assert.equal(current.active.conciliacion, undefined);
+  const detalle = await shifts.conciliacion(a.id, user.id, 'USER');
+  assert.equal(detalle.fondoInicial, 2000);
+  assert.equal(detalle.ingresos, 12000);
+  assert.equal(detalle.esperado, current.active.efectivoDisponible);
+  await assert.rejects(shifts.conciliacion(a.id, second.id, 'USER'), /responsable/);
+  assert.deepEqual(detalle.conteos.map(k => [k.momento, k.contado, k.diferencia]), [['INGRESO', 2000, 0]]);
   assert.equal((await context(second.id)).active.efectivoOperado, 7000);
   await assert.rejects(shifts.close(a.id, third.id, { cerrarCaja: false }, 'USER'), /responsable/);
   await assert.rejects(shifts.close(a.id, third.id, { cerrarCaja: false }, 'ADMIN'), /por qué/);
-  const individual = await shifts.close(a.id, user.id, { cerrarCaja: false });
+  // Deja la caja y el otro sigue: cuenta el cajón. Con diferencia, motivo.
+  await assert.rejects(shifts.close(a.id, user.id, { cerrarCaja: false }), /Contá el efectivo/);
+  await assert.rejects(shifts.close(a.id, user.id, { cerrarCaja: false, conteoRelevo: 13000 }), (e) => e.response?.code === 'MOTIVO_CONTEO_RELEVO_REQUERIDO');
+  const individual = await shifts.close(a.id, user.id, { cerrarCaja: false, conteoRelevo: 13000, motivoConteoRelevo: 'Error en un vuelto' });
+  const relevos = (await shifts.conciliacion(b.id, second.id, 'USER')).conteos;
+  assert.deepEqual(relevos.map(k => [k.momento, k.contado, k.esperado, k.diferencia, k.motivo]), [['INGRESO', 2000, 2000, 0, null], ['SALIDA', 13000, 14000, 1000, 'Error en un vuelto']]);
+  // El conteo no mueve dinero: lo esperado sigue igual.
+  assert.equal((await principal()).efectivoDisponible, 14000);
   assert.equal(individual.cierreCaja, false);
   assert.equal(individual.efectivoContado, null);
   assert.equal((await principal()).session.estado, 'ABIERTO');
@@ -181,6 +202,12 @@ test('cajas separadas: los cobros y retiros quedan en su caja y no duplican vent
   assert.equal((await context(second.id)).efectivoDisponible, 7000);
   await shifts.addCashMovement(b.cashSessionId, user.id, { tipo: 'APORTE', importe: 500, efectivoEsperado: 7000, motivo: 'Cambio extra' }, 'ADMIN');
   assert.equal((await context(second.id)).efectivoDisponible, 7500);
+  const detalle = await shifts.conciliacion((await context(second.id)).active.id, second.id, 'USER');
+  assert.equal(detalle.fondoInicial, 3000);
+  assert.equal(detalle.ingresos, 5500);
+  assert.equal(detalle.egresos, 1000);
+  assert.equal(detalle.esperado, 7500);
+  assert.equal(detalle.movimientos.length, 3, 'no mezcla movimientos de otra caja');
   assert.equal(await totalBox(), before);
   await assert.rejects(shifts.addCashMovement(b.cashSessionId, user.id, { tipo: 'RETIRO', importe: 50, efectivoEsperado: 7000, motivo: 'Desactualizado' }, 'ADMIN'), /cambió/);
   await assert.rejects(shifts.saveCaja({ nombre: 'Entrada lateral', activa: false }, lateral.id), /Cerrá la caja/);
@@ -229,8 +256,8 @@ test('sueldos individuales: importes distintos, usuario sin retiro y jornadas co
   await cash(user.id, 100000);
   await tickets.updateSchedule({ sueldosPorUsuario: [] });
   const balance = (await context()).efectivoDisponible;
-  const closedA = await shifts.close(a.id, user.id, { cerrarCaja: false, efectivoEsperado: balance, sueldoEsperado: 10000 });
-  const closedB = await shifts.close(b.id, second.id, { cerrarCaja: false, efectivoEsperado: balance - 10000, sueldoEsperado: 20000 });
+  const closedA = await shifts.close(a.id, user.id, { cerrarCaja: false, efectivoEsperado: balance, sueldoEsperado: 10000, conteoRelevo: balance });
+  const closedB = await shifts.close(b.id, second.id, { cerrarCaja: false, efectivoEsperado: balance - 10000, sueldoEsperado: 20000, conteoRelevo: balance - 10000 });
   const closedC = await closeCash(third.id, 15000);
   assert.deepEqual([closedA.sueldoRetirado, closedB.sueldoRetirado, closedC.sueldoRetirado], [10000, 20000, 0]);
   assert.equal(closedC.alertaSueldo, null);
@@ -352,6 +379,40 @@ test('fondo protegido apagado (0): el sueldo no reserva efectivo para un fondo',
   } finally {
     await shifts.saveCaja({ nombre: register.nombre, fondoObjetivo: 15000 }, register.id);
   }
+});
+
+test('super admin: no abre turnos de caja (su efectivo no se mezcla con la playa)', async () => {
+  const root = await ds.getRepository(User).save({ username: 'root-turno', email: 'root-turno@example.test', firstName: 'Root', lastName: 'Turno', role: 'SUPER_ADMIN' });
+  const caja = await principal();
+  await assert.rejects(shifts.open(root.id, { cajaId: caja.id, fondoInicial: 0 }, 'SUPER_ADMIN'), (e) => e.response?.code === 'SUPER_ADMIN_SIN_TURNO');
+  assert.equal(await ds.getRepository(Turno).count({ where: { usuarioApertura: { id: root.id } } }), 0);
+});
+
+test('arqueo: guarda el primer conteo, marca estadías para revisar y avisa la patente que acaba de salir', async () => {
+  const t = await openCash(user.id, 15000);
+  // MLT748 (12/11/2026): salió sin cobro con un descuento total y en el mismo minuto se cargó y
+  // cobró otra estadía de la misma patente.
+  const primera = await age(await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'MLT748' }), 9);
+  const precio = (await tickets.getCloseSummary(primera.id)).previewBracket.price;
+  await tickets.discountRegistration(primera.id, { monto: precio, total: true, motivo: 'Poco tiempo', expectedPrice: precio, expectedCollected: 0 }, user.id);
+  await tickets.closeRegistrationByPlate(primera.id, await payload(primera.id, { closeType: 'NO_CHARGE', metodo: undefined }), user.id);
+  const estado = await tickets.getPlateStatus('mlt 748');
+  assert.equal(estado.hourly.length, 0);
+  assert.deepEqual([estado.salidaReciente.id, estado.salidaReciente.cobrado, estado.salidaReciente.motivoDescuento], [primera.id, 0, 'Poco tiempo']);
+  assert.equal((await tickets.getPlateStatus('OTRA999')).salidaReciente, null);
+  const segunda = await age(await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'MLT748' }), 1);
+  await tickets.closeRegistrationByPlate(segunda.id, await payload(segunda.id), user.id);
+  const detalle = await shifts.conciliacion(t.id, user.id, 'USER');
+  // Las dos salidas pueden caer en el mismo segundo: se compara sin depender del orden.
+  const marcas = detalle.paraRevisar.filter(x => x.patente === 'MLT748').map(x => [x.id === primera.id ? 'primera' : 'segunda', x.motivo]).sort();
+  assert.deepEqual(marcas, [['primera', 'DESCUENTO_TOTAL'], ['segunda', 'COBRO_SIN_TIEMPO'], ['segunda', 'REINGRESO']]);
+  // El operador cargó 500 menos, vio lo esperado y corrigió: queda el primer conteo.
+  const esperado = (await context()).efectivoDisponible;
+  const closed = await shifts.close(t.id, user.id, { efectivoContado: esperado, efectivoEsperado: esperado, efectivoParaSiguiente: 15000, sueldoEsperado: 0, primerConteo: esperado - 500 });
+  assert.equal(closed.primerConteo, esperado - 500);
+  assert.equal((await ds.getRepository(Session).findOneByOrFail({ id: t.cashSessionId })).primerConteo, esperado - 500);
+  const [nota] = await ds.query(`SELECT description FROM notes WHERE "sourceKey" = $1`, ['cierre:' + t.id]);
+  assert.match(nota.description, /Primer conteo: \$\d+; se corrigió a \$\d+ después de ver lo esperado\./);
 });
 
 test('medianoche: corta una vez, conserva caja y jornada y no retira sueldo', async () => {
@@ -494,8 +555,12 @@ test('caja compartida: el primer sueldo reduce el saldo y el segundo no consume 
   const a = await openCash(user.id, 15000);
   const b = await openCash(second.id, 0);
   await cash(user.id, 25000);
-  await shifts.close(a.id, user.id, { cerrarCaja: false, efectivoEsperado: 40000, sueldoEsperado: 25000 });
+  await shifts.close(a.id, user.id, { cerrarCaja: false, efectivoEsperado: 40000, sueldoEsperado: 25000, conteoRelevo: 40000 });
   assert.equal((await context(second.id)).efectivoDisponible, 15000);
+  const conciliacion = await shifts.conciliacion(b.id, second.id, 'USER');
+  assert.equal(conciliacion.ingresos, 25000, 'conserva cobros del participante que cerró');
+  assert.equal(conciliacion.egresos, 25000, 'descuenta una sola vez el sueldo ya retirado');
+  assert.equal(conciliacion.esperado, 15000);
   const closed = await shifts.close(b.id, second.id, { cerrarCaja: true, efectivoContado: 15000, efectivoEsperado: 15000, efectivoParaSiguiente: 15000, sueldoEsperado: 0 });
   assert.equal(closed.sueldoRetirado, 0);
   assert.match(closed.alertaSueldo, /no alcanza/);

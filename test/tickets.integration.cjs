@@ -53,6 +53,10 @@ before(async () => {
   pgStarted = true;
   ds = new DataSource({ type: 'postgres', host: '127.0.0.1', port, username: 'postgres', database: 'postgres', entities: [path.resolve('dist/**/*.entity.js')], migrations: [load('database/migrations/1790000000000-flexible-vehicle-types', 'FlexibleVehicleTypes1790000000000')], migrationsRun: true, synchronize: true });
   await ds.initialize();
+  // Estas pruebas cubren otras reglas con estadías de pocos minutos: sin cobro dentro de la
+  // tolerancia (activo por defecto) se prueba aparte (stay-pricing.spec y tickets.integration).
+  await ds.query('ALTER TABLE ticket_schedule_settings ALTER COLUMN "sinCobroEnTolerancia" SET DEFAULT false');
+  await ds.query('UPDATE ticket_schedule_settings SET "sinCobroEnTolerancia" = false');
   const repo = entity => ds.getRepository(entity);
   shifts = new TurnosService(repo(Turno), repo(Movimiento), ds);
   movements = new MovimientosService(repo(Movimiento), shifts);
@@ -416,7 +420,7 @@ test('caja compartida: aperturas simultáneas, cobros propios y un único arqueo
   const ctx = await shifts.getCashContext();
   const caja = ctx.cajas[0];
   await assert.rejects(shifts.close(ctx.active.id, other.id, {}), /responsable/);
-  const results = await Promise.allSettled([1, 2].map(() => shifts.open(other.id, { fondoInicial: 0, cajaId: caja.id, sesionActivaId: caja.session.id })));
+  const results = await Promise.allSettled([1, 2].map(() => shifts.open(other.id, { fondoInicial: 0, cajaId: caja.id, sesionActivaId: caja.session.id, conteoRelevo: caja.efectivoDisponible })));
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
   const joined = results.find(r => r.status === 'fulfilled').value;
   assert.equal(joined.fondoInicial, 0);
@@ -429,7 +433,7 @@ test('caja compartida: aperturas simultáneas, cobros propios y un único arqueo
   const movement = await ds.getRepository(Movimiento).findOne({ where: { ticketRegistration: { id: registration.id } }, relations: ['turno'] });
   assert.equal(movement.turno.id, joined.id);
   await assert.rejects(closeCurrent(), /otros operadores/);
-  const individual = await shifts.close(ctx.active.id, user.id, { cerrarCaja: false });
+  const individual = await shifts.close(ctx.active.id, user.id, { cerrarCaja: false, conteoRelevo: expected });
   assert.equal(individual.efectivoContado, null);
   assert.equal(individual.cierreCaja, false);
   await assert.rejects(shifts.close(joined.id, user.id, { efectivoContado: expected, efectivoEsperado: expected }, 'ADMIN'), /por qué/);
@@ -682,7 +686,7 @@ test('escaneo: busca solo patentes exactas activas y conserva duplicados para el
   assert.deepEqual(found.daily, []);
   const legacy = await repo.save({ ...base, entryMode: 'BARCODE', vehiclePlateCustomer: 'leg-123', licensePlateNormalized: null });
   assert.deepEqual((await tickets.getPlateStatus('LEG123')).hourly.map(r => r.id), [legacy.id]);
-  assert.deepEqual(await tickets.getPlateStatus('NEW123'), { plate: 'NEW123', hourly: [], daily: [], similares: [] });
+  assert.deepEqual(await tickets.getPlateStatus('NEW123'), { plate: 'NEW123', hourly: [], daily: [], similares: [], salidaReciente: null });
   await assert.rejects(tickets.getPlateStatus('---'), /patente no es válida/);
   // Un carácter mal leído no encuentra nada exacto, pero ofrece los de adentro parecidos (y nunca
   // uno con salida); con coincidencia exacta no se ofrecen.
@@ -718,10 +722,10 @@ test('descuento parcial: reduce el saldo, cobra solo el resto y conserva autores
   const actor = await ds.getRepository(User).save({ username: 'discount-exit', firstName: 'Ana', lastName: 'Salida', email: 'discount-exit@example.test', role: 'ADMIN' });
   let ctx = await shifts.getCashContext(user.id);
   const cash = ctx.cajas.find(c => c.id === ctx.active?.cajaId) || ctx.cajas.find(c => c.principal);
-  if (!ctx.active) await shifts.open(user.id, { cajaId: cash.id, fondoInicial: cash.session ? 0 : cash.efectivoDisponible, sesionActivaId: cash.session?.id, sesionAnteriorId: cash.pending?.id, turnoAnteriorId: cash.legacyPending?.id });
+  if (!ctx.active) await shifts.open(user.id, { cajaId: cash.id, fondoInicial: cash.session ? 0 : cash.efectivoDisponible, sesionActivaId: cash.session?.id, sesionAnteriorId: cash.pending?.id, turnoAnteriorId: cash.legacyPending?.id, conteoRelevo: cash.session ? cash.efectivoDisponible : undefined });
   ctx = await shifts.getCashContext(user.id);
   const activeCash = ctx.cajas.find(c => c.id === ctx.active.cajaId);
-  await shifts.open(actor.id, { cajaId: activeCash.id, fondoInicial: 0, sesionActivaId: activeCash.session.id });
+  await shifts.open(actor.id, { cajaId: activeCash.id, fondoInicial: 0, sesionActivaId: activeCash.session.id, conteoRelevo: activeCash.efectivoDisponible });
   const before = await totalBox();
   const summary = await tickets.discountRegistration(registration.id, { monto: 300, motivo: 'Promoción acordada', expectedPrice: 1000, expectedCollected: 0 }, user.id);
   assert.equal(summary.previewBracket.price, 700);
@@ -881,6 +885,28 @@ test('avisos de operador: descuento y entrada duplicada conservan autor, patente
 // La entrada que se cargó tarde (el operador creyó haberla registrado y la cargó al cobrar): el
 // panel de cobro permite poner la hora real, solo hacia atrás y solo recién cargada.
 const TZ_AR = 'America/Argentina/Buenos_Aires';
+test('tolerancia: el auto que se va antes no paga si la playa lo tiene activo; las estadías anteriores, como entraron', async () => {
+  const repo = ds.getRepository(Schedule);
+  const settings = await repo.findOneOrFail({ where: {} });
+  const anterior = await age(await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'TOLANT1' }), 2);
+  await repo.update(settings.id, { sinCobroEnTolerancia: true, graceMinutes: 5 });
+  try {
+    const nueva = await age(await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'TOLNUE1' }), 2);
+    const gratis = await tickets.getCloseSummary(nueva.id);
+    assert.equal(gratis.previewBracket.price, 0);
+    assert.equal(gratis.saldoACobrar, 0);
+    // La que entró con la opción apagada conserva su copia de tarifas: se cobra.
+    assert.ok((await tickets.getCloseSummary(anterior.id)).previewBracket.price > 0);
+    // Desde la tolerancia en adelante se cobra como siempre.
+    await age(nueva, 6);
+    assert.ok((await tickets.getCloseSummary(nueva.id)).previewBracket.price > 0);
+  } finally {
+    await repo.update(settings.id, { sinCobroEnTolerancia: false });
+    // No quedan adentro para las pruebas que cuentan ocupación.
+    await ds.query(`DELETE FROM ticket_registrations WHERE "licensePlateOriginal" IN ('TOLANT1', 'TOLNUE1')`);
+  }
+});
+
 test('entrada olvidada: corrige la hora hacia atrás una sola vez y recalcula el cobro', async () => {
   const registration = await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'OLV' + (++counter) });
   assert.equal((await tickets.getCloseSummary(registration.id)).previewBracket.price, 1000);

@@ -83,3 +83,25 @@ describe('Reglas configurables y explicación del importe', () => {
   });
   test('rechaza fechas invertidas', () => { expect(() => calculateStayPrice(snapshot(), 'AUTO', at('12:00'), at('11:00'))).toThrow(); });
 });
+
+describe('Sin cobro dentro de la tolerancia', () => {
+  const conTolerancia = (sinCobro: boolean | undefined, base = snapshot()) => ({ ...base, schedule: { ...base.schedule, graceMinutes: 10, sinCobroEnTolerancia: sinCobro } });
+  test('si se va antes de la tolerancia no paga, con escalera o por unidad', () => {
+    for (const base of [snapshot(), advanced()]) {
+      const r = run(conTolerancia(true, base), 9);
+      expect(r.price).toBe(0);
+      expect(r.label).toBe('Dentro de la tolerancia');
+    }
+  });
+  test('desde la tolerancia en adelante se cobra como siempre', () => {
+    expect(run(conTolerancia(true), 10).price).toBe(600);
+  });
+  test('apagado, o en una copia anterior sin el dato, se cobra como antes', () => {
+    expect(run(conTolerancia(false), 9).price).toBe(600);
+    expect(run(conTolerancia(undefined), 9).price).toBe(600);
+  });
+  test('sin tolerancia configurada no regala nada', () => {
+    const s = snapshot();
+    expect(run({ ...s, schedule: { ...s.schedule, graceMinutes: 0, sinCobroEnTolerancia: true } }, 0).price).toBe(600);
+  });
+});

@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull, Not, Repository } from 'typeorm';
 import { CashRegister } from './entities/cash-register.entity';
 import { CashSession } from './entities/cash-session.entity';
+import { CashSessionCount } from './entities/cash-session-count.entity';
 import { CashSessionMovement } from './entities/cash-session-movement.entity';
 import { CajaDto, CashSessionMovementDto } from './dto/caja.dto';
 import { Turno } from './entities/turno.entity';
@@ -19,6 +20,7 @@ import { User, UserRole } from 'src/users/entities/user.entity';
 import { tenantContext } from 'src/tenancy/tenant-context';
 import dayjs from 'dayjs';
 import { exigirCobro } from 'src/tenancy/modalidad';
+import { conciliacionCaja } from './conciliacion-caja';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 
@@ -107,7 +109,9 @@ export class TurnosService {
     const net = await manager.getRepository(CashEntry).createQueryBuilder('c').where('c.turnoId = :id', { id: turno.id }).select('COALESCE(SUM(c.amount), 0)', 'sum').getRawOne();
     const caja = turno.cajaId ? await manager.getRepository(CashRegister).findOneBy({ id: turno.cajaId }) : null;
     const disponible = await this.cashTotal(turno, manager);
-    return { ...turno, resumen: await shiftSummary(manager, turno), fondoObjetivo: caja?.fondoObjetivo ?? 0, sueldoSugerido: salaryWithdrawal(disponible, caja?.fondoObjetivo ?? 0, turno.sueldoPrevisto), efectivoDisponible: await this.cashTotal(turno, manager), efectivoOperado: Number(net.sum), usuariosEnCaja: others, requiereArqueo: others === 1 };
+    // La conciliación no viaja acá: el contexto se pide cada minuto y llegaría al celular antes de
+    // contar. Se pide aparte, al cargar el conteo (ver conciliacion()).
+    return { ...turno, resumen: await shiftSummary(manager, turno), fondoObjetivo: caja?.fondoObjetivo ?? 0, sueldoSugerido: salaryWithdrawal(disponible, caja?.fondoObjetivo ?? 0, turno.sueldoPrevisto), efectivoDisponible: disponible, efectivoOperado: Number(net.sum), usuariosEnCaja: others, requiereArqueo: others === 1 };
   }
 
   async getCashContext(usuarioId = tenantContext.getStore()?.userId) {
@@ -181,7 +185,38 @@ export class TurnosService {
     });
   }
 
-  async open(usuarioId: string, dto: OpenTurnoDto): Promise<Turno> {
+  /**
+   * Cómo se llega al efectivo esperado de la caja del turno, con los conteos de relevo y las
+   * estadías para revisar. Solo el responsable del turno o administración. La pantalla la pide
+   * después de que el operador carga el conteo (el arqueo es ciego).
+   */
+  async conciliacion(id: string, usuarioId: string, rol?: UserRole) {
+    const turno = await this.turnoRepository.findOne({ where: { id }, relations: ['usuarioApertura'] });
+    if (!turno) throw new NotFoundException('Turno no encontrado.');
+    if (turno.usuarioApertura?.id !== usuarioId && !['ADMIN', 'SUPER_ADMIN'].includes(rol ?? ''))
+      throw new ForbiddenException('Solo el responsable del turno o un administrador pueden ver la caja.');
+    return conciliacionCaja(this.dataSource.manager, turno);
+  }
+
+  // Conteo de relevo en una caja compartida: no mueve dinero, deja escrito cuánto había. Una
+  // diferencia exige motivo, igual que el arqueo.
+  private async conteoRelevo(manager: EntityManager, datos: { sesionId: string; turnoId: string; usuarioId: string; momento: 'INGRESO' | 'SALIDA'; contado: number; motivo?: string }) {
+    const esperado = await this.sessionTotal(datos.sesionId, manager);
+    const diferencia = esperado - datos.contado;
+    if (diferencia !== 0 && !datos.motivo?.trim()) {
+      throw new BadRequestException({ code: 'MOTIVO_CONTEO_RELEVO_REQUERIDO', message: 'Lo contado no coincide con lo esperado: escribí el motivo de la diferencia.' });
+    }
+    await manager.getRepository(CashSessionCount).save({ ...(operationContext.getStore() ? { createdAt: operationNow() } : {}),
+      sesionId: datos.sesionId, turnoId: datos.turnoId, usuarioId: datos.usuarioId, momento: datos.momento, contado: datos.contado,
+      esperado, diferencia, motivo: datos.motivo?.trim() || null });
+    return { esperado, diferencia };
+  }
+
+  async open(usuarioId: string, dto: OpenTurnoDto, rol?: UserRole): Promise<Turno> {
+    // El super admin no es parte de la empresa: su turno mezclaba su efectivo con la caja de la playa
+    // y, abierto, trabó el corte de medianoche de toda la playa (12/11/2026). Puede registrar
+    // entradas y salidas sin turno, como administración.
+    if (rol === 'SUPER_ADMIN') throw new ForbiddenException({ code: 'SUPER_ADMIN_SIN_TURNO', message: 'El super admin no abre turnos de caja. Podés registrar entradas y salidas sin turno; para trabajar la caja, usá una cuenta de la empresa.' });
     return operationTransaction(this.dataSource, async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       // Una playa gratuita no tiene caja ni turnos de caja (y el cambio a gratuita exige cerrarlos).
@@ -228,6 +263,13 @@ export class TurnosService {
       if (ctx.legacyPending) await repo.update(ctx.legacyPending.id, { recibidoPorTurnoId: turno.id });
       if (dto.turnoAnteriorId && ctx.pending) await repo.update(dto.turnoAnteriorId, { recibidoPorTurnoId: turno.id });
       if (!ctx.session) await publishAutomaticNote(manager, { sourceKey: `apertura:${session.id}`, origin: 'Apertura de caja', sourceType: 'TURNO', sourceId: turno.id, usuarioId, description: dto.motivoApertura, context: `${caja.nombre} · ${turno.nombre}` });
+      else if (dto.conteoRelevo !== undefined || !operationContext.getStore()) {
+        // Se suma a la caja abierta: cuenta lo que hay. Las aperturas guardadas sin conexión antes de
+        // este cambio no lo traen y se sincronizan igual.
+        if (dto.conteoRelevo === undefined) throw new BadRequestException({ code: 'CONTEO_RELEVO_REQUERIDO', message: 'Contá el efectivo de la caja antes de sumarte.' });
+        const conteo = await this.conteoRelevo(manager, { sesionId: session.id, turnoId: turno.id, usuarioId, momento: 'INGRESO', contado: dto.conteoRelevo, motivo: dto.motivoConteoRelevo });
+        if (conteo.diferencia !== 0) await publishAutomaticNote(manager, { sourceKey: `relevo:${turno.id}:INGRESO`, origin: 'Conteo de relevo', sourceType: 'TURNO', sourceId: turno.id, usuarioId, description: `${conteo.diferencia > 0 ? 'Faltan' : 'Sobran'} $${Math.abs(conteo.diferencia)} al sumarse a la caja. ${dto.motivoConteoRelevo!.trim()}`, context: `${caja.nombre} · ${turno.nombre}` });
+      }
       return turno;
     });
   }
@@ -323,6 +365,14 @@ export class TurnosService {
         if (count > 1) {
           if (dto.cerrarCaja || dto.efectivoContado !== undefined || dto.efectivoParaSiguiente !== undefined) throw new ConflictException('Hay otros operadores en esta caja. Cerrá sólo tu turno; el último realiza el arqueo.');
           if (dto.efectivoEsperado !== await this.cashTotal(turno, manager) && turno.sueldoPrevisto > 0) throw new ConflictException('Cambió el efectivo de la caja. Revisá el cierre.');
+          // Deja la caja y otros siguen: cuenta lo que hay (antes del sueldo, que sale después). No lo
+          // pide el cierre de un administrador sobre un turno ajeno (no está en el cajón) ni las
+          // salidas guardadas sin conexión antes de este cambio.
+          if (!forzado && (dto.conteoRelevo !== undefined || !operationContext.getStore())) {
+            if (dto.conteoRelevo === undefined) throw new BadRequestException({ code: 'CONTEO_RELEVO_REQUERIDO', message: 'Contá el efectivo de la caja antes de dejarla.' });
+            const conteo = await this.conteoRelevo(manager, { sesionId: turno.cashSessionId, turnoId: turno.id, usuarioId, momento: 'SALIDA', contado: dto.conteoRelevo, motivo: dto.motivoConteoRelevo });
+            if (conteo.diferencia !== 0) await publishAutomaticNote(manager, { sourceKey: `relevo:${turno.id}:SALIDA`, origin: 'Conteo de relevo', sourceType: 'TURNO', sourceId: turno.id, usuarioId, description: `${conteo.diferencia > 0 ? 'Faltan' : 'Sobran'} $${Math.abs(conteo.diferencia)} al dejar la caja. ${dto.motivoConteoRelevo!.trim()}`, context: `${caja?.nombre ?? 'Caja'} · ${turno.nombre}` });
+          }
           if (salary) await manager.getRepository(CashSessionMovement).save({ ...(operationContext.getStore() ? { createdAt: operationNow() } : {}), sesionId: turno.cashSessionId, turnoId: turno.id, usuarioId, tipo: 'SUELDO', amount: -salary, motivo: 'Sueldo al finalizar la jornada' });
           Object.assign(turno, { usuarioCierre: { id: usuarioId }, fechaCierre: operationNow(), estado: 'CERRADO', cierreCaja: false,
             cierreForzado: forzado, motivoCierreForzado: forzado ? dto.motivoCierreForzado.trim() : null, observaciones: dto.observaciones ?? null });
@@ -345,14 +395,14 @@ export class TurnosService {
         });
       }
       Object.assign(turno, { usuarioCierre: { id: usuarioId }, fechaCierre: operationNow(), efectivoContado: dto.efectivoContado,
-        efectivoTeorico: teorico, diferencia: teorico - dto.efectivoContado, efectivoParaSiguiente: paraSiguiente,
+        primerConteo: dto.primerConteo ?? null, efectivoTeorico: teorico, diferencia: teorico - dto.efectivoContado, efectivoParaSiguiente: paraSiguiente,
         efectivoRetirado: dto.efectivoContado - paraSiguiente, observaciones: dto.observaciones ?? null, estado: 'CERRADO',
         cierreForzado: forzado, motivoCierreForzado: forzado ? dto.motivoCierreForzado.trim() : null });
       if (salary && turno.cashSessionId) await manager.getRepository(CashSessionMovement).save({ ...(operationContext.getStore() ? { createdAt: operationNow() } : {}), sesionId: turno.cashSessionId, turnoId: turno.id, usuarioId, tipo: 'SUELDO', amount: -salary, motivo: 'Sueldo al finalizar la jornada' });
       if (turno.cashSessionId) {
         turno.cierreCaja = true;
         await manager.getRepository(CashSession).update(turno.cashSessionId, { estado: 'CERRADO', fechaCierre: turno.fechaCierre, usuarioCierreId: usuarioId,
-          efectivoTeorico: teorico, efectivoContado: dto.efectivoContado, diferencia: teorico - dto.efectivoContado,
+          efectivoTeorico: teorico, efectivoContado: dto.efectivoContado, primerConteo: dto.primerConteo ?? null, diferencia: teorico - dto.efectivoContado,
           efectivoParaSiguiente: paraSiguiente, efectivoRetirado: dto.efectivoContado - paraSiguiente, observaciones: dto.observaciones ?? null });
       }
       await this.publishClosingNote(manager, turno, usuarioId, caja?.nombre);
@@ -361,7 +411,10 @@ export class TurnosService {
   }
 
   private async publishClosingNote(manager: EntityManager, turno: Turno, usuarioId: string, caja?: string) {
-    const description = [turno.observaciones?.trim(), turno.motivoCierreForzado ? `Cierre por administrador: ${turno.motivoCierreForzado}` : null].filter(Boolean).join('\n');
+    // Si el operador cambió el conteo después de ver lo esperado, queda la diferencia original.
+    const corregido = turno.primerConteo != null && turno.efectivoContado != null && turno.primerConteo !== turno.efectivoContado
+      ? `Primer conteo: $${turno.primerConteo}; se corrigió a $${turno.efectivoContado} después de ver lo esperado.` : null;
+    const description = [turno.observaciones?.trim(), corregido, turno.motivoCierreForzado ? `Cierre por administrador: ${turno.motivoCierreForzado}` : null].filter(Boolean).join('\n');
     await publishAutomaticNote(manager, { sourceKey: `cierre:${turno.id}`, origin: 'Cierre de turno', sourceType: 'TURNO', sourceId: turno.id, usuarioId, description, context: `${caja ?? 'Caja'} · ${turno.nombre}` });
   }
 

@@ -21,6 +21,8 @@ export class CashSession {
   @Index({ unique: true }) @Column('uuid', { nullable: true }) sesionAnteriorId: string | null;
   @Column('int', { nullable: true }) efectivoTeorico: number | null;
   @Column('int', { nullable: true }) efectivoContado: number | null;
+  // Ver Turno.primerConteo.
+  @Column('int', { nullable: true }) primerConteo: number | null;
   @Column('int', { nullable: true }) efectivoParaSiguiente: number | null;
   @Column('int', { nullable: true }) efectivoRetirado: number | null;
   @Column('int', { nullable: true }) diferencia: number | null;

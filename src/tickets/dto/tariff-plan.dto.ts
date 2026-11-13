@@ -6,6 +6,8 @@ export class TariffScheduleDto {
   @IsInt() @Min(0) @Max(23) dayStartHour: number;
   @IsInt() @Min(0) @Max(23) dayEndHour: number;
   @IsInt() @Min(0) @Max(5256000) graceMinutes: number;
+  // Opcional: un cliente anterior no lo manda y se conserva el valor guardado.
+  @IsOptional() @IsBoolean() sinCobroEnTolerancia?: boolean;
   @IsIn(['ENTRY', 'EXIT']) pricingDayTypeBasis: 'ENTRY' | 'EXIT';
   @IsDefined() @ValidateNested() @Type(() => PricingOptionsDto) pricingOptions: PricingOptionsDto;
 }

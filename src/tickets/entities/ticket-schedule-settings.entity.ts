@@ -45,6 +45,10 @@ export class TicketScheduleSettings {
   @Column('int', { default: 5 })
   graceMinutes: number;
 
+  // Si el auto se va antes de la tolerancia, no se cobra. Activo por defecto.
+  @Column('boolean', { default: true })
+  sinCobroEnTolerancia: boolean;
+
   @Column('varchar', { default: 'EXIT' })
   pricingDayTypeBasis: 'ENTRY' | 'EXIT';
 

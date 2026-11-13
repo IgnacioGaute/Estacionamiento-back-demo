@@ -83,7 +83,8 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     'markAllRead',
   ],
   // estadiasAbiertas: el operador repasa, al cerrar su turno, las entradas suyas que siguen abiertas.
-  TurnosController: ['open', 'close', 'getCashContext', 'getMyOpenTurno', 'estadiasAbiertas'],
+  // conciliacion: cómo se llega al esperado, después de cargar el conteo (responsable o admin).
+  TurnosController: ['open', 'close', 'getCashContext', 'getMyOpenTurno', 'estadiasAbiertas', 'conciliacion'],
   TenantContextController: ['context'],
   // El operador ve la lista (sin los totales de la playa), lo que debe y lo que pagó cada
   // inquilino, le cobra y le entrega el recibo. El estado de cuenta con sus movimientos, saldo
@@ -164,7 +165,7 @@ export const SUSPENDED_ENDPOINTS: Record<string, readonly string[]> = {
     'ampliarBusqueda',
     'cancelarCobro',
   ],
-  TurnosController:['open', 'close', 'getCashContext', 'getMyOpenTurno', 'estadiasAbiertas'],
+  TurnosController:['open', 'close', 'getCashContext', 'getMyOpenTurno', 'estadiasAbiertas', 'conciliacion'],
   BoxListsController: ['findOne', 'findBoxByDate'],
 };
 
@@ -202,7 +203,7 @@ export const FREE_MODE_BLOCKED: Record<string, readonly string[]> = {
     // Una playa gratuita no entrega comprobantes de entrada ni de salida.
     'issueParkingReceipt',
   ],
-  TurnosController: ['open', 'close', 'createCaja', 'updateCaja', 'addCashMovement'],
+  TurnosController: ['open', 'close', 'createCaja', 'updateCaja', 'addCashMovement', 'conciliacion'],
   BoxListsController: [
     'configurarComisiones',
     'createBox',

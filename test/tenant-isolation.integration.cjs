@@ -158,6 +158,8 @@ before(async () => {
     await new (load('database/migrations/1790000044000-datos-cliente-estadia', 'DatosClienteEstadia1790000044000'))().up(migrationRunner);
     await new (load('database/migrations/1790000045000-qr-plan', 'QrPlan1790000045000'))().up(migrationRunner);
     await new (load('database/migrations/1790000046000-origen-registro', 'OrigenRegistro1790000046000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000050000-conteos-caja', 'ConteosCaja1790000050000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000051000-tolerancia-sin-cobro', 'ToleranciaSinCobro1790000051000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }

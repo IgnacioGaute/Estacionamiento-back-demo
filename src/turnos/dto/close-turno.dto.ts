@@ -20,6 +20,14 @@ export class CloseTurnoDto {
   @IsOptional()
   efectivoEsperado?: number;
 
+  // Arqueo final: el primer importe que el operador confirmó, antes de ver lo esperado.
+  @IsInt() @Min(0) @IsOptional() primerConteo?: number;
+
+  // Deja una caja compartida que sigue abierta: cuenta el cajón (conteo de relevo). Una
+  // diferencia exige motivoConteoRelevo.
+  @IsInt() @Min(0) @IsOptional() conteoRelevo?: number;
+  @IsString() @MaxLength(255) @IsOptional() motivoConteoRelevo?: string;
+
   @IsString()
   @IsOptional()
   observaciones?: string;
