@@ -415,6 +415,88 @@ test('arqueo: guarda el primer conteo, marca estadías para revisar y avisa la p
   assert.match(nota.description, /Primer conteo: \$\d+; se corrigió a \$\d+ después de ver lo esperado\./);
 });
 
+test('auditoría: anticipos, descuentos, devoluciones, pagos mixtos, «Se fue antes», entrada olvidada, abonos y gastos cierran exacto', async () => {
+  // Faltantes de caja sin explicar (11/2026): se comprueba que cada peso en efectivo que registra
+  // una operación llega a la caja, y que cada estadía queda saldada. Dos fuentes independientes:
+  // el libro de movimientos de las estadías y los cash_entries de la caja.
+  const t = await openCash(user.id, 15000);
+  const fondo = (await context()).efectivoDisponible;
+  const precioDe = async (id) => (await tickets.getCloseSummary(id)).previewBracket.price;
+  const cerrar = (id, extra) => payload(id, extra).then(dto => tickets.closeRegistrationByPlate(id, dto, user.id));
+  const ids = [];
+  const nueva = async (minutos, patente) => { const r = await age(await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: patente }), minutos); ids.push(r.id); return r; };
+
+  // Anticipo en efectivo, se reduce (devolución en efectivo) y al salir sobra: se devuelve el resto.
+  const a = await nueva(30, 'AUD001');
+  await tickets.addAdvancePayment(a.id, { advancePaidAmount: 3000, metodo: 'CASH' }, user.id);
+  await tickets.addAdvancePayment(a.id, { advancePaidAmount: 2000, metodo: 'CASH', adjustmentReason: 'Se cobró de más' }, user.id);
+  await cerrar(a.id, { closeType: 'NO_CHARGE', metodo: undefined, refundMetodo: 'CASH' });
+  // Descuento parcial y cobro mixto: efectivo y transferencia.
+  const b = await nueva(90, 'AUD002');
+  const precioB = await precioDe(b.id);
+  await tickets.discountRegistration(b.id, { monto: 300, motivo: 'Cliente frecuente', expectedPrice: precioB, expectedCollected: 0 }, user.id);
+  const saldoB = await precioDe(b.id);
+  await cerrar(b.id, { metodo: undefined, pagos: [{ metodo: 'CASH', importe: saldoB - 500 }, { metodo: 'TRANSFER', importe: 500 }] });
+  // Parte en efectivo y el resto por transferencia.
+  const c = await nueva(90, 'AUD003');
+  await tickets.cobrarParteEnEfectivo(c.id, { importe: 700, expectedPrice: await precioDe(c.id), expectedCollected: 0 }, user.id);
+  await cerrar(c.id, { metodo: 'TRANSFER' });
+  // Descuento total: sale sin cobro.
+  const d = await nueva(30, 'AUD004');
+  const precioD = await precioDe(d.id);
+  await tickets.discountRegistration(d.id, { monto: precioD, total: true, motivo: 'Poco tiempo', expectedPrice: precioD, expectedCollected: 0 }, user.id);
+  await cerrar(d.id, { closeType: 'NO_CHARGE', metodo: undefined });
+  // Cortesía.
+  const e = await nueva(30, 'AUD005');
+  await cerrar(e.id, { closeType: 'COURTESY', motivo: 'Invitado', metodo: undefined });
+  // «Se fue antes»: se cobra en efectivo la tarifa elegida, no la de ahora.
+  const f = await nueva(5 * 60, 'AUD006');
+  const [primera] = (await tickets.opcionesSalidaAnterior(f.id)).opciones;
+  await tickets.registrarSalidaAnterior(f.id, { closeType: 'PAYMENT', metodo: 'CASH', expectedPrice: primera.precio, expectedCollected: 0, salidaEn: primera.salidaEn }, user.id);
+  // Entrada olvidada: se corrige la hora hacia atrás y se cobra en efectivo lo recalculado.
+  const g = await nueva(0, 'AUD007');
+  await tickets.corregirEntradaOlvidada(g.id, dayjs().subtract(95, 'minute').toISOString(), user.id);
+  await cerrar(g.id);
+  // Abonos por día: cobrado en efectivo, marcado pagado después, y uno cobrado y eliminado.
+  // El precio del día lo carga más adelante otra prueba: acá se crea solo si falta.
+  const precioDia = (await ds.getRepository(TicketPrice).findOneBy({ ticketTimeType: 'DIA', vehicleType: 'AUTO' }))
+    ? null : await ds.getRepository(TicketPrice).save({ ticketTimeType: 'DIA', vehicleType: 'AUTO', ticketTimePrice: 2000 });
+  const pase = await tickets.createRegistrationForDay({ ticketTimeType: 'DIA', vehicleType: 'AUTO', days: 1, paid: true, paymentMetodo: 'CASH' }, user.id);
+  const pendiente = await tickets.createRegistrationForDay({ ticketTimeType: 'DIA', vehicleType: 'AUTO', days: 1, paid: false }, user.id);
+  await tickets.updateTicketStatus(pendiente.id, { paid: true, paymentMetodo: 'CASH' }, user.id);
+  const borrado = await tickets.createRegistrationForDay({ ticketTimeType: 'DIA', vehicleType: 'AUTO', days: 1, paid: true, paymentMetodo: 'CASH' }, user.id);
+  await tickets.removeRegistrationForDay(borrado.id);
+  // Varios: un gasto y un ingreso en efectivo.
+  await boxes.createOtherPayment({ description: 'Gasto auditoría', price: 700, type: 'EGRESOS', paymentMethod: 'CASH' });
+  await boxes.createOtherPayment({ description: 'Ingreso auditoría', price: 400, type: 'INGRESOS', paymentMethod: 'CASH' });
+
+  // 1) Cada estadía quedó saldada: lo cobrado (con devoluciones) más la cortesía es su precio.
+  for (const id of ids) {
+    const [fila] = await ds.query(`SELECT r.price,
+        COALESCE(SUM(m.monto) FILTER (WHERE m.tipo IN ('ANTICIPO', 'SALDO', 'AJUSTE')), 0) AS cobrado,
+        COALESCE(SUM(m.monto) FILTER (WHERE m.tipo = 'CORTESIA'), 0) AS cortesia
+      FROM ticket_registrations r LEFT JOIN movimientos m ON m."ticketRegistrationId" = r.id
+      WHERE r.id = $1 GROUP BY r.id`, [id]);
+    assert.equal(Number(fila.cobrado) + Number(fila.cortesia), Number(fila.price), `estadía ${id} saldada`);
+  }
+  // 2) La caja coincide con el libro: fondo + efectivo de las estadías + abonos + varios.
+  const [libro] = await ds.query(`SELECT COALESCE(SUM(monto), 0) AS total FROM movimientos
+    WHERE "turnoId" = $1 AND metodo = 'CASH' AND tipo IN ('ANTICIPO', 'SALDO', 'AJUSTE')`, [t.id]);
+  const abonos = pase.price + pendiente.price;
+  const esperado = fondo + Number(libro.total) + abonos - 700 + 400;
+  assert.equal((await context()).efectivoDisponible, esperado, 'la caja coincide con el libro de movimientos');
+  // Cuenta a mano: A deja solo su precio (3000 − 1000 − lo que sobró), B el efectivo del pago mixto,
+  // C la parte en efectivo, D y E nada, F la tarifa elegida y G lo recalculado.
+  const precio = async (r) => Number((await ds.getRepository(Registration).findOneByOrFail({ id: r.id })).price);
+  assert.equal(Number(libro.total), (await precio(a)) + (saldoB - 500) + 700 + primera.precio + (await precio(g)));
+  // 3) Contando exactamente lo esperado, el arqueo cierra sin diferencia.
+  const closed = await shifts.close(t.id, user.id, { efectivoContado: esperado, efectivoEsperado: esperado, efectivoParaSiguiente: 15000, sueldoEsperado: 0, sinSueldo: true });
+  assert.equal(closed.diferencia, 0);
+  if (precioDia) await ds.getRepository(TicketPrice).delete(precioDia.id);
+  // Los pases quedarían «adentro» para las pruebas que cuentan ocupación: se retiran sin tocar la caja.
+  await ds.getRepository(RegistrationDay).update([pase.id, pendiente.id], { retired: true });
+});
+
 test('medianoche: corta una vez, conserva caja y jornada y no retira sueldo', async () => {
   const t = await openCash(user.id, 15000);
   const today = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day');
