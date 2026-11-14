@@ -597,6 +597,48 @@ test('al cerrar el turno se repasan las entradas que registró su operador y sig
   }
 });
 
+test('control de Mercado Pago: al cerrar guarda lo que entró a la cuenta contra lo registrado en el horario', async () => {
+  await tickets.updateSchedule({ sueldoAutomatico: false });
+  const ControlTurnoMercadoPagoService = load('mercadopago/control-turno.service', 'ControlTurnoMercadoPagoService');
+  const repo = entity => ds.getRepository(entity);
+  // Un TurnosService propio: el enganche no queda en los cierres de las otras pruebas.
+  const turnos = new TurnosService(repo(Turno), repo(Movimiento), ds);
+  const empresaId = require('node:crypto').randomUUID();
+  const cuenta = { empresaId, mpUserId: '111', estado: 'ACTIVA', accessToken: 'x', condicionesVersion: '2026-11-13' };
+  new ControlTurnoMercadoPagoService({ findOneBy: async () => cuenta }, { tokenDeEmpresa: async () => 'token' }, turnos, ds).onModuleInit();
+  const t = await openCash(user.id, 15000);
+  const a = await openPlate();
+  // Registrado: alias $1000, QR $2000 y una transferencia a mano de $3000.
+  await movements.create({ ticketRegistrationId: a.id, monto: 1000, metodo: 'TRANSFER', tipo: 'ANTICIPO', referencia: 'Transferencia MercadoPago 1', usuarioId: user.id });
+  await tickets.closeRegistrationByPlate(a.id, { closeType: 'NO_CHARGE', expectedPrice: 1000, expectedCollected: 1000 }, user.id);
+  await ds.transaction(m => book().recordDigital(m, 2000, 'MERCADOPAGO', 'QR abono', user.id));
+  await ds.transaction(m => book().recordDigital(m, 3000, 'TRANSFER', 'Transferencia', user.id));
+  // En la cuenta entró eso y además $3500 que se cobraron como efectivo.
+  const fecha = new Date(t.fechaApertura).toISOString();
+  const recibido = (id, importe, extra = {}) => ({ id, collector_id: 111, status: 'approved', currency_id: 'ARS', transaction_amount: importe, date_created: fecha, date_approved: fecha, payment_type_id: 'bank_transfer', point_of_interaction: { type: 'PSP_TRANSFER' }, ...extra });
+  const pagos = [recibido(1, 1000), recibido(2, 2000, { external_reference: 'cobro', payment_type_id: 'account_money', point_of_interaction: {} }), recibido(3, 3000), recibido(4, 3500)];
+  const original = global.fetch;
+  const pedidos = [];
+  global.fetch = async url => { pedidos.push(String(url)); return { ok: true, json: async () => ({ results: pagos, paging: { total: pagos.length } }) }; };
+  try {
+    const closed = await tenantContext.run({ userId: user.id, role: 'ADMIN', empresaId }, () =>
+      turnos.close(t.id, user.id, { efectivoContado: 15000, efectivoEsperado: 15000, efectivoParaSiguiente: 15000 }));
+    assert.equal(pedidos.length, 1);
+    const esperado = { estado: 'OK', mercadoPago: { total: 9500, transferencias: 7500, qr: 2000, otros: 0, cantidad: 4 }, sistema: { total: 6000, alias: 1000, qr: 2000, transferencias: 3000 }, diferencia: 3500, variasPlayas: false };
+    assert.deepEqual({ ...closed.controlMercadoPago, consultadoEl: undefined, desde: undefined, hasta: undefined }, { ...esperado, consultadoEl: undefined, desde: undefined, hasta: undefined });
+    // Queda en el historial.
+    const guardado = await repo(Turno).findOneBy({ id: t.id });
+    assert.equal(guardado.controlMercadoPago.diferencia, 3500);
+    assert.equal(new Date(guardado.controlMercadoPago.hasta).getTime(), closed.fechaCierre.getTime());
+  } finally {
+    global.fetch = original;
+  }
+  // Un turno de otra empresa (o sin empresa en el pedido, como las demás pruebas) no consulta nada.
+  const u = await openCash(user.id, 15000);
+  const closed = await turnos.close(u.id, user.id, { efectivoContado: 15000, efectivoEsperado: 15000, efectivoParaSiguiente: 15000 });
+  assert.equal(closed.controlMercadoPago ?? null, null);
+});
+
 test('resumen: digitales sin efectivo, salida sin cobro y ocupación al cerrar', async () => {
   await tickets.updateSchedule({ sueldoAutomatico: false });
   const t = await openCash(user.id, 15000);

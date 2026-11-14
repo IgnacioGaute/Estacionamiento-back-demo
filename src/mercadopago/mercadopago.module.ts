@@ -15,11 +15,16 @@ import { VerificacionAliasService } from './verificacion-alias.service';
 import { CajasQrService } from './cajas-qr.service';
 import { TicketsModule } from 'src/tickets/tickets.module';
 import { CuentasModule } from 'src/cuentas/cuentas.module';
+import { TurnosModule } from 'src/turnos/turnos.module';
+import { ControlTurnoController } from './control-turno.controller';
+import { ControlTurnoMercadoPagoService } from './control-turno.service';
 
 // La dependencia va en un solo sentido: MercadoPago conoce a Tickets y a Cuentas, ninguno de los
 // dos conoce a MercadoPago. Es lo que evita el ciclo entre módulos y deja el cobro con QR como
 // algo que se agrega a la operación sin meterse dentro de ella. EmpresaAdicional es de saas, pero
 // acá solo se lee (si la plataforma habilitó la verificación por alias), sin importar el módulo.
+// Turnos tampoco conoce a MercadoPago: el control de Mercado Pago al cerrar un turno se engancha
+// desde acá (ControlTurnoMercadoPagoService.onModuleInit).
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -32,17 +37,20 @@ import { CuentasModule } from 'src/cuentas/cuentas.module';
     ]),
     TicketsModule,
     CuentasModule,
+    TurnosModule,
   ],
   controllers: [
     MercadoPagoController,
     CobrosMercadoPagoController,
     VerificacionAliasController,
+    ControlTurnoController,
   ],
   providers: [
     MercadoPagoService,
     CobrosMercadoPagoService,
     VerificacionAliasService,
     CajasQrService,
+    ControlTurnoMercadoPagoService,
   ],
   exports: [MercadoPagoService],
 })

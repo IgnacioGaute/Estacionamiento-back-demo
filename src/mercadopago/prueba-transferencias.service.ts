@@ -7,7 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CuentaMercadoPago } from './entities/cuenta-mercadopago.entity';
 import { MercadoPagoService } from './mercadopago.service';
-import { CONDICIONES_VIGENTES } from './condiciones';
+import { VERSION_VERIFICACION_ALIAS, aceptoAlMenos } from './condiciones';
 import { camposDelPagador, datosDelPagador } from './coincidencias';
 import { tenantContext } from '../tenancy/tenant-context';
 
@@ -188,7 +188,7 @@ export class PruebaTransferenciasService {
       throw new BadRequestException(
         'La empresa no tiene MercadoPago conectado.',
       );
-    if (cuenta.condicionesVersion !== CONDICIONES_VIGENTES.version)
+    if (!aceptoAlMenos(cuenta.condicionesVersion, VERSION_VERIFICACION_ALIAS))
       throw new ForbiddenException({
         code: 'CONDICIONES_SIN_ACEPTAR',
         message:

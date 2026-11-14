@@ -84,6 +84,7 @@ before(async () => {
       ['1790000046000-origen-registro', 'OrigenRegistro1790000046000'],
       ['1790000050000-conteos-caja', 'ConteosCaja1790000050000'],
       ['1790000051000-tolerancia-sin-cobro', 'ToleranciaSinCobro1790000051000'],
+      ['1790000052000-control-mercadopago-turno', 'ControlMercadoPagoTurno1790000052000'],
     ]) await new (load('database/migrations/' + file, name))().up(runner);
   } finally { await runner.release(); }
   installTenantConnections(ds);

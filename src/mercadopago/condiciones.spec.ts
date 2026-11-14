@@ -1,6 +1,12 @@
 import { BadRequestException } from '@nestjs/common';
 import { MercadoPagoService } from './mercadopago.service';
-import { CONDICIONES_VIGENTES, condicionesDeVersion } from './condiciones';
+import {
+  CONDICIONES_VIGENTES,
+  VERSION_CONTROL_TURNO,
+  VERSION_VERIFICACION_ALIAS,
+  aceptoAlMenos,
+  condicionesDeVersion,
+} from './condiciones';
 import { TenantScope, tenantContext } from '../tenancy/tenant-context';
 
 const ADMIN: TenantScope = {
@@ -29,6 +35,21 @@ describe('Condiciones de uso de MercadoPago', () => {
     );
     expect(condicionesDeVersion('1999-01-01')).toBeNull();
     expect(condicionesDeVersion(null)).toBeNull();
+  });
+
+  test('una versión nueva no apaga lo que ya estaba aceptado: el control del turno espera a la nueva', () => {
+    // Las empresas que aceptaron 2026-10-06 siguen cobrando con QR y alias.
+    expect(aceptoAlMenos('2026-10-06', VERSION_VERIFICACION_ALIAS)).toBe(true);
+    expect(aceptoAlMenos('2026-10-06', VERSION_CONTROL_TURNO)).toBe(false);
+    expect(aceptoAlMenos(CONDICIONES_VIGENTES.version, VERSION_VERIFICACION_ALIAS)).toBe(true);
+    expect(aceptoAlMenos(CONDICIONES_VIGENTES.version, VERSION_CONTROL_TURNO)).toBe(true);
+    // Una anterior, nula o inventada no alcanza.
+    expect(aceptoAlMenos('2026-10-05', VERSION_VERIFICACION_ALIAS)).toBe(false);
+    expect(aceptoAlMenos(null, VERSION_VERIFICACION_ALIAS)).toBe(false);
+    expect(aceptoAlMenos('2099-01-01', VERSION_CONTROL_TURNO)).toBe(false);
+    // Lo que se le cuenta a la empresa coincide con lo que hace el código.
+    expect(CONDICIONES_VIGENTES.version).toBe(VERSION_CONTROL_TURNO);
+    expect(CONDICIONES_VIGENTES.puntos.join(' ')).toMatch(/al cerrar un turno/i);
   });
 
   test('sin aceptar la versión vigente no sale el link para conectar', () => {

@@ -2,7 +2,7 @@ import { operationContext, operationNow, operationTransaction } from 'src/common
 import { publishAutomaticNote } from 'src/notes/automatic-note';
 import { usuariosConSueldoConfigurable } from './sueldos';
 import { exitCount, operatorShift, rolloverShifts, occupancyAt, salaryWithdrawal, shiftSummary, SHIFT_TZ } from './turno-book';
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull, Not, Repository } from 'typeorm';
 import { CashRegister } from './entities/cash-register.entity';
@@ -21,6 +21,7 @@ import { tenantContext } from 'src/tenancy/tenant-context';
 import dayjs from 'dayjs';
 import { exigirCobro } from 'src/tenancy/modalidad';
 import { conciliacionCaja } from './conciliacion-caja';
+import { VERSION_CONTROL_TURNO, aceptoAlMenos } from 'src/mercadopago/condiciones';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 
@@ -34,6 +35,33 @@ export class TurnosService {
     @InjectRepository(Movimiento) private readonly movimientoRepository: Repository<Movimiento>,
     private readonly dataSource: DataSource,
   ) {}
+
+  private readonly logger = new Logger(TurnosService.name);
+  // Lo que corre después de cerrar un turno, fuera de la transacción del cierre: hoy, el control de
+  // Mercado Pago (src/mercadopago/control-turno.service.ts). Se engancha desde ese módulo porque
+  // Turnos no conoce a MercadoPago (evita el ciclo entre módulos). Si falla o tarda, el cierre ya
+  // quedó registrado igual.
+  private readonly alCerrar: ((turno: Turno) => Promise<unknown>)[] = [];
+
+  alCerrarTurno(accion: (turno: Turno) => Promise<unknown>) {
+    this.alCerrar.push(accion);
+  }
+
+  private async despuesDelCierre(turno: Turno) {
+    for (const accion of this.alCerrar) {
+      let limite: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          accion(turno),
+          new Promise((_, rechazar) => { limite = setTimeout(() => rechazar(new Error('tardó más de 20 s')), 20_000); }),
+        ]);
+      } catch (error) {
+        this.logger.warn(`Después del cierre del turno ${turno.id}: ${error instanceof Error ? error.message : 'error'}`);
+      } finally {
+        clearTimeout(limite);
+      }
+    }
+  }
 
   async findOpenTurnoOrNull(usuarioId: string, manager?: EntityManager): Promise<Turno | null> {
     const replay = operationContext.getStore();
@@ -310,6 +338,14 @@ export class TurnosService {
   }
 
   async close(id: string, usuarioId: string, dto: CloseTurnoDto, rol?: UserRole): Promise<Turno> {
+    const cerrado = await this.cerrar(id, usuarioId, dto, rol);
+    // Un cierre guardado sin conexión se reproduce dentro de la transacción de la sincronización:
+    // consultar Mercado Pago ahí la dejaría abierta esperando. Ese turno queda sin control.
+    if (!operationContext.getStore()) await this.despuesDelCierre(cerrado);
+    return cerrado;
+  }
+
+  private cerrar(id: string, usuarioId: string, dto: CloseTurnoDto, rol?: UserRole): Promise<Turno> {
     return operationTransaction(this.dataSource, async manager => {
       await manager.query('SELECT pg_advisory_xact_lock(718904)');
       const repo = manager.getRepository(Turno);
@@ -450,7 +486,17 @@ export class TurnosService {
     if (filtros.soloDiferencias) query.andWhere('t.efectivoContado IS NOT NULL AND t.diferencia <> 0');
     const [data, total] = await query.addOrderBy('t.id', 'DESC').skip((pagination.page - 1) * pagination.limit).take(pagination.limit).getManyAndCount();
     const enriched = await Promise.all(data.map(async t => ({ ...t, resumen: await shiftSummary(this.dataSource.manager, t) })));
-    return { data: enriched, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) }, summary: { total: Number(stats.total), diferencias: Number(stats.diferencias), sinConteo: Number(stats.sinConteo) } };
+    return { data: enriched, meta: { totalItems: total, currentPage: pagination.page, itemsPerPage: pagination.limit, totalPages: Math.ceil(total / pagination.limit) }, summary: { total: Number(stats.total), diferencias: Number(stats.diferencias), sinConteo: Number(stats.sinConteo), mercadoPago: await this.controlMercadoPagoDisponible() } };
+  }
+
+  // Si el historial ofrece consultar Mercado Pago en los turnos cerrados sin control: la empresa
+  // tiene la cuenta conectada y aceptó las condiciones que lo incluyen (src/mercadopago/condiciones.ts).
+  private async controlMercadoPagoDisponible() {
+    const empresaId = tenantContext.getStore()?.empresaId;
+    if (!empresaId) return false;
+    const [cuenta] = await this.dataSource.query(
+      `SELECT "condicionesVersion" FROM mercadopago_cuentas WHERE "empresaId" = $1 AND estado = 'ACTIVA' AND "accessToken" IS NOT NULL`, [empresaId]);
+    return aceptoAlMenos(cuenta?.condicionesVersion, VERSION_CONTROL_TURNO);
   }
 
   // Quiénes abrieron turno alguna vez, para poblar el filtro sin traer todo el historial.

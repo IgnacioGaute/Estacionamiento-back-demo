@@ -43,9 +43,35 @@ const VERSIONES: Condiciones[] = [
       'Podés desconectar la cuenta cuando quieras desde esta pantalla: el sistema deja de consultarla en el acto.',
     ],
   },
+  {
+    // Suma el control de Mercado Pago de un turno: el total que entró a la cuenta en el horario del
+    // turno (al cerrarlo, o a pedido de un administrador para uno del historial), para compararlo
+    // con lo registrado. Se guardan solo los totales.
+    version: '2026-11-13',
+    titulo: 'Qué puede hacer el sistema con tu cuenta de MercadoPago',
+    puntos: [
+      'Crear cobros con QR por el importe de cada estadía, abono o pago de inquilino, y consultar si se pagaron.',
+      'Consultar los pagos que entran a tu cuenta cuando alguien de tu empresa lo pide desde el sistema: para encontrar la transferencia de un cobro que la está esperando (si activás la verificación de transferencias al alias), en la prueba de transferencias, al cerrar un turno o cuando un administrador lo pide para un turno del historial.',
+      'Con la verificación activa, asociar una transferencia a un cobro y registrar la salida cuando la coincidencia es única: el mismo importe, en los minutos de espera, y un solo cobro esperándolo en todas tus playas. Si hay dudas, la elige el operador. Es una coincidencia por importe y hora, no una identificación de quien pagó.',
+      'Al cerrar un turno (o cuando un administrador lo pide para un turno ya cerrado), sumar lo que entró a tu cuenta entre la apertura y el cierre de ese turno y compararlo con lo que el sistema registró por Mercado Pago y transferencias en ese horario. De esa consulta se guardan en el historial del turno solo los totales (transferencias, QR y otros ingresos); no se guarda ningún pago ni quién lo hizo.',
+      'Para conciliar, de cada transferencia que coincide con un cobro se guardan el número de operación, el importe, la moneda, el estado y las fechas. El nombre y el documento de quien pagó, cuando MercadoPago los informa, se muestran en el momento para reconocerla y no se guardan.',
+      'Lo que pagás con tu cuenta (compras, suscripciones, retiros) no se muestra ni se guarda, y el sistema no consulta tu saldo.',
+      'Solo los usuarios de tu empresa ven esta información: el operador, la del cobro que está haciendo y los totales de su turno al cerrarlo. La administración de la plataforma no ve los pagos de tu cuenta.',
+      'Podés desconectar la cuenta cuando quieras desde esta pantalla: el sistema deja de consultarla en el acto.',
+    ],
+  },
 ];
 
 export const CONDICIONES_VIGENTES = VERSIONES[VERSIONES.length - 1];
+
+// Desde qué versión está aceptado cada uso. Una versión nueva no apaga lo que la empresa ya
+// aceptó: el QR y la verificación por alias siguen con la de 2026-10-06, y lo nuevo espera a que
+// un administrador acepte la vigente. Las versiones son fechas ISO, así que se comparan como texto.
+export const VERSION_VERIFICACION_ALIAS = '2026-10-06';
+export const VERSION_CONTROL_TURNO = '2026-11-13';
+
+export const aceptoAlMenos = (aceptada: string | null | undefined, minima: string) =>
+  !!aceptada && !!condicionesDeVersion(aceptada) && aceptada >= minima;
 
 export const condicionesDeVersion = (version: string | null) =>
   VERSIONES.find((c) => c.version === version) ?? null;

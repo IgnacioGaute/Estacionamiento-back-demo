@@ -22,7 +22,7 @@ import { CuentasService } from 'src/cuentas/cuentas.service';
 import { Customer } from 'src/customers/entities/customer.entity';
 import { MercadoPagoService } from './mercadopago.service';
 import { TicketsService } from 'src/tickets/tickets.service';
-import { CONDICIONES_VIGENTES } from './condiciones';
+import { VERSION_VERIFICACION_ALIAS, aceptoAlMenos } from './condiciones';
 import {
   ANTERIORES_MS,
   GRACIA_PAGO_TARDIO_MS,
@@ -148,7 +148,7 @@ export class VerificacionAliasService {
         message:
           'La cuenta de MercadoPago no está conectada o dejó de funcionar. Avisale al administrador.',
       };
-    if (cuenta.condicionesVersion !== CONDICIONES_VIGENTES.version)
+    if (!aceptoAlMenos(cuenta.condicionesVersion, VERSION_VERIFICACION_ALIAS))
       return {
         ok: false,
         code: 'CONDICIONES_SIN_ACEPTAR',
@@ -224,7 +224,7 @@ export class VerificacionAliasService {
           message:
             'La verificación de transferencias al alias no está habilitada para esta empresa. Pedísela a la plataforma.',
         });
-      if (cuenta.condicionesVersion !== CONDICIONES_VIGENTES.version)
+      if (!aceptoAlMenos(cuenta.condicionesVersion, VERSION_VERIFICACION_ALIAS))
         throw new ForbiddenException({
           code: 'CONDICIONES_SIN_ACEPTAR',
           message: 'Primero aceptá las condiciones de uso de la cuenta.',
@@ -246,7 +246,7 @@ export class VerificacionAliasService {
   async disponibilidad() {
     const { empresaId } = this.scope();
     const [h, cuenta] = await Promise.all([this.habilitacion(empresaId), this.cuentas.findOneBy({ empresaId })]);
-    const qrDisponible = !!cuenta && cuenta.estado === 'ACTIVA' && !!cuenta.accessToken && cuenta.condicionesVersion === CONDICIONES_VIGENTES.version;
+    const qrDisponible = !!cuenta && cuenta.estado === 'ACTIVA' && !!cuenta.accessToken && aceptoAlMenos(cuenta.condicionesVersion, VERSION_VERIFICACION_ALIAS);
     return h.ok === true
       ? { disponible: true as const, alias: h.cuenta.alias, qrDisponible }
       : { disponible: false as const, code: h.code, motivo: h.message, qrDisponible };
