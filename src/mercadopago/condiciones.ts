@@ -60,15 +60,33 @@ const VERSIONES: Condiciones[] = [
       'Podés desconectar la cuenta cuando quieras desde esta pantalla: el sistema deja de consultarla en el acto.',
     ],
   },
+  {
+    // Se sacó el control de Mercado Pago del turno: la cuenta de la empresa también recibe plata
+    // que no es de la playa y el total no explicaba la caja. Vuelve a decir lo mismo que 2026-10-06.
+    version: '2026-11-14',
+    titulo: 'Qué puede hacer el sistema con tu cuenta de MercadoPago',
+    puntos: [
+      'Crear cobros con QR por el importe de cada estadía, abono o pago de inquilino, y consultar si se pagaron.',
+      'Consultar los pagos que entran a tu cuenta cuando alguien de tu empresa lo pide desde el sistema: para encontrar la transferencia de un cobro que la está esperando (si activás la verificación de transferencias al alias) o en la prueba de transferencias.',
+      'Con la verificación activa, asociar una transferencia a un cobro y registrar la salida cuando la coincidencia es única: el mismo importe, en los minutos de espera, y un solo cobro esperándolo en todas tus playas. Si hay dudas, la elige el operador. Es una coincidencia por importe y hora, no una identificación de quien pagó.',
+      'Para conciliar, de cada transferencia que coincide con un cobro se guardan el número de operación, el importe, la moneda, el estado y las fechas. El nombre y el documento de quien pagó, cuando MercadoPago los informa, se muestran en el momento para reconocerla y no se guardan.',
+      'Lo que pagás con tu cuenta (compras, suscripciones, retiros) no se muestra ni se guarda, y el sistema no consulta tu saldo.',
+      'Solo los usuarios de tu empresa ven esta información, y el operador solo la del cobro que está haciendo. La administración de la plataforma no ve los pagos de tu cuenta.',
+      'Podés desconectar la cuenta cuando quieras desde esta pantalla: el sistema deja de consultarla en el acto.',
+    ],
+  },
 ];
 
 export const CONDICIONES_VIGENTES = VERSIONES[VERSIONES.length - 1];
 
 // Desde qué versión está aceptado cada uso. Una versión nueva no apaga lo que la empresa ya
-// aceptó: el QR y la verificación por alias siguen con la de 2026-10-06, y lo nuevo espera a que
-// un administrador acepte la vigente. Las versiones son fechas ISO, así que se comparan como texto.
+// aceptó: el QR y la verificación por alias funcionan desde la de 2026-10-06. Las versiones son
+// fechas ISO, así que se comparan como texto.
 export const VERSION_VERIFICACION_ALIAS = '2026-10-06';
-export const VERSION_CONTROL_TURNO = '2026-11-13';
+// La vigente no pide nada que 2026-10-06 no pidiera (2026-11-13 pedía de más): quien aceptó
+// cualquiera de las dos está al día y no se le vuelve a pedir que acepte. Si una versión futura
+// suma un uso, esta pasa a ser esa versión.
+export const VERSION_MINIMA_AL_DIA = '2026-10-06';
 
 export const aceptoAlMenos = (aceptada: string | null | undefined, minima: string) =>
   !!aceptada && !!condicionesDeVersion(aceptada) && aceptada >= minima;

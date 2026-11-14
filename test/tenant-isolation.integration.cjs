@@ -161,6 +161,7 @@ before(async () => {
     await new (load('database/migrations/1790000050000-conteos-caja', 'ConteosCaja1790000050000'))().up(migrationRunner);
     await new (load('database/migrations/1790000051000-tolerancia-sin-cobro', 'ToleranciaSinCobro1790000051000'))().up(migrationRunner);
     await new (load('database/migrations/1790000052000-control-mercadopago-turno', 'ControlMercadoPagoTurno1790000052000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000053000-quitar-control-mercadopago-turno', 'QuitarControlMercadoPagoTurno1790000053000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -1584,62 +1585,6 @@ test('datos fiscales, capacidad y último acceso: el rol operativo los lee de su
   });
   const [otra] = await ds.query('SELECT cuit FROM empresas WHERE id = $1', [b.empresaId]);
   assert.equal(otra.cuit, '20000000060');
-});
-
-test('control de Mercado Pago del turno: con el rol de la playa suma solo lo registrado en ella y lo guarda', async () => {
-  const Turno = load('turnos/entities/turno.entity', 'Turno');
-  const TurnoPayment = load('turnos/entities/turno-payment.entity', 'TurnoPayment');
-  const ControlTurnoMercadoPagoService = load('mercadopago/control-turno.service', 'ControlTurnoMercadoPagoService');
-  const desde = new Date('2026-11-13T09:57:00Z');
-  const hasta = new Date('2026-11-13T18:10:00Z');
-  const medio = new Date('2026-11-13T13:00:00Z');
-  const turno = await ds.getRepository(Turno).save({ playaId: a.playaId, usuarioApertura: { id: adminA.id }, fondoInicial: 0, estado: 'CERRADO', fechaCierre: hasta });
-  await ds.getRepository(Turno).update(turno.id, { fechaApertura: desde });
-  // Lo registrado en la otra playa de la misma empresa no es de este turno.
-  await ds.getRepository(TurnoPayment).save([
-    { playaId: a.playaId, medio: 'QR', amount: 2000, referencia: 'QR playa A1', createdAt: medio },
-    { playaId: a2.playaId, medio: 'TRANSFER', amount: 5000, referencia: 'Transferencia playa A2', createdAt: medio },
-  ]);
-  const cuenta = { empresaId: a.empresaId, mpUserId: '111', estado: 'ACTIVA', accessToken: 'x', condicionesVersion: '2026-11-13' };
-  const servicio = new ControlTurnoMercadoPagoService({ findOneBy: async () => cuenta }, { tokenDeEmpresa: async () => 'token' }, { alCerrarTurno() {} }, ds);
-  const pago = { id: 1, collector_id: 111, status: 'approved', currency_id: 'ARS', transaction_amount: 2000, external_reference: 'qr', date_created: medio.toISOString(), date_approved: medio.toISOString() };
-  const original = global.fetch;
-  global.fetch = async () => ({ ok: true, json: async () => ({ results: [pago], paging: { total: 1 } }) });
-  try {
-    const cerrado = await ds.getRepository(Turno).findOneByOrFail({ id: turno.id });
-    const control = await scoped({ playaId: a.playaId, empresaId: a.empresaId, userId: adminA.id, role: 'ADMIN' }, () => servicio.guardar(cerrado));
-    assert.equal(control.estado, 'OK');
-    assert.deepEqual(control.sistema, { total: 2000, alias: 0, qr: 2000, transferencias: 0 });
-    assert.equal(control.diferencia, 0);
-    // La cuenta es de la empresa, que tiene dos playas: el historial lo advierte.
-    assert.equal(control.variasPlayas, true);
-    const guardado = await ds.getRepository(Turno).findOneByOrFail({ id: turno.id });
-    assert.equal(guardado.controlMercadoPago.estado, 'OK');
-  } finally {
-    global.fetch = original;
-  }
-  // El historial ofrece consultar los turnos viejos solo si la empresa tiene la cuenta conectada y
-  // aceptó las condiciones que lo incluyen; la cuenta de otra empresa no cuenta.
-  const CuentaMp = load('mercadopago/entities/cuenta-mercadopago.entity', 'CuentaMercadoPago');
-  const TurnosService = load('turnos/turnos.service', 'TurnosService');
-  const Movimiento = load('movimientos/entities/movimiento.entity', 'Movimiento');
-  const turnos = new TurnosService(ds.getRepository(Turno), ds.getRepository(Movimiento), ds);
-  const disponible = scope => scoped(scope, () => turnos['controlMercadoPagoDisponible']());
-  // Otra prueba ya le conectó una cuenta a la empresa A: se usa esa y se deja como estaba.
-  const previa = await ds.getRepository(CuentaMp).findOneBy({ empresaId: a.empresaId });
-  const fila = previa
-    ? await ds.getRepository(CuentaMp).save({ ...previa, estado: 'ACTIVA', accessToken: previa.accessToken ?? 'x', condicionesVersion: '2026-10-06' })
-    : await ds.getRepository(CuentaMp).save({ empresaId: a.empresaId, mpUserId: '111', accessToken: 'x', refreshToken: 'y', expiraEl: new Date('2030-01-01'), estado: 'ACTIVA', condicionesVersion: '2026-10-06' });
-  try {
-    const enA = { playaId: a.playaId, empresaId: a.empresaId, userId: adminA.id, role: 'ADMIN' };
-    assert.equal(await disponible(enA), false, 'con las condiciones anteriores no se ofrece');
-    await ds.getRepository(CuentaMp).update(fila.id, { condicionesVersion: '2026-11-13' });
-    assert.equal(await disponible(enA), true);
-    assert.equal(await disponible({ playaId: b.playaId, empresaId: b.empresaId, userId: adminB.id, role: 'ADMIN' }), false);
-  } finally {
-    if (previa) await ds.getRepository(CuentaMp).save(previa);
-    else await ds.getRepository(CuentaMp).delete(fila.id);
-  }
 });
 
 test('corte de medianoche: un turno que abrió el super admin en la playa se corta con el alcance de la playa', async () => {

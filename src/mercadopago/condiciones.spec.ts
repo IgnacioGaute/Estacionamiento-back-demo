@@ -2,7 +2,6 @@ import { BadRequestException } from '@nestjs/common';
 import { MercadoPagoService } from './mercadopago.service';
 import {
   CONDICIONES_VIGENTES,
-  VERSION_CONTROL_TURNO,
   VERSION_VERIFICACION_ALIAS,
   aceptoAlMenos,
   condicionesDeVersion,
@@ -37,19 +36,27 @@ describe('Condiciones de uso de MercadoPago', () => {
     expect(condicionesDeVersion(null)).toBeNull();
   });
 
-  test('una versión nueva no apaga lo que ya estaba aceptado: el control del turno espera a la nueva', () => {
-    // Las empresas que aceptaron 2026-10-06 siguen cobrando con QR y alias.
-    expect(aceptoAlMenos('2026-10-06', VERSION_VERIFICACION_ALIAS)).toBe(true);
-    expect(aceptoAlMenos('2026-10-06', VERSION_CONTROL_TURNO)).toBe(false);
-    expect(aceptoAlMenos(CONDICIONES_VIGENTES.version, VERSION_VERIFICACION_ALIAS)).toBe(true);
-    expect(aceptoAlMenos(CONDICIONES_VIGENTES.version, VERSION_CONTROL_TURNO)).toBe(true);
+  test('una versión nueva no apaga lo que ya estaba aceptado', () => {
+    // Las empresas que aceptaron 2026-10-06 o 2026-11-13 siguen cobrando con QR y alias.
+    for (const v of ['2026-10-06', '2026-11-13', CONDICIONES_VIGENTES.version])
+      expect(aceptoAlMenos(v, VERSION_VERIFICACION_ALIAS)).toBe(true);
     // Una anterior, nula o inventada no alcanza.
     expect(aceptoAlMenos('2026-10-05', VERSION_VERIFICACION_ALIAS)).toBe(false);
     expect(aceptoAlMenos(null, VERSION_VERIFICACION_ALIAS)).toBe(false);
-    expect(aceptoAlMenos('2099-01-01', VERSION_CONTROL_TURNO)).toBe(false);
-    // Lo que se le cuenta a la empresa coincide con lo que hace el código.
-    expect(CONDICIONES_VIGENTES.version).toBe(VERSION_CONTROL_TURNO);
-    expect(CONDICIONES_VIGENTES.puntos.join(' ')).toMatch(/al cerrar un turno/i);
+    expect(aceptoAlMenos('2099-01-01', VERSION_VERIFICACION_ALIAS)).toBe(false);
+    // Lo que se le cuenta a la empresa coincide con lo que hace el código: ya no hay control del
+    // turno, y la vigente dice lo mismo que 2026-10-06.
+    expect(CONDICIONES_VIGENTES.puntos.join(' ')).not.toMatch(/turno/i);
+    expect(CONDICIONES_VIGENTES.puntos).toEqual(condicionesDeVersion('2026-10-06')!.puntos);
+  });
+
+  test('quien aceptó 2026-10-06 o 2026-11-13 está al día: no se le vuelve a pedir', async () => {
+    for (const version of ['2026-10-06', '2026-11-13', CONDICIONES_VIGENTES.version]) {
+      const { s } = servicio({ empresaId: 'e1', mpUserId: '111', estado: 'ACTIVA', condicionesVersion: version });
+      await expect(como(() => s.estado())).resolves.toMatchObject({ condicionesAceptadas: { alDia: true } });
+    }
+    const { s } = servicio({ empresaId: 'e1', mpUserId: '111', estado: 'ACTIVA', condicionesVersion: '2026-10-05' });
+    await expect(como(() => s.estado())).resolves.toMatchObject({ condicionesAceptadas: { alDia: false } });
   });
 
   test('sin aceptar la versión vigente no sale el link para conectar', () => {

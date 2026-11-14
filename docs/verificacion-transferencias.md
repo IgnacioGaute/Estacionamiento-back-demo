@@ -137,9 +137,10 @@ hecha. El QR sigue igual y no depende de esto.
 2. **Activada por la empresa** en Configuración → MercadoPago: interruptor propio (separado del QR) y el alias que
    ven los clientes. MercadoPago no informa el alias por la API, así que lo carga el administrador. Queda quién y
    cuándo. Exige haber aceptado al menos la versión `2026-10-06` de las condiciones de uso, que suma esta función y
-   qué se guarda (`aceptoAlMenos(..., VERSION_VERIFICACION_ALIAS)`). La versión `2026-11-13` agrega el control de
-   Mercado Pago al cerrar un turno (ver docs/caja-turnos.md) sin apagar lo anterior: el QR, el alias y la prueba
-   siguen funcionando con `2026-10-06` y solo el control espera a que un administrador acepte la nueva.
+   qué se guarda (`aceptoAlMenos(..., VERSION_VERIFICACION_ALIAS)`). La versión `2026-11-13` agregaba un control
+   de Mercado Pago por turno que se sacó al día siguiente (la cuenta de la empresa recibe plata que no es de la
+   playa, y el total no explicaba la caja); la vigente `2026-11-14` vuelve a decir lo mismo que `2026-10-06`. Quien
+   aceptó cualquiera de las tres está al día (`VERSION_MINIMA_AL_DIA`) y no se le pide aceptar de nuevo.
 3. **Conexión OAuth válida** (cuenta `ACTIVA`) y la cuenta receptora igual a la del intento.
 
 ### El cobro (`VerificacionAliasService`, `/mercadopago/alias/...`)

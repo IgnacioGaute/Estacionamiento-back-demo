@@ -11,7 +11,7 @@ import { Repository } from 'typeorm';
 import { CuentaMercadoPago } from './entities/cuenta-mercadopago.entity';
 import { cifrarToken, descifrarToken, hayClaveDeTokens } from './token-crypto';
 import { consumirState, crearState } from './oauth-state';
-import { CONDICIONES_VIGENTES } from './condiciones';
+import { CONDICIONES_VIGENTES, VERSION_MINIMA_AL_DIA, aceptoAlMenos } from './condiciones';
 import { tenantContext } from '../tenancy/tenant-context';
 
 const AUTORIZACION = 'https://auth.mercadopago.com.ar/authorization';
@@ -176,7 +176,7 @@ export class MercadoPagoService {
         ? {
             version: cuenta.condicionesVersion,
             el: cuenta.condicionesAceptadasEl,
-            alDia: cuenta.condicionesVersion === CONDICIONES_VIGENTES.version,
+            alDia: aceptoAlMenos(cuenta.condicionesVersion, VERSION_MINIMA_AL_DIA),
           }
         : null,
     };

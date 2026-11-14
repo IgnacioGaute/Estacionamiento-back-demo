@@ -113,8 +113,6 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     'ampliarBusqueda',
     'cancelarCobro',
   ],
-  // Al cerrar el turno: cuánto entró a Mercado Pago en el horario contra lo registrado (solo totales).
-  ControlTurnoController: ['controlDelTurno'],
 };
 
 // Lo único que puede hacer una empresa suspendida, cualquiera sea el rol: ver por qué está
@@ -168,7 +166,6 @@ export const SUSPENDED_ENDPOINTS: Record<string, readonly string[]> = {
     'cancelarCobro',
   ],
   TurnosController:['open', 'close', 'getCashContext', 'getMyOpenTurno', 'estadiasAbiertas', 'conciliacion'],
-  ControlTurnoController: ['controlDelTurno'],
   BoxListsController: ['findOne', 'findBoxByDate'],
 };
 
@@ -233,7 +230,6 @@ export const FREE_MODE_BLOCKED: Record<string, readonly string[]> = {
   ParkingRentersController: ['updateAmount', 'createRenterParkingType', 'updateRenterParkingType', 'removeRenterParkingType'],
   CobrosMercadoPagoController: ['crearCobro'],
   VerificacionAliasController: ['iniciarCobro', 'asignarTransferencia', 'ampliarBusqueda'],
-  ControlTurnoController: ['controlDelTurno'],
   MercadoPagoController: [
     'crearCajaQrConUbicacion',
     'crearCajaQr',

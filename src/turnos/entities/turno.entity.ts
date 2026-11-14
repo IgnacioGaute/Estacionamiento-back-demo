@@ -12,22 +12,6 @@ import { CashSession } from './cash-session.entity';
 import { CashRegister } from './cash-register.entity';
 import { User } from 'src/users/entities/user.entity';
 
-// Null: no se consultó (sin cuenta conectada, sin las condiciones aceptadas, o turno anterior).
-export type ControlMercadoPago =
-  | {
-      estado: 'OK';
-      consultadoEl: string;
-      desde: string;
-      hasta: string;
-      mercadoPago: { total: number; transferencias: number; qr: number; otros: number; cantidad: number };
-      sistema: { total: number; alias: number; qr: number; transferencias: number };
-      // Positivo: entró más a Mercado Pago de lo registrado (un pago cargado como efectivo, por ejemplo).
-      diferencia: number;
-      // La cuenta es de la empresa: con varias playas, lo que entró incluye a las otras.
-      variasPlayas: boolean;
-    }
-  | { estado: 'ERROR'; consultadoEl: string; desde: string; hasta: string; message: string };
-
 export const TURNO_ESTADO = ['ABIERTO', 'CERRADO'] as const;
 export type TurnoEstado = (typeof TURNO_ESTADO)[number];
 
@@ -121,9 +105,4 @@ export class Turno {
 
   @Column('enum', { enum: TURNO_ESTADO, default: 'ABIERTO' })
   estado: TurnoEstado;
-
-  // Lo que entró a la cuenta de Mercado Pago en el horario del turno contra lo que registró el
-  // sistema, consultado al cerrarlo (ver src/mercadopago/control-turno.ts). Solo totales.
-  @Column('jsonb', { nullable: true })
-  controlMercadoPago: ControlMercadoPago | null;
 }
