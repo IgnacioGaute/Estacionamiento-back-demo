@@ -23,6 +23,7 @@ import { Customer } from 'src/customers/entities/customer.entity';
 import { MercadoPagoService } from './mercadopago.service';
 import { TicketsService } from 'src/tickets/tickets.service';
 import { VERSION_VERIFICACION_ALIAS, aceptoAlMenos } from './condiciones';
+import { esAdministracion } from './transferencia-manual';
 import {
   ANTERIORES_MS,
   GRACIA_PAGO_TARDIO_MS,
@@ -244,12 +245,14 @@ export class VerificacionAliasService {
 
   /** Para la pantalla de cobro: si se ofrece «Transferencia al alias» y con qué alias. */
   async disponibilidad() {
-    const { empresaId } = this.scope();
+    const { empresaId, role } = this.scope();
     const [h, cuenta] = await Promise.all([this.habilitacion(empresaId), this.cuentas.findOneBy({ empresaId })]);
     const qrDisponible = !!cuenta && cuenta.estado === 'ACTIVA' && !!cuenta.accessToken && aceptoAlMenos(cuenta.condicionesVersion, VERSION_VERIFICACION_ALIAS);
+    // Con el alias activo, «Transferencia» sin verificar queda para la administración (ver
+    // transferencia-manual.ts, que lo exige al guardar).
     return h.ok === true
-      ? { disponible: true as const, alias: h.cuenta.alias, qrDisponible }
-      : { disponible: false as const, code: h.code, motivo: h.message, qrDisponible };
+      ? { disponible: true as const, alias: h.cuenta.alias, qrDisponible, transferenciaManual: esAdministracion(role) }
+      : { disponible: false as const, code: h.code, motivo: h.message, qrDisponible, transferenciaManual: true };
   }
 
   /** El intento de esta playa, o 404: los de otras playas se leen, pero no se tocan. */

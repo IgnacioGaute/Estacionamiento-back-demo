@@ -526,3 +526,59 @@ test('otra playa de la empresa no puede consultar, asignar ni cancelar un intent
   await assert.rejects(ctx.en(ctx.playaB, () => alias.cancelar(i.id)), /no encontrado/i);
   await assert.rejects(ctx.en(ctx.playaB, () => alias.asignar(i.id, '1')), /no encontrado/i);
 });
+
+test('con el alias activo el operador no carga «Transferencia» a mano; la administración sí, y el cierre lista lo sin verificar', async () => {
+  const ctx = await empresaDePrueba();
+  const { conciliacionCaja } = require('../dist/turnos/conciliacion-caja');
+  const turno = await repo(Turno).save({ playaId: ctx.playaA.id, usuarioApertura: { id: ctx.operador.id }, cashVersion: 2, fondoInicial: 0, estado: 'ABIERTO' });
+  await repo(Turno).update(turno.id, { fechaApertura: new Date(Date.now() - 3600e3) });
+  const comoAdmin = (fn) => tenantContext.run({ empresaId: ctx.empresa.id, playaId: ctx.playaA.id, userId: ctx.operador.id, role: 'ADMIN' }, fn);
+  assert.equal((await ctx.en(ctx.playaA, () => alias.disponibilidad())).transferenciaManual, false);
+  assert.equal((await comoAdmin(() => alias.disponibilidad())).transferenciaManual, true);
+  const cerrar = async (r, metodo) => {
+    const s = await tickets.getCloseSummary(r.id);
+    return tickets.closeRegistrationByPlate(r.id, { closeType: 'PAYMENT', metodo, expectedPrice: s.previewBracket.price, expectedCollected: s.totalCollectedSoFar }, ctx.operador.id);
+  };
+  try {
+    const r1 = await estadia(ctx, ctx.playaA);
+    await assert.rejects(ctx.en(ctx.playaA, () => cerrar(r1, 'TRANSFER')), (e) => codigo(e) === 'TRANSFERENCIA_CON_ALIAS');
+    assert.equal((await movimientosDe(r1.id)).length, 0, 'no queda nada a medias');
+    assert.equal((await repo(Registration).findOneBy({ id: r1.id })).departureTime, null);
+    // Un anticipo tampoco.
+    await assert.rejects(ctx.en(ctx.playaA, () => tickets.addAdvancePayment(r1.id, { advancePaidAmount: 500, metodo: 'TRANSFER' }, ctx.operador.id)),
+      (e) => codigo(e) === 'TRANSFERENCIA_CON_ALIAS');
+    assert.equal((await movimientosDe(r1.id)).length, 0);
+    // La administración sí (un cliente que transfirió a otra cuenta), y el efectivo sigue igual.
+    await comoAdmin(() => cerrar(r1, 'TRANSFER'));
+    const r2 = await estadia(ctx, ctx.playaA);
+    await ctx.en(ctx.playaA, () => cerrar(r2, 'CASH'));
+
+    // Una transferencia al alias detectada sola: no hace falta revisarla.
+    const r4 = await estadia(ctx, ctx.playaA);
+    pagosMp = [transferencia(ctx, 1000)];
+    assert.equal((await iniciar(ctx, ctx.playaA, r4.id)).estado, 'CONFIRMADO');
+    // Y una que el operador eligió entre dos posibles.
+    const r3 = await estadia(ctx, ctx.playaA);
+    const [t1, t2] = [transferencia(ctx, 1000), transferencia(ctx, 1000)];
+    pagosMp = [t1, t2];
+    const i = await iniciar(ctx, ctx.playaA, r3.id);
+    assert.equal(i.estado, 'REVISION');
+    await ctx.en(ctx.playaA, () => alias.asignar(i.id, String(t1.id)));
+
+    const detalle = await ctx.en(ctx.playaA, () => conciliacionCaja(ds.manager, turno));
+    assert.deepEqual(detalle.sinVerificar.map((c) => [c.tipo, c.importe, c.concepto, c.operador]), [
+      ['TRANSFERENCIA', 1000, r1.licensePlateOriginal, 'Op ' + n],
+      ['ALIAS_ELEGIDA', 1000, r3.licensePlateOriginal, 'Op ' + n],
+    ]);
+    assert.match(detalle.sinVerificar[0].hora, /^\d\d:\d\d$/);
+
+    // Con la verificación pausada, el operador vuelve a tener «Transferencia».
+    await repo(Cuenta).update({ empresaId: ctx.empresa.id }, { verificacionAlias: false });
+    assert.equal((await ctx.en(ctx.playaA, () => alias.disponibilidad())).transferenciaManual, true);
+    const r5 = await estadia(ctx, ctx.playaA);
+    await ctx.en(ctx.playaA, () => cerrar(r5, 'TRANSFER'));
+    assert.equal((await movimientosDe(r5.id))[0].metodo, 'TRANSFER');
+  } finally {
+    await repo(Turno).update(turno.id, { estado: 'CERRADO', fechaCierre: new Date() });
+  }
+});

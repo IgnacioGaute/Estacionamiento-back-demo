@@ -36,7 +36,58 @@ export async function conciliacionCaja(manager: EntityManager, turno: Turno) {
         COALESCE(NULLIF(trim(concat(u."firstName", ' ', u."lastName")), ''), 'Responsable no disponible') AS operador
       FROM cash_session_counts k LEFT JOIN users u ON u.id = k."usuarioId"
       WHERE k."sesionId" = $1 ORDER BY k."createdAt", k.id`, [turno.cashSessionId]) : [];
-  return { fondoInicial, ingresos, egresos, esperado: fondoInicial + ingresos - egresos, movimientos, conteos, paraRevisar: await estadiasParaRevisar(manager, turno) };
+  return { fondoInicial, ingresos, egresos, esperado: fondoInicial + ingresos - egresos, movimientos, conteos, paraRevisar: await estadiasParaRevisar(manager, turno),
+    sinVerificar: await cobrosSinVerificar(manager, turno) };
+}
+
+// Los cobros digitales de esta caja que nadie comprobó contra Mercado Pago: una «Transferencia»
+// cargada a mano (lo dice el operador; cargar así un pago en efectivo deja la caja cuadrada sin la
+// plata) y una transferencia al alias que eligió el operador entre varias posibles. Para revisarlos
+// uno por uno contra la cuenta; el QR y el alias detectado solo no aparecen.
+export type CobroSinVerificar = { id: string; tipo: 'TRANSFERENCIA' | 'ALIAS_ELEGIDA'; importe: number; hora: string; concepto: string; operador: string };
+
+async function cobrosSinVerificar(manager: EntityManager, turno: Turno): Promise<CobroSinVerificar[]> {
+  const filas: (Omit<CobroSinVerificar, 'importe'> & { importe: string | number })[] = await manager.query(`
+    WITH turnos_caja AS (
+      SELECT id, "fechaApertura", "fechaCierre", "usuarioAperturaId" FROM turnos
+      WHERE ($1::uuid IS NOT NULL AND "cashSessionId" = $1) OR id = $2
+    ), ventana AS (
+      SELECT MIN("fechaApertura") AS desde,
+        CASE WHEN bool_or("fechaCierre" IS NULL) THEN now() ELSE MAX("fechaCierre") END AS hasta
+      FROM turnos_caja
+    ), cobros AS (
+      SELECT m.id::text AS id, 'TRANSFERENCIA' AS tipo, m.monto AS importe, m."fechaHora" AS fecha,
+        COALESCE(NULLIF(r."licensePlateOriginal", ''), r."codeBarTicket", 'Estadía') AS concepto, m."usuarioId" AS usuario
+      FROM movimientos m LEFT JOIN ticket_registrations r ON r.id = m."ticketRegistrationId"
+      WHERE m."turnoId" IN (SELECT id FROM turnos_caja) AND m.metodo = 'TRANSFER' AND m.monto > 0
+        AND m.tipo IN ('ANTICIPO', 'SALDO', 'AJUSTE')
+        AND (m.referencia IS NULL OR m.referencia NOT LIKE 'Transferencia MercadoPago %')
+      UNION ALL
+      SELECT p.id::text, 'TRANSFERENCIA', p.amount, p."createdAt",
+        -- El resto lleva el id del pago de la cuenta corriente o del recibo: los dos son de inquilinos
+        -- (el rol de la playa no lee cuenta_movimientos, y no hace falta para nombrarlo).
+        CASE WHEN p.referencia LIKE 'Abono %' THEN 'Abono'
+          WHEN p.referencia ILIKE '%varios %' THEN 'Ingreso varios'
+          ELSE 'Pago de inquilino' END,
+        t."usuarioAperturaId"
+      FROM turno_payments p JOIN turnos_caja t ON t.id = p."turnoId"
+      WHERE p.medio = 'TRANSFER' AND p.amount > 0
+      UNION ALL
+      SELECT c.id::text, 'ALIAS_ELEGIDA', c.importe, c."cerradoEl",
+        CASE c.tipo WHEN 'ABONO' THEN 'Abono' WHEN 'INQUILINO' THEN 'Pago de inquilino'
+          ELSE COALESCE((SELECT NULLIF(r."licensePlateOriginal", '') FROM ticket_registrations r WHERE r.id = c."registrationId"), 'Estadía') END,
+        c."confirmadoPor"
+      FROM cobros_transferencia c, ventana v
+      WHERE c.modo = 'MANUAL' AND c."operacionId" IS NOT NULL
+        AND c."confirmadoPor" IN (SELECT "usuarioAperturaId" FROM turnos_caja)
+        AND c."cerradoEl" BETWEEN v.desde AND v.hasta
+    )
+    SELECT k.id, k.tipo, k.importe, k.concepto,
+      to_char(k.fecha AT TIME ZONE 'America/Argentina/Buenos_Aires', 'HH24:MI') AS hora,
+      COALESCE(NULLIF(trim(concat(u."firstName", ' ', u."lastName")), ''), 'Responsable no disponible') AS operador
+    FROM cobros k LEFT JOIN users u ON u.id = k.usuario
+    ORDER BY k.fecha, k.id`, [turno.cashSessionId ?? null, turno.id]);
+  return filas.map((f) => ({ ...f, importe: Number(f.importe) }));
 }
 
 // Las salidas de los turnos de esta caja que conviene revisar antes de explicar una diferencia:

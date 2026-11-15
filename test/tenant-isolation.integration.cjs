@@ -1624,3 +1624,49 @@ test('corte de medianoche: un turno que abrió el super admin en la playa se cor
     await ds.getRepository(CashSession).update(sesion.id, { estado: 'CERRADO' });
   }
 });
+
+test('transferencia manual con el alias activo: con el rol de la playa la decide la empresa propia, y el cierre lista lo sin verificar', async () => {
+  const Turno = load('turnos/entities/turno.entity', 'Turno');
+  const TurnoPayment = load('turnos/entities/turno-payment.entity', 'TurnoPayment');
+  const CuentaMp = load('mercadopago/entities/cuenta-mercadopago.entity', 'CuentaMercadoPago');
+  const Adicional = load('saas/entities/empresa-adicional.entity', 'EmpresaAdicional');
+  const { transferenciaManualPermitida, exigirTransferenciaPermitida } = require('../dist/mercadopago/transferencia-manual');
+  const { conciliacionCaja } = require('../dist/turnos/conciliacion-caja');
+  const { CONDICIONES_VIGENTES } = require('../dist/mercadopago/condiciones');
+  const operadorA = { ...a, userId: adminA.id, role: 'USER' };
+  const permitida = (scope) => scoped(scope, () => ds.transaction((m) => transferenciaManualPermitida(m)));
+  // La empresa A ya tiene una cuenta conectada y el adicional de otra prueba: se activa el alias y se deja como estaba.
+  const previa = await ds.getRepository(CuentaMp).findOneBy({ empresaId: a.empresaId });
+  const fila = previa
+    ? await ds.getRepository(CuentaMp).save({ ...previa, estado: 'ACTIVA', accessToken: previa.accessToken ?? 'x', condicionesVersion: CONDICIONES_VIGENTES.version, alias: 'playa.a', verificacionAlias: true })
+    : await ds.getRepository(CuentaMp).save({ empresaId: a.empresaId, mpUserId: '111', accessToken: 'x', refreshToken: 'y', expiraEl: new Date('2030-01-01'), estado: 'ACTIVA', condicionesVersion: CONDICIONES_VIGENTES.version, alias: 'playa.a', verificacionAlias: true });
+  const adicional = await ds.getRepository(Adicional).findOneBy({ empresaId: a.empresaId, codigo: 'VERIFICACION_ALIAS' });
+  if (adicional) await ds.getRepository(Adicional).update(adicional.id, { habilitado: true });
+  else await ds.getRepository(Adicional).save({ empresaId: a.empresaId, codigo: 'VERIFICACION_ALIAS', habilitado: true, precioMensual: 0 });
+  try {
+    assert.equal(await permitida(operadorA), false, 'el operador de A no carga transferencias sin verificar');
+    assert.equal(await permitida({ ...a, userId: adminA.id, role: 'ADMIN' }), true, 'la administración sí');
+    assert.equal(await permitida({ ...b, userId: adminB.id, role: 'USER' }), true, 'la cuenta de A no decide por B');
+    await assert.rejects(
+      scoped(operadorA, () => ds.transaction((m) => exigirTransferenciaPermitida(m, 'TRANSFER', 3500, false))),
+      (e) => e.response?.code === 'TRANSFERENCIA_CON_ALIAS',
+    );
+    // Lo confirmado por Mercado Pago y las devoluciones pasan.
+    await scoped(operadorA, () => ds.transaction((m) => exigirTransferenciaPermitida(m, 'TRANSFER', 3500, true)));
+    await scoped(operadorA, () => ds.transaction((m) => exigirTransferenciaPermitida(m, 'TRANSFER', -3500, false)));
+  } finally {
+    if (previa) await ds.getRepository(CuentaMp).save(previa);
+    else await ds.getRepository(CuentaMp).delete(fila.id);
+    if (adicional) await ds.getRepository(Adicional).save(adicional);
+    else await ds.getRepository(Adicional).delete({ empresaId: a.empresaId, codigo: 'VERIFICACION_ALIAS' });
+  }
+
+  // «Para revisar» con el rol de la playa: la transferencia a mano de un abono de su turno.
+  const turno = await ds.getRepository(Turno).save({ playaId: a.playaId, usuarioApertura: { id: adminA.id }, cashVersion: 2, fondoInicial: 0, estado: 'CERRADO', fechaCierre: new Date() });
+  await ds.getRepository(TurnoPayment).save([
+    { playaId: a.playaId, turnoId: turno.id, medio: 'TRANSFER', amount: 4500, referencia: 'Abono prueba' },
+    { playaId: a.playaId, turnoId: turno.id, medio: 'ALIAS', amount: 3000, referencia: 'Abono verificado' },
+  ]);
+  const detalle = await scoped(operadorA, () => conciliacionCaja(ds.manager, turno));
+  assert.deepEqual(detalle.sinVerificar.map((c) => [c.tipo, c.importe, c.concepto]), [['TRANSFERENCIA', 4500, 'Abono']]);
+});

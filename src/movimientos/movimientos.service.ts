@@ -8,6 +8,7 @@ import { Movimiento } from './entities/movimiento.entity';
 import { CreateMovimientoDto } from './dto/create-movimiento.dto';
 import { TurnosService } from 'src/turnos/turnos.service';
 import { exigirCobro } from 'src/tenancy/modalidad';
+import { exigirTransferenciaPermitida } from 'src/mercadopago/transferencia-manual';
 
 @Injectable()
 export class MovimientosService {
@@ -40,6 +41,8 @@ export class MovimientosService {
     }
     // Una playa gratuita no registra cobros, anticipos, cortesías, descuentos ni ajustes.
     if (manager) await exigirCobro(manager);
+    // Con el alias activo, el operador no registra transferencias sin verificar.
+    await exigirTransferenciaPermitida(manager ?? this.movimientoRepository.manager, dto.metodo, dto.monto, !!externalPayment.getStore());
     const turno = turnoIdOverride === undefined ? (manager && externalPayment.getStore() ? await paymentShift(manager, dto.usuarioId) : await this.turnosService.findOpenTurnoOrNull(dto.usuarioId, manager)) : null;
     const repository = manager ? manager.getRepository(Movimiento) : this.movimientoRepository;
 

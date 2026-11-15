@@ -210,6 +210,19 @@ operación. El operador pregunta quién transfirió, elige y toca «Asignar tran
   cobrar la salida de un auto que quedó adentro sigue permitido). Activarla y el alias son del administrador.
 - El super admin habilita el adicional y su precio; no tiene ninguna ruta para ver movimientos de la cuenta.
 
+### Sin «Transferencia» a mano para el operador
+
+Con las tres llaves activas, el operador (`USER`) no registra transferencias sin verificar: cargar como
+«Transferencia» un pago en efectivo deja la caja cuadrada sin la plata, y quien transfiere puede hacerlo al alias.
+`exigirTransferenciaPermitida` (src/mercadopago/transferencia-manual.ts) lo exige en los dos lugares por donde pasa
+todo cobro digital (`MovimientosService.create` y `recordDigital`), así que cubre salidas, pagos mixtos, anticipos,
+«Se fue antes», abonos, inquilinos y varios; rechaza con `TRANSFERENCIA_CON_ALIAS`. Pasan siempre: la administración
+(`ADMIN`/`SUPER_ADMIN`, para una transferencia a otra cuenta), lo que confirma Mercado Pago (QR y alias, dentro de
+`externalPayment`), importes negativos (devoluciones y reversiones) y las repeticiones sin conexión. Con la
+verificación pausada o la cuenta caída, el operador vuelve a tenerla. `disponibilidad()` informa
+`transferenciaManual` para que la pantalla no la ofrezca. Las transferencias a mano y los alias elegidos entre varias
+se listan en «Cobros digitales sin verificar» del cierre (ver docs/caja-turnos.md).
+
 ### Pruebas
 
 `coincidencias.spec.ts` (reglas, sin base) y `test/verificacion-alias.integration.cjs` (PostgreSQL real, MercadoPago
