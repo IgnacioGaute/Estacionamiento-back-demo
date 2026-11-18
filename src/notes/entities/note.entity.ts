@@ -45,6 +45,11 @@ export class Note {
   @Column('text', { nullable: true })
   context: string | null;
 
+  // Para revisar: queda pendiente y suma al número de avisos. Los informativos (descuentos con
+  // motivo, comentarios de clientes, cobros a inquilinos, cierres que coinciden) solo se consultan.
+  @Column('boolean', { default: true })
+  paraRevisar: boolean;
+
   @Column('date', { nullable: true })
   date: string | null;
   

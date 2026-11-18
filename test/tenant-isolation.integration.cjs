@@ -139,6 +139,8 @@ before(async () => {
     await new (load('database/migrations/1790000011000-cobros-mercadopago', 'CobrosMercadoPago1790000011000'))().up(migrationRunner);
     await new (load('database/migrations/1790000010000-offline-sessions', 'OfflineSessions1790000010000'))().up(migrationRunner);
     await new (load('database/migrations/1790000013000-offline-multiple-devices', 'OfflineMultipleDevices1790000013000'))().up(migrationRunner);
+    // El libro de cuentas con su política y sus permisos para el rol de la playa (lo crea synchronize sin ellos).
+    await new (load('database/migrations/1790000015000-cuenta-corriente-inquilinos', 'CuentaCorrienteInquilinos1790000015000'))().up(migrationRunner);
     await new (load('database/migrations/1790000021000-suscripciones', 'Suscripciones1790000021000'))().up(migrationRunner);
     await new (load('database/migrations/1790000022000-cuenta-alta', 'CuentaAlta1790000022000'))().up(migrationRunner);
     await new (load('database/migrations/1790000023000-facturas-anticipadas', 'FacturasAnticipadas1790000023000'))().up(migrationRunner);
@@ -162,6 +164,8 @@ before(async () => {
     await new (load('database/migrations/1790000051000-tolerancia-sin-cobro', 'ToleranciaSinCobro1790000051000'))().up(migrationRunner);
     await new (load('database/migrations/1790000052000-control-mercadopago-turno', 'ControlMercadoPagoTurno1790000052000'))().up(migrationRunner);
     await new (load('database/migrations/1790000053000-quitar-control-mercadopago-turno', 'QuitarControlMercadoPagoTurno1790000053000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000054000-turno-continua-medianoche', 'TurnoContinuaMedianoche1790000054000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000055000-avisos-para-revisar', 'AvisosParaRevisar1790000055000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -1520,15 +1524,16 @@ test('avisos: filtros por estado, origen, período y autor, con conteos por esta
   await scoped(a, () => ds.transaction(m => publishAutomaticNote(m, { sourceKey: `${marca}:c`, origin: 'Retiro de caja', sourceType: 'CAJA', sourceId: op.id, description: `${marca} caja` })));
   await scoped(opScope, () => ds.getRepository(Note).save({ description: `${marca} viejo`, user: { id: op.id }, date: '2026-01-05', hours: '10:00:00' }));
 
-  // Para el admin: tres pendientes (los del operador) y uno propio, que nunca queda pendiente.
+  // Para el admin: dos pendientes del operador; el de enero ya no cuenta (más de 7 días) y el propio
+  // nunca queda pendiente.
   let r = (await listar(adminA).expect(200)).body;
-  assert.deepEqual(r.conteos, { todos: 4, sinLeer: 3, leidos: 1 });
+  assert.deepEqual(r.conteos, { todos: 4, sinLeer: 2, leidos: 2 });
   assert.equal(r.data.length, 4);
   assert.ok(['total', 'sinLeer', 'hoy'].every((k) => typeof r.resumen[k] === 'number'));
   assert.ok(r.autores.some((u) => u.id === op.id) && r.autores.some((u) => u.id === adminA.id));
   const cuenta = async (params) => (await listar(adminA, params).expect(200)).body.data.map((n) => n.description.replace(marca + ' ', '')).sort();
-  assert.deepEqual(await cuenta('&estado=SIN_LEER'), ['equipo', 'ticket', 'viejo']);
-  assert.deepEqual(await cuenta('&estado=LEIDOS'), ['caja']);
+  assert.deepEqual(await cuenta('&estado=SIN_LEER'), ['equipo', 'ticket']);
+  assert.deepEqual(await cuenta('&estado=LEIDOS'), ['caja', 'viejo']);
   assert.deepEqual(await cuenta('&origen=EQUIPO'), ['equipo', 'viejo']);
   assert.deepEqual(await cuenta('&origen=VEHICULOS'), ['ticket']);
   assert.deepEqual(await cuenta('&origen=CAJA'), ['caja']);
@@ -1548,7 +1553,14 @@ test('avisos: filtros por estado, origen, período y autor, con conteos por esta
   // Marcar todo: deja al día a quien lo pide y a nadie más.
   await request(app.getHttpServer()).post('/notes/read-all').set('Authorization', 'Bearer ' + token(op)).set('X-Playa-Id', a.playaId).expect(201);
   assert.deepEqual((await listar(op).expect(200)).body.conteos, { todos: 4, sinLeer: 0, leidos: 4 });
-  assert.equal((await listar(adminA).expect(200)).body.conteos.sinLeer, 2);
+  assert.equal((await listar(adminA).expect(200)).body.conteos.sinLeer, 1);
+  // Con el rol de la playa, un informativo no queda pendiente para nadie.
+  await scoped(opScope, () => ds.transaction(m => publishAutomaticNote(m, { sourceKey: `${marca}:info`, origin: 'Comentario de inquilino', sourceType: 'RENTER', sourceId: op.id, description: `${marca} informativo`, paraRevisar: false })));
+  r = (await listar(adminA).expect(200)).body;
+  assert.deepEqual(r.conteos, { todos: 5, sinLeer: 1, leidos: 4 });
+  const unread = (await request(app.getHttpServer()).get('/notes/unread').set('Authorization', 'Bearer ' + token(adminA)).set('X-Playa-Id', a.playaId).expect(200)).body;
+  assert.ok(!unread.includes(r.data.find((n) => n.description.endsWith('informativo')).id));
+  assert.ok(!unread.includes(r.data.find((n) => n.description.endsWith('viejo')).id));
 
   for (const malo of ['&estado=NUEVO', '&origen=OTRO', '&desde=2026-13-01', '&desde=2026-02-01&hasta=2026-01-01', '&autor=yo'])
     assert.equal((await listar(adminA, malo).expect(400)).body.code, 'FILTRO_INVALIDO', malo);
@@ -1622,6 +1634,76 @@ test('corte de medianoche: un turno que abrió el super admin en la playa se cor
   } finally {
     await ds.query(`UPDATE turnos SET estado = 'CERRADO' WHERE "cashSessionId" = $1`, [sesion.id]);
     await ds.getRepository(CashSession).update(sesion.id, { estado: 'CERRADO' });
+  }
+});
+
+test('medianoche sin continuación: con el rol de la playa cierra turno y caja según la configuración de esa playa', async () => {
+  const Turno = load('turnos/entities/turno.entity', 'Turno');
+  const CashRegister = load('turnos/entities/cash-register.entity', 'CashRegister');
+  const CashSession = load('turnos/entities/cash-session.entity', 'CashSession');
+  const { rolloverShifts } = require('../dist/turnos/turno-book');
+  const ayer = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day').subtract(4, 'hour');
+  const abrir = async (tenant, usuario) => {
+    const caja = await ds.getRepository(CashRegister).save({ playaId: tenant.playaId, nombre: 'Caja medianoche', principal: false, activa: true });
+    const sesion = await ds.getRepository(CashSession).save({ playaId: tenant.playaId, cajaId: caja.id, fondoInicial: 500, estado: 'ABIERTO' });
+    const turno = await ds.getRepository(Turno).save({ playaId: tenant.playaId, usuarioApertura: { id: usuario.id }, cajaId: caja.id,
+      cashSessionId: sesion.id, cashVersion: 2, fondoInicial: 500, estado: 'ABIERTO', fechaOperativa: ayer.format('YYYY-MM-DD') });
+    await ds.getRepository(Turno).update(turno.id, { fechaApertura: ayer.toDate() });
+    await ds.getRepository(CashSession).update(sesion.id, { fechaApertura: ayer.toDate() });
+    return turno;
+  };
+  // Solo la playa B apaga la continuación; la A la conserva.
+  const previas = await ds.query('SELECT "playaId", "continuarTurnoMedianoche" AS continua FROM ticket_schedule_settings WHERE "playaId" = ANY($1)', [[a.playaId, b.playaId]]);
+  const [nueva] = previas.some(p => p.playaId === b.playaId) ? [] : await ds.query(`INSERT INTO ticket_schedule_settings ("playaId", "dayStartHour", "dayEndHour")
+    VALUES ($1, 8, 20) RETURNING id`, [b.playaId]);
+  await ds.query('UPDATE ticket_schedule_settings SET "continuarTurnoMedianoche" = ("playaId" = $1) WHERE "playaId" = ANY($2)', [a.playaId, [a.playaId, b.playaId]]);
+  const enA = await abrir(a, adminA);
+  const enB = await abrir(b, superUser);
+  try {
+    await scoped({ playaId: b.playaId, empresaId: b.empresaId, userId: '', role: 'ADMIN' }, () => ds.transaction((m) => rolloverShifts(m)));
+    const cerradoB = await ds.getRepository(Turno).findOneByOrFail({ id: enB.id });
+    assert.equal(cerradoB.estado, 'CERRADO');
+    assert.equal(cerradoB.cierreCaja, true);
+    assert.equal(cerradoB.efectivoParaSiguiente, 500);
+    assert.equal(await ds.getRepository(Turno).count({ where: { continuacionDeId: enB.id } }), 0);
+    const sesionB = await ds.getRepository(CashSession).findOneByOrFail({ id: enB.cashSessionId });
+    assert.equal(sesionB.estado, 'CERRADO');
+    assert.equal(sesionB.cierreAutomatico, true);
+    // El alcance de B no ve ni corta el turno de A.
+    assert.equal((await ds.getRepository(Turno).findOneByOrFail({ id: enA.id })).estado, 'ABIERTO');
+    await scoped({ playaId: a.playaId, empresaId: a.empresaId, userId: '', role: 'ADMIN' }, () => ds.transaction((m) => rolloverShifts(m)));
+    assert.equal((await ds.getRepository(Turno).findOneByOrFail({ id: enA.id })).cierreCaja, false);
+    assert.equal((await ds.getRepository(Turno).findOneByOrFail({ continuacionDeId: enA.id })).estado, 'ABIERTO');
+    assert.equal((await ds.getRepository(CashSession).findOneByOrFail({ id: enA.cashSessionId })).estado, 'ABIERTO');
+  } finally {
+    await ds.query(`UPDATE turnos SET estado = 'CERRADO' WHERE "cashSessionId" = ANY($1)`, [[enA.cashSessionId, enB.cashSessionId]]);
+    await ds.query(`UPDATE cash_sessions SET estado = 'CERRADO' WHERE id = ANY($1)`, [[enA.cashSessionId, enB.cashSessionId]]);
+    if (nueva) await ds.query('DELETE FROM ticket_schedule_settings WHERE id = $1', [nueva.id]);
+    for (const p of previas) await ds.query('UPDATE ticket_schedule_settings SET "continuarTurnoMedianoche" = $2 WHERE "playaId" = $1', [p.playaId, p.continua]);
+  }
+});
+
+test('deudores: con el rol de la playa cuenta solo los inquilinos de esa playa', async () => {
+  const cuentas = app.get(load('cuentas/cuentas.service', 'CuentasService'));
+  const mesViejo = dayjs().tz('America/Argentina/Buenos_Aires').subtract(2, 'month').format('YYYY-MM');
+  const playas = [a, a2].map((t) => t.playaId);
+  const previos = await ds.query('SELECT id, modulos FROM playas WHERE id = ANY($1)', [playas]);
+  await ds.query(`UPDATE playas SET modulos = COALESCE(modulos, '{}'::jsonb) || '{"inquilinos": true}'::jsonb WHERE id = ANY($1)`, [playas]);
+  try {
+    const base = { a: await scoped(a, () => cuentas.deudores()), a2: await scoped(a2, () => cuentas.deudores()) };
+    const deudor = async (tenant, nombre, importe) => {
+      const c = await ds.getRepository(Customer).save({ playaId: tenant.playaId, firstName: nombre, lastName: 'Deudor', customerType: 'RENTER', numberOfVehicles: 1 });
+      await scoped(tenant, () => cuentas.registrarSaldoInicial(c.id, { tipo: 'DEUDA', modo: 'POR_MES', meses: [{ mes: mesViejo, importe }] }, adminA.id));
+    };
+    await deudor(a, 'Uno', 1000);
+    await deudor(a2, 'Dos', 300);
+    await deudor(a2, 'Tres', 200);
+    const enA = await scoped(a, () => cuentas.deudores());
+    const enA2 = await scoped(a2, () => cuentas.deudores());
+    assert.deepEqual([enA.cantidad - base.a.cantidad, enA.total - base.a.total], [1, 1000]);
+    assert.deepEqual([enA2.cantidad - base.a2.cantidad, enA2.total - base.a2.total], [2, 500]);
+  } finally {
+    for (const p of previos) await ds.query('UPDATE playas SET modulos = $2 WHERE id = $1', [p.id, p.modulos]);
   }
 });
 

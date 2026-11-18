@@ -64,6 +64,11 @@ export class TicketScheduleSettings {
   @Column('boolean', { default: false })
   multipleShiftsEnabled: boolean;
 
+  // A las 00:00 el turno abierto sigue en una continuación sin cerrar la caja. Apagado, se cierran
+  // el turno y la caja sin contar, y no se abre otro: el próximo operador abre el suyo (ver rolloverShifts).
+  @Column('boolean', { default: true })
+  continuarTurnoMedianoche: boolean;
+
   @Column('jsonb', { nullable: true })
   pricingOptions: PricingOptions | null;
 

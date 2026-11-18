@@ -28,4 +28,7 @@ export class CashSession {
   @Column('int', { nullable: true }) diferencia: number | null;
   @Column('text', { nullable: true }) observaciones: string | null;
   @Column('uuid', { nullable: true }) usuarioCierreId: string | null;
+  // La cerró el sistema a las 00:00 sin contar (continuarTurnoMedianoche apagado): efectivoParaSiguiente
+  // es el saldo esperado, que el próximo operador verifica al abrir. No es un arqueo.
+  @Column('boolean', { default: false }) cierreAutomatico: boolean;
 }

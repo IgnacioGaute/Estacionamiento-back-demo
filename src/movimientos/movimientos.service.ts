@@ -63,7 +63,7 @@ export class MovimientosService {
     const saved = await repository.save(movimiento);
     if (dto.motivo?.trim()) {
       const registration = dto.ticketRegistrationId ? await manager!.query('SELECT "licensePlateOriginal", "codeBarTicket" FROM ticket_registrations WHERE id = $1', [dto.ticketRegistrationId]) : [];
-      await publishAutomaticNote(manager!, { sourceKey: dto.nota?.sourceKey ?? `movimiento:${saved.id}`, origin: dto.tipo === 'DESCUENTO' || dto.tipo === 'CORTESIA' ? 'Descuento de vehículo' : 'Corrección de cobro', sourceType: 'TICKET', sourceId: dto.ticketRegistrationId ?? saved.id, usuarioId: dto.usuarioId, description: dto.motivo, context: `${registration[0]?.licensePlateOriginal || registration[0]?.codeBarTicket || 'Vehículo'} · ${dto.nota?.context ?? `$ ${Math.abs(dto.monto).toLocaleString('es-AR')}`}` });
+      await publishAutomaticNote(manager!, { sourceKey: dto.nota?.sourceKey ?? `movimiento:${saved.id}`, origin: dto.tipo === 'DESCUENTO' || dto.tipo === 'CORTESIA' ? 'Descuento de vehículo' : 'Corrección de cobro', paraRevisar: dto.tipo !== 'DESCUENTO' && dto.tipo !== 'CORTESIA', sourceType: 'TICKET', sourceId: dto.ticketRegistrationId ?? saved.id, usuarioId: dto.usuarioId, description: dto.motivo, context: `${registration[0]?.licensePlateOriginal || registration[0]?.codeBarTicket || 'Vehículo'} · ${dto.nota?.context ?? `$ ${Math.abs(dto.monto).toLocaleString('es-AR')}`}` });
     }
     return saved;
   }

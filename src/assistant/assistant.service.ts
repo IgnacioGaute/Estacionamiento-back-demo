@@ -47,7 +47,7 @@ export class AssistantService {
       return { modalidad: 'GRATUITO', schedule, scope: 'Playa en modalidad gratuita: sin tarifas, cobros, caja ni comprobantes. Solo se configuran las tarjetas físicas.' };
     }
     if (name === 'pricing_settings') {
-      const schedule = await this.ds.getRepository(TicketScheduleSettings).findOne({ where: { playaId: scope.playaId }, select: { dayStartHour: true, dayEndHour: true, graceMinutes: true, pricingDayTypeBasis: true, pricingOptions: true, barcodeTicketsEnabled: true, shiftsEnabled: true, multipleShiftsEnabled: true, receiptDelivery: true } });
+      const schedule = await this.ds.getRepository(TicketScheduleSettings).findOne({ where: { playaId: scope.playaId }, select: { dayStartHour: true, dayEndHour: true, graceMinutes: true, pricingDayTypeBasis: true, pricingOptions: true, barcodeTicketsEnabled: true, shiftsEnabled: true, multipleShiftsEnabled: true, continuarTurnoMedianoche: true, receiptDelivery: true } });
       const [brackets, total] = await this.ds.getRepository(TicketPriceBracket).findAndCount({ where: { playaId: scope.playaId }, select: { vehicleType: true, ticketDayType: true, label: true, uptoMinutes: true, price: true, recurringUnitMinutes: true, recurringPriceMode: true }, order: { vehicleType: 'ASC', uptoMinutes: 'ASC' }, take: 60 });
       return { schedule, brackets, total, limited: total > brackets.length, scope: 'Configuración guardada para nuevos ingresos; las estadías existentes conservan sus tarifas.' };
     }

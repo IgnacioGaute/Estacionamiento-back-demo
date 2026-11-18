@@ -47,6 +47,7 @@ export class UpdateTicketScheduleDto {
   shiftsEnabled?: boolean;
 
   @IsBoolean() @IsOptional() multipleShiftsEnabled?: boolean;
+  @IsBoolean() @IsOptional() continuarTurnoMedianoche?: boolean;
 
   @IsIn(['ENTRY', 'EXIT'])
   @IsOptional()

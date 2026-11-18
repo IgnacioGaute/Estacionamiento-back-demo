@@ -114,7 +114,8 @@ export async function asentar(manager: EntityManager, a: Asiento): Promise<Cuent
   if (!a.detalle?.migrado && a.motivo?.trim() && !['PAGO', 'SALDO_INICIAL'].includes(a.tipo)) {
     const customer = await manager.findOne(Customer, { where: { id: a.customerId }, withDeleted: true });
     const origin = a.tipo === 'ANULACION' ? 'Anulación de cuenta' : a.tipo === 'DEVOLUCION' ? 'Devolución a inquilino' : a.importe > 0 ? 'Recargo de cuenta' : 'Bonificación de cuenta';
-    await publishAutomaticNote(manager, { sourceKey: a.tipo === 'ANULACION' && a.numero ? `cuenta-anulacion:${a.customerId}:${a.numero}` : `cuenta:${saved.id}`, origin, sourceType: 'CUENTA', sourceId: a.customerId, usuarioId: a.usuarioId, description: a.motivo, context: `${customer?.lastName ?? ''} ${customer?.firstName ?? ''}`.trim() + (a.numero ? ` · Comprobante ${a.numero}` : '') });
+    // Recargos y bonificaciones son informativos; anulaciones y devoluciones mueven lo cobrado y se revisan.
+    await publishAutomaticNote(manager, { paraRevisar: a.tipo === 'ANULACION' || a.tipo === 'DEVOLUCION', sourceKey: a.tipo === 'ANULACION' && a.numero ? `cuenta-anulacion:${a.customerId}:${a.numero}` : `cuenta:${saved.id}`, origin, sourceType: 'CUENTA', sourceId: a.customerId, usuarioId: a.usuarioId, description: a.motivo, context: `${customer?.lastName ?? ''} ${customer?.firstName ?? ''}`.trim() + (a.numero ? ` · Comprobante ${a.numero}` : '') });
   }
   return saved;
 }

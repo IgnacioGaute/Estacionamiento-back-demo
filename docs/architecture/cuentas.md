@@ -28,3 +28,8 @@ medio, plus anulaciones of other days; `null` when the module is off) for the pl
 per-method totals. The operator (USER) gets the list without playa totals (`resumen` returns `kpis: null`) and, per renter,
 only `GET /cuentas/:id/mostrador` (pending cargos + non-anulled payments with what each covered, so the operator can re-issue its recibo; no ledger); `estado` is admin-only and the
 frontend redirects `/renters/[id]` to the list. Amounts are whole pesos: DTOs reject decimals and the UI never reinterprets a "1.000,50".
+`GET /cuentas/deudores` (admin only: not in OPERATOR_ENDPOINTS) feeds the red counter in the account menu:
+`{ cantidad, total, masDe60 }` of renters with deuda vencida, by the same rule as `resumen` (overdue unpaid cargos,
+capped at the saldo; bajas included), or `null` with the module off. It is read-only, unlike `resumen`, which
+back-fills legacy ledgers, because the menu polls it. `resumen` also returns `whatsapp` per renter (the phone
+normalized like the recibo's) for the «Recordar el pago» link, which only opens WhatsApp with a prepared text.

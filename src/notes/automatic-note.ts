@@ -11,6 +11,8 @@ type AutomaticNote = {
   description?: string | null;
   context?: string;
   usuarioId?: string | null;
+  // Por defecto para revisar: una operación nueva que olvide clasificarse suma al número en vez de perderse.
+  paraRevisar?: boolean;
 };
 type PendingNote = { noteId: string; authorId: string; scope?: TenantScope };
 const QUEUE = 'automaticNotes';
@@ -26,18 +28,18 @@ export async function publishAutomaticNote(manager: EntityManager, input: Automa
     return manager.transaction(m => publishAutomaticNote(m, input));
   }
   const rows = await manager.query(`
-    INSERT INTO notes (id, "playaId", "userId", description, "sourceKey", origin, "sourceType", "sourceId", context, date, hours, "createdAt")
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+    INSERT INTO notes (id, "playaId", "userId", description, "sourceKey", origin, "sourceType", "sourceId", context, "paraRevisar", date, hours, "createdAt")
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
       (CURRENT_TIMESTAMP AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
       (CURRENT_TIMESTAMP AT TIME ZONE 'America/Argentina/Buenos_Aires')::time, CURRENT_TIMESTAMP)
     ON CONFLICT ("sourceKey") DO UPDATE SET
-      description = EXCLUDED.description, context = EXCLUDED.context, origin = EXCLUDED.origin,
+      description = EXCLUDED.description, context = EXCLUDED.context, origin = EXCLUDED.origin, "paraRevisar" = EXCLUDED."paraRevisar",
       "userId" = EXCLUDED."userId", date = EXCLUDED.date, hours = EXCLUDED.hours,
       "createdAt" = EXCLUDED."createdAt", "readBy" = '{}'
     WHERE notes.description IS DISTINCT FROM EXCLUDED.description
        OR notes.context IS DISTINCT FROM EXCLUDED.context
     RETURNING id`, [randomUUID(), scope?.playaId ?? null, authorId, description,
-      input.sourceKey, input.origin, input.sourceType, input.sourceId, input.context ?? null]);
+      input.sourceKey, input.origin, input.sourceType, input.sourceId, input.context ?? null, input.paraRevisar ?? true]);
   if (rows[0]) {
     const queue: Map<string, PendingNote> = manager.queryRunner.data[QUEUE] ??= new Map();
     queue.set(rows[0].id, { noteId: rows[0].id, authorId, scope });

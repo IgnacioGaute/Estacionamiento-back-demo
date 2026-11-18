@@ -402,6 +402,40 @@ test('pendiente no es vencido: la deuda vence en su fecha', { timeout: 30000 }, 
   assert.equal(estado.proximoAbono, mes(0), 'el mes actual todavía no tiene su abono');
 });
 
+test('deudores: el contador del menú coincide con la tabla, incluye los que ya debían y baja al pagar', { timeout: 30000 }, async () => {
+  // Los que ya debían antes de existir el contador cuentan sin hacer nada: se calcula de los cargos.
+  const coincide = async () => {
+    const { kpis, inquilinos } = await enPlaya(() => cuentas.resumen());
+    const d = await enPlaya(() => cuentas.deudores());
+    assert.equal(d.cantidad, kpis.conVencido);
+    assert.equal(d.total, kpis.deudaVencida);
+    assert.equal(d.masDe60, inquilinos.filter((i) => i.tramo === 'VENCIDO_MAS').length);
+    return d;
+  };
+  const antes = await coincide();
+  const viejo = await inquilino('Moroso');
+  await ds.getRepository(Customer).update(viejo.id, { phone: '011 5555-1234' });
+  await enPlaya(() => cuentas.registrarSaldoInicial(viejo.id, { tipo: 'DEUDA', modo: 'POR_MES', meses: [{ mes: mes(-3), importe: 700 }] }, user.id));
+  // Lo que todavía no venció no cuenta.
+  const alDia = await inquilino('Por vencer');
+  await enPlaya(() => ds.transaction((m) => receipts.createReceipt(alDia.id, m, 500, `${mes(1)}-02`)));
+  const con = await coincide();
+  assert.equal(con.cantidad, antes.cantidad + 1);
+  assert.equal(con.total, antes.total + 700);
+  assert.equal(con.masDe60, antes.masDe60 + 1);
+  const fila = (await enPlaya(() => cuentas.resumen())).inquilinos.find((i) => i.id === viejo.id);
+  assert.equal(fila.whatsapp, '5491155551234', 'el número listo para el recordatorio');
+  // Un pago parcial lo deja en la lista con menos; el total lo saca.
+  await enPlaya(() => cuentas.registrarPago(viejo.id, { pagos: [{ metodo: 'CASH', importe: 200 }] }, user.id));
+  assert.equal((await coincide()).total, antes.total + 500);
+  await enPlaya(() => cuentas.registrarPago(viejo.id, { pagos: [{ metodo: 'CASH', importe: 500 }] }, user.id));
+  assert.deepEqual(await coincide(), antes);
+  // Con la sección apagada no hay contador, ni error.
+  await ds.getRepository(Playa).update(playa.id, { modulos: { inquilinos: false } });
+  try { assert.equal(await enPlaya(() => cuentas.deudores()), null); }
+  finally { await ds.getRepository(Playa).update(playa.id, { modulos: { inquilinos: true } }); }
+});
+
 test('devolver plata es una devolución de saldo a favor, con su salida de caja', { timeout: 30000 }, async () => {
   const c = await inquilino('Devolucion');
   await enPlaya(() => cuentas.registrarPago(c.id, { pagos: [{ metodo: 'CASH', importe: 300 }] }, user.id));

@@ -530,6 +530,90 @@ test('medianoche: corta una vez, conserva caja y jornada y no retira sueldo', as
   await assert.rejects(ds.transaction(m => book().offlineShift(m, t.id, user.id, opened)), /jornada ya terminó/);
 });
 
+test('medianoche sin continuación: cierra turno y caja sin contar, no abre otro y el siguiente cuenta lo recibido', async () => {
+  const today = dayjs().tz('America/Argentina/Buenos_Aires').startOf('day');
+  const yesterday = today.subtract(1, 'day');
+  const opened = yesterday.add(20, 'hour').toDate();
+  const backdate = async (turno, session = true) => {
+    await ds.getRepository(Turno).update(turno.id, { fechaApertura: opened, fechaOperativa: yesterday.format('YYYY-MM-DD') });
+    if (!session) return;
+    await ds.getRepository(Session).update(turno.cashSessionId, { fechaApertura: opened });
+    // Las cajas que las pruebas anteriores cerraron hoy pasan a antes de esta apertura: si no, la
+    // última cerrada no sería la del corte, cosa que no puede pasar con una sola sesión abierta por caja.
+    await ds.query(`UPDATE cash_sessions SET "fechaCierre" = $1 WHERE estado = 'CERRADO' AND "fechaCierre" > $1`, [dayjs(opened).subtract(1, 'hour').toDate()]);
+  };
+  await tickets.updateSchedule({ continuarTurnoMedianoche: false, sueldoAutomatico: true, sueldosPorUsuario: [{ usuarioId: user.id, importe: 1000 }] });
+  try {
+    const t = await openCash(user.id, 15000);
+    await cash(user.id, 5000);
+    // El cobro fue antes de las 00:00: entra en lo que queda para el siguiente.
+    await ds.query('UPDATE cash_entries SET "createdAt" = $1 WHERE "turnoId" = $2', [yesterday.add(21, 'hour').toDate(), t.id]);
+    await backdate(t);
+    await Promise.all([ds.transaction(m => book().rolloverShifts(m)), ds.transaction(m => book().rolloverShifts(m))]);
+    const old = await ds.getRepository(Turno).findOneBy({ id: t.id });
+    assert.equal(old.estado, 'CERRADO');
+    assert.equal(old.fechaCierre.toISOString(), today.toDate().toISOString());
+    assert.equal(old.cierreAutomatico, true);
+    assert.equal(old.cierreCaja, true);
+    assert.equal(old.efectivoContado, null);
+    assert.equal(old.efectivoParaSiguiente, 20000);
+    assert.equal(old.sueldoRetirado, 0);
+    assert.equal(await ds.getRepository(Turno).count({ where: { continuacionDeId: t.id } }), 0);
+    const session = await ds.getRepository(Session).findOneBy({ id: t.cashSessionId });
+    assert.equal(session.estado, 'CERRADO');
+    assert.equal(session.cierreAutomatico, true);
+    assert.equal(session.efectivoContado, null);
+    assert.equal(session.efectivoParaSiguiente, 20000);
+    assert.equal(await ds.getRepository(CashEntry).count({ where: { turnoId: t.id } }), 1);
+    const ctx = await context();
+    assert.equal(ctx.active, null);
+    const caja = ctx.cajas.find(c => c.principal);
+    assert.equal(caja.session, null);
+    assert.equal(caja.pending.id, t.cashSessionId);
+    assert.equal(caja.traspaso.cierreAutomatico, true);
+    assert.equal(caja.efectivoDisponible, 20000);
+    assert.equal((await book().shiftSummary(ds.manager, old)).alcanceCaja, 'Caja cerrada a las 00:00 sin contar');
+    // La jornada terminó: una operación sin conexión de después de las 00:00 queda para revisar.
+    await assert.rejects(ds.transaction(m => book().offlineShift(m, t.id, user.id, new Date())), /jornada ya terminó/);
+    // El siguiente cuenta lo que recibe: la diferencia con lo esperado queda en su apertura.
+    await assert.rejects(shifts.open(second.id, { cajaId: caja.id, fondoInicial: 19000, cambioAgregado: 0, sesionAnteriorId: caja.pending.id }), /diferencia/);
+    const next = await shifts.open(second.id, { cajaId: caja.id, fondoInicial: 19000, cambioAgregado: 0, sesionAnteriorId: caja.pending.id, motivoApertura: 'Faltaban billetes' });
+    const nextSession = await ds.getRepository(Session).findOneBy({ id: next.cashSessionId });
+    assert.equal(nextSession.sesionAnteriorId, t.cashSessionId);
+    assert.equal(nextSession.fondoEsperado, 20000);
+    assert.equal(nextSession.diferenciaApertura, 1000);
+    await closeCash(second.id, 15000);
+
+    // Turnos múltiples en la misma caja: cada uno termina a las 00:00 y solo el último cierra la caja.
+    await tickets.updateSchedule({ multipleShiftsEnabled: true });
+    const a = await openCash(user.id, 15000);
+    const b = await openCash(second.id, 0);
+    assert.equal(b.cashSessionId, a.cashSessionId);
+    await backdate(a); await backdate(b, false);
+    await ds.transaction(m => book().rolloverShifts(m));
+    const cerrados = await ds.getRepository(Turno).findBy([{ id: a.id }, { id: b.id }]);
+    assert.deepEqual(cerrados.map(r => r.estado), ['CERRADO', 'CERRADO']);
+    assert.equal(cerrados.filter(r => r.cierreCaja).length, 1);
+    assert.equal((await ds.getRepository(Session).findOneBy({ id: a.cashSessionId })).estado, 'CERRADO');
+    assert.equal(await ds.getRepository(Turno).count({ where: [{ continuacionDeId: a.id }, { continuacionDeId: b.id }] }), 0);
+
+    // Si otro operador abrió después de las 00:00, el turno de ayer termina y la caja sigue con él.
+    const shared = (await principal());
+    const c = await openCash(user.id, shared.efectivoDisponible);
+    const d = await openCash(second.id, 0);
+    await backdate(c, false);
+    await ds.transaction(m => book().rolloverShifts(m));
+    const ayer = await ds.getRepository(Turno).findOneBy({ id: c.id });
+    assert.equal(ayer.estado, 'CERRADO');
+    assert.equal(ayer.cierreCaja, false);
+    assert.equal((await ds.getRepository(Session).findOneBy({ id: c.cashSessionId })).estado, 'ABIERTO');
+    assert.equal((await context(second.id)).active.id, d.id);
+    await closeCash(second.id, 15000);
+  } finally {
+    await tickets.updateSchedule({ continuarTurnoMedianoche: true, multipleShiftsEnabled: false, sueldoAutomatico: false, sueldosPorUsuario: [] });
+  }
+});
+
 test('resumen: lo devuelto en efectivo de un anticipo se descuenta de lo cobrado, no es un retiro', async () => {
   await tickets.updateSchedule({ sueldoAutomatico: false });
   const t = await openCash(user.id, 15000);
@@ -899,10 +983,12 @@ test('avisos: pendientes primero en toda la paginación, luego recientes, y leer
   const repo = ds.getRepository(Note);
   const marker = 'OrdenAvisosTask';
   const author = await ds.getRepository(User).save({ username: 'avisos-order', email: 'avisos-order@example.test', firstName: 'Otra', lastName: 'Persona', role: 'USER' });
-  const older = await repo.save({ description: marker + ' pendiente anterior', user: author, createdAt: new Date('2026-01-01T10:00:00Z') });
-  const newer = await repo.save({ description: marker + ' pendiente más reciente', user: author, createdAt: new Date('2026-01-02T10:00:00Z') });
-  const read = await repo.save({ description: marker + ' ya leído más reciente', user: author, readBy: [user.id], createdAt: new Date('2026-10-05T10:00:00Z') });
-  const own = await repo.save({ description: marker + ' propio reciente', user, createdAt: new Date('2026-10-04T10:00:00Z') });
+  // Pendientes de esta semana: los de más de 7 días dejan de contar (ver la prueba siguiente).
+  const dia = (n) => dayjs().subtract(n, 'day').toDate();
+  const older = await repo.save({ description: marker + ' pendiente anterior', user: author, createdAt: dia(3) });
+  const newer = await repo.save({ description: marker + ' pendiente más reciente', user: author, createdAt: dia(2) });
+  const read = await repo.save({ description: marker + ' ya leído más reciente', user: author, readBy: [user.id], createdAt: dayjs().subtract(1, 'hour').toDate() });
+  const own = await repo.save({ description: marker + ' propio reciente', user, createdAt: dayjs().subtract(2, 'hour').toDate() });
   const query = { page: 1, limit: 2, search: marker, path: 'http://example.test/notes' };
   const first = await service.findAll(query, user.id);
   assert.deepEqual(first.data.map(n => n.id), [newer.id, older.id]);
@@ -913,4 +999,84 @@ test('avisos: pendientes primero en toda la paginación, luego recientes, y leer
   assert.deepEqual((await service.findAll(query, user.id)).data.map(n => n.id), [older.id, read.id]);
   await service.markRead(older.id, user.id);
   assert.deepEqual((await service.findAll(query, user.id)).data.map(n => n.id), [read.id, own.id]);
+});
+
+test('avisos: solo los para revisar de esta semana quedan pendientes y suman al número', async () => {
+  const Note = load('notes/entities/note.entity', 'Note');
+  const NotesService = load('notes/notes.service', 'NotesService');
+  const service = new NotesService(ds.getRepository(Note), ds.getRepository(User), { sendNotification: async () => {} });
+  const repo = ds.getRepository(Note);
+  const marker = 'SemanaAvisosTask';
+  const author = await ds.getRepository(User).save({ username: 'avisos-semana', email: 'avisos-semana@example.test', firstName: 'Semana', lastName: 'Avisos', role: 'USER' });
+  const hoyAR = dayjs().tz('America/Argentina/Buenos_Aires');
+  const fecha = (dias) => hoyAR.subtract(dias, 'day').format('YYYY-MM-DD');
+  const revisarHoy = await repo.save({ description: marker + ' faltante', user: author, date: fecha(0) });
+  const revisarBorde = await repo.save({ description: marker + ' hace seis días', user: author, date: fecha(6) });
+  const revisarViejo = await repo.save({ description: marker + ' hace siete días', user: author, date: fecha(7) });
+  const informativo = await repo.save({ description: marker + ' descuento', user: author, date: fecha(0), paraRevisar: false });
+  const unread = await service.unread(user.id);
+  assert.ok(unread.includes(revisarHoy.id) && unread.includes(revisarBorde.id));
+  assert.ok(!unread.includes(revisarViejo.id) && !unread.includes(informativo.id));
+  const query = { page: 1, limit: 10, search: marker, path: 'http://example.test/notes' };
+  const lista = await service.findAll(query, user.id);
+  // Lo viejo y lo informativo no se borran: se listan, pero no como pendientes.
+  assert.equal(lista.meta.totalItems, 4);
+  assert.deepEqual(lista.pendientes.sort(), [revisarHoy.id, revisarBorde.id].sort());
+  assert.deepEqual(lista.conteos, { todos: 4, sinLeer: 2, leidos: 2 });
+  assert.equal((await service.findAll(query, user.id, { estado: 'SIN_LEER' })).meta.totalItems, 2);
+  // Marcar todo solo toca lo pendiente; lo viejo sin leer queda igual, sin contar.
+  await service.markAllRead(user.id);
+  assert.equal((await service.findAll(query, user.id)).conteos.sinLeer, 0);
+  const [viejo] = await ds.query('SELECT "readBy" FROM notes WHERE id = $1', [revisarViejo.id]);
+  assert.deepEqual(viejo.readBy, []);
+});
+
+test('avisos: cada operación publica el suyo como para revisar o informativo', async () => {
+  const Note = load('notes/entities/note.entity', 'Note');
+  const { publishAutomaticNote } = require('../dist/notes/automatic-note');
+  const id = require('node:crypto').randomUUID();
+  await ds.transaction(m => publishAutomaticNote(m, { sourceKey: `clasificacion:${id}:sin`, origin: 'Nueva operación', sourceType: 'TICKET', sourceId: id, usuarioId: user.id, description: 'Sin clasificar' }));
+  await ds.transaction(m => publishAutomaticNote(m, { sourceKey: `clasificacion:${id}:info`, origin: 'Descuento de vehículo', sourceType: 'TICKET', sourceId: id, usuarioId: user.id, description: 'Cliente frecuente', paraRevisar: false }));
+  const nota = (sufijo) => ds.getRepository(Note).findOneByOrFail({ sourceKey: `clasificacion:${id}:${sufijo}` });
+  // Una operación que no dice nada queda para revisar: mejor de más que perder un aviso.
+  assert.equal((await nota('sin')).paraRevisar, true);
+  assert.equal((await nota('info')).paraRevisar, false);
+  // Cierres: con el efectivo que coincide la nota es informativa; con diferencia, para revisar.
+  await tickets.updateSchedule({ sueldoAutomatico: false });
+  const coincide = await openCash(user.id, (await principal()).efectivoDisponible);
+  let ctx = await context();
+  await shifts.close(coincide.id, user.id, { efectivoContado: ctx.efectivoDisponible, efectivoEsperado: ctx.efectivoDisponible, efectivoParaSiguiente: ctx.efectivoDisponible, observaciones: 'Todo en orden' });
+  assert.equal((await ds.getRepository(Note).findOneByOrFail({ sourceKey: `cierre:${coincide.id}` })).paraRevisar, false);
+  const falta = await openCash(user.id, (await principal()).efectivoDisponible);
+  ctx = await context();
+  await shifts.close(falta.id, user.id, { efectivoContado: ctx.efectivoDisponible - 100, efectivoEsperado: ctx.efectivoDisponible, efectivoParaSiguiente: ctx.efectivoDisponible - 100, observaciones: 'Faltan 100' });
+  assert.equal((await ds.getRepository(Note).findOneByOrFail({ sourceKey: `cierre:${falta.id}` })).paraRevisar, true);
+  // Apertura: sin diferencia, informativa.
+  const caja = await principal();
+  const abierto = await shifts.open(user.id, { cajaId: caja.id, fondoInicial: caja.efectivoDisponible, cambioAgregado: 0, sesionAnteriorId: caja.pending?.id, motivoApertura: 'Recibí el cambio en monedas' });
+  assert.equal((await ds.getRepository(Note).findOneByOrFail({ sourceKey: `apertura:${abierto.cashSessionId}` })).paraRevisar, false);
+  ctx = await context();
+  await shifts.close(abierto.id, user.id, { efectivoContado: ctx.efectivoDisponible, efectivoEsperado: ctx.efectivoDisponible, efectivoParaSiguiente: ctx.efectivoDisponible });
+});
+
+test('avisos: la migración clasifica los automáticos que ya existían', async () => {
+  const Note = load('notes/entities/note.entity', 'Note');
+  const repo = ds.getRepository(Note);
+  const id = require('node:crypto').randomUUID();
+  const coincide = await ds.getRepository(Turno).save({ nombre: 'Clasificar', usuarioApertura: user, fondoInicial: 0, estado: 'CERRADO', diferencia: 0 });
+  const conDiferencia = await ds.getRepository(Turno).save({ nombre: 'Clasificar', usuarioApertura: user, fondoInicial: 0, estado: 'CERRADO', diferencia: 500 });
+  const notas = await repo.save([
+    { description: 'Equipo', user },
+    { description: 'Descuento', user, sourceKey: `mig:${id}:descuento`, origin: 'Descuento de vehículo', sourceType: 'TICKET' },
+    { description: 'Comentario', user, sourceKey: `mig:${id}:comentario`, origin: 'Comentario de inquilino', sourceType: 'INQUILINO' },
+    { description: 'Patente', user, sourceKey: `mig:${id}:patente`, origin: 'Entrada con patente ya activa', sourceType: 'TICKET' },
+    { description: 'Coincide', user, sourceKey: `cierre:${coincide.id}`, origin: 'Cierre de turno', sourceType: 'TURNO' },
+    { description: 'Faltante', user, sourceKey: `cierre:${conDiferencia.id}`, origin: 'Cierre de turno', sourceType: 'TURNO' },
+  ]);
+  const Migracion = load('database/migrations/1790000055000-avisos-para-revisar', 'AvisosParaRevisar1790000055000');
+  const runner = ds.createQueryRunner();
+  try { await new Migracion().up(runner); await new Migracion().up(runner); } finally { await runner.release(); }
+  const clasificadas = await repo.findBy(notas.map(n => ({ id: n.id })));
+  const por = Object.fromEntries(clasificadas.map(n => [n.description, n.paraRevisar]));
+  assert.deepEqual(por, { Equipo: true, Descuento: false, Comentario: false, Patente: true, Coincide: false, Faltante: true });
 });

@@ -48,7 +48,7 @@ export class CustomersService {
 
     private async publishComment(manager: import('typeorm').EntityManager, customer: Customer) {
       const label = customer.customerType === 'RENTER' ? 'Inquilino' : customer.customerType === 'OWNER' ? 'Propietario' : 'Cliente particular';
-      await publishAutomaticNote(manager, { sourceKey: `cliente:${customer.id}:comentario`, origin: `Comentario de ${label.toLowerCase()}`, sourceType: customer.customerType, sourceId: customer.id, description: customer.comments, context: `${customer.lastName ?? ''} ${customer.firstName ?? ''}`.trim() });
+      await publishAutomaticNote(manager, { sourceKey: `cliente:${customer.id}:comentario`, origin: `Comentario de ${label.toLowerCase()}`, sourceType: customer.customerType, sourceId: customer.id, paraRevisar: false, description: customer.comments, context: `${customer.lastName ?? ''} ${customer.firstName ?? ''}`.trim() });
     }
 
     async create(createCustomerDto: CreateCustomerDto) {

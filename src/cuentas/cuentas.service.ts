@@ -113,6 +113,42 @@ export class CuentasService {
     return playaId as string;
   }
 
+  // Los inquilinos con deuda vencida, para el contador rojo del menú (solo administración). Es un
+  // número aparte de los avisos: no se marca como leído, baja cuando pagan. Se pide seguido, así que
+  // solo lee (resumen() además completa libros viejos). El mismo criterio que la tabla: lo vencido de
+  // los cargos sin pagar, sin pasar del saldo; un inquilino sin libro todavía cuenta sus cargos.
+  // Con la sección apagada no hay contador (null), en vez de un error en cada consulta.
+  async deudores() {
+    const playaId = tenantContext.getStore()?.playaId;
+    if (!playaId) return null;
+    return this.ds.transaction(async (m) => {
+      const [playa] = await m.query('SELECT modulos FROM playas WHERE id = $1', [playaId]);
+      if (!playa?.modulos?.inquilinos) return null;
+      const hoyStr = hoy();
+      const filas: { vencido: string; desde: string }[] = await m.query(
+        `WITH vencidos AS (
+           SELECT r."customerId", SUM(r.price)::bigint AS vencido,
+                  MIN(CAST(COALESCE(r.vencimiento, r."startDate", r."dateNow") AS date)) AS desde
+           FROM receipts r JOIN customers c ON c.id = r."customerId" AND c."customerType" = 'RENTER'
+           WHERE r.status = 'PENDING' AND r."deletedAt" IS NULL AND r.price > 0
+             AND CAST(COALESCE(r.vencimiento, r."startDate", r."dateNow") AS date) < CAST($1 AS date)
+           GROUP BY r."customerId"),
+         saldos AS (
+           SELECT "customerId", SUM(importe)::bigint AS saldo FROM cuenta_movimientos
+           WHERE "customerId" IN (SELECT "customerId" FROM vencidos) GROUP BY "customerId")
+         SELECT LEAST(COALESCE(s.saldo, v.vencido), v.vencido) AS vencido, to_char(v.desde, 'YYYY-MM-DD') AS desde
+         FROM vencidos v LEFT JOIN saldos s ON s."customerId" = v."customerId"
+         WHERE COALESCE(s.saldo, v.vencido) > 0`,
+        [hoyStr],
+      );
+      return {
+        cantidad: filas.length,
+        total: filas.reduce((t, f) => t + Number(f.vencido), 0),
+        masDe60: filas.filter((f) => tramoDe(f.desde, hoyStr) === 'VENCIDO_MAS').length,
+      };
+    });
+  }
+
   private async inquilino(manager: EntityManager, customerId: string) {
     const customer = await manager.findOne(Customer, {
       where: { id: customerId },
@@ -226,6 +262,8 @@ export class CuentasService {
           nombre: c.firstName,
           apellido: c.lastName,
           telefono: c.phone ?? null,
+          // El mismo número que usa el recibo por WhatsApp, para «Recordar por WhatsApp».
+          whatsapp: telefonoParaWhatsapp(c.phone),
           cocheras: cocheras.map((r) => r.garageNumber).filter(Boolean),
           patentes: cocheras.map((r) => r.licensePlate).filter(Boolean),
           abono: baja ? 0 : cocheras.reduce((s, r) => s + (r.amount ?? 0), 0),
@@ -631,7 +669,7 @@ export class CuentasService {
     }
 
     await conciliar(m, customerId);
-    await publishAutomaticNote(m, { sourceKey: `cuenta-pago:${filas[0].id}`, origin: 'Cobro a inquilino', sourceType: 'CUENTA', sourceId: customerId, usuarioId, description: dto.nota, context: `${c.lastName ?? ''} ${c.firstName ?? ''}`.trim() + ` · Comprobante ${numero} · $ ${total.toLocaleString('es-AR')}` });
+    await publishAutomaticNote(m, { sourceKey: `cuenta-pago:${filas[0].id}`, origin: 'Cobro a inquilino', sourceType: 'CUENTA', sourceId: customerId, usuarioId, paraRevisar: false, description: dto.nota, context: `${c.lastName ?? ''} ${c.firstName ?? ''}`.trim() + ` · Comprobante ${numero} · $ ${total.toLocaleString('es-AR')}` });
     return { ...(await this.reciboDePago(m, filas, c)), repetido: false };
   }
 
@@ -876,7 +914,7 @@ export class CuentasService {
       if (dto.tipo !== 'AL_DIA' && dto.nota?.trim()) {
         const fila = await m.findOne(CuentaMovimiento, { where: { customerId, tipo: 'SALDO_INICIAL' }, order: { sequence: 'DESC' } });
         const c = await this.inquilino(m, customerId);
-        if (fila) await publishAutomaticNote(m, { sourceKey: `saldo-inicial:${fila.id}`, origin: 'Saldo inicial de inquilino', sourceType: 'CUENTA', sourceId: customerId, usuarioId, description: dto.nota, context: `${c.lastName ?? ''} ${c.firstName ?? ''}`.trim() });
+        if (fila) await publishAutomaticNote(m, { sourceKey: `saldo-inicial:${fila.id}`, origin: 'Saldo inicial de inquilino', sourceType: 'CUENTA', sourceId: customerId, usuarioId, paraRevisar: false, description: dto.nota, context: `${c.lastName ?? ''} ${c.firstName ?? ''}`.trim() });
       }
       return result;
     };

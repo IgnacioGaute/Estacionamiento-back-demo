@@ -28,11 +28,16 @@ export type FiltrosAvisos = {
   autor?: string;
 };
 
-// Pendiente para quien lee: no lo escribió y todavía no lo marcó. Lo propio nunca queda pendiente.
-const PENDIENTE = (a: string, lector = ':readerId') =>
-  `((${a}."userId" IS NULL OR ${a}."userId" != ${lector}::uuid) AND NOT (${lector}::uuid = ANY(${a}."readBy")))`;
 // Día del aviso en Buenos Aires; las notas viejas sin fecha usan su creación.
 const FECHA = (a: string) => `COALESCE(${a}.date, CAST(${a}."createdAt" AT TIME ZONE 'America/Argentina/Buenos_Aires' AS date))`;
+// Un aviso para revisar deja de contar después de una semana (hoy y los 6 días anteriores): no se
+// borra, pero quien no entró en días no encuentra cientos de pendientes.
+export const DIAS_PENDIENTE = 7;
+// Pendiente para quien lee: para revisar, de esta semana, no lo escribió y todavía no lo marcó. Lo
+// propio nunca queda pendiente; los informativos tampoco.
+const PENDIENTE = (a: string, lector = ':readerId') =>
+  `(${a}."paraRevisar" AND ${FECHA(a)} > CAST(CURRENT_TIMESTAMP AT TIME ZONE 'America/Argentina/Buenos_Aires' AS date) - ${DIAS_PENDIENTE}
+    AND (${a}."userId" IS NULL OR ${a}."userId" != ${lector}::uuid) AND NOT (${lector}::uuid = ANY(${a}."readBy")))`;
 
 const filtroInvalido = (message: string) => new BadRequestException({ code: 'FILTRO_INVALIDO', message });
 const fechaValida = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && dayjs(v).format('YYYY-MM-DD') === v;
@@ -243,13 +248,9 @@ export class NotesService {
       throw error;
     }
   }
+  // Lo que suma al número del encabezado: el mismo criterio que la cartelera.
   async unread(userId: string) {
-    const notes = await this.noteRepository.createQueryBuilder('n')
-      .leftJoin('n.user', 'author')
-      .select('n.id', 'id')
-      .where('(author.id IS NULL OR author.id != :userId)', { userId })
-      .andWhere('NOT (:userId = ANY(n."readBy"))', { userId })
-      .getRawMany<{ id: string }>();
+    const notes: { id: string }[] = await this.noteRepository.query(`SELECT n.id FROM notes n WHERE ${PENDIENTE('n', '$1')}`, [userId]);
     return notes.map(note => note.id);
   }
 

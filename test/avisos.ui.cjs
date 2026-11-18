@@ -64,6 +64,7 @@ const lista = {
     { id: 'n2', sourceKey: 'cierre:2', sourceType: 'TURNO', origin: 'Cierre de turno', context: 'Caja principal · Tarde', description: 'Faltaron $ 200 en el arqueo, lo revisamos mañana con el encargado de la noche.', user: franco, date: hoy, createdAt: hora('14:14') },
     { id: 'n3', description: 'El portón de la salida quedó trabado: abrir con la llave del tablero.', user: { id: 'yo', firstName: 'Ana', lastName: 'Dueña' }, date: hoy, createdAt: hora('11:54') },
     { id: 'n4', sourceKey: 'movimiento:4', sourceType: 'TICKET', origin: 'Descuento de vehículo', context: 'AE522SH · $ 3.500', description: 'Se cobra la tarifa anterior (Hasta 1 hora): demoró en pagar', user: franco, date: '2026-10-19', createdAt: '2026-10-19T14:33:00.000Z' },
+    { id: 'n6', sourceKey: 'cierre:6', sourceType: 'TURNO', origin: 'Cierre de turno', context: 'Caja principal · Mañana', description: 'Quedó el cambio en monedas.', user: franco, date: '2026-10-19', createdAt: '2026-10-19T11:10:00.000Z' },
     { id: 'n5', sourceKey: 'cliente:5', sourceType: 'RENTER', origin: 'Comentario de inquilino', context: 'Pérez Juan', description: 'Llamar antes de renovar el abono.', user: null, date: '2026-10-17', createdAt: '2026-10-17T12:00:00.000Z' },
   ],
   meta: { totalItems: 24, totalPages: 2, itemsPerPage: 20, currentPage: 1, sortBy: [] }, links: {},
@@ -82,22 +83,25 @@ test('avisos: grupos, lectura tocando el aviso, filtros y móvil', { timeout: 12
     await page.waitForSelector('article', { timeout: 10000 }).catch((e) => { throw new Error(errors.join('\n') || e.message); });
 
     const grupos = await page.$$eval('section[aria-label="Avisos"] h3', els => els.map(e => e.textContent));
-    assert.deepEqual(grupos.slice(0, 2), ['Sin leer', 'Hoy']);
+    assert.deepEqual(grupos.slice(0, 2), ['Para revisar', 'Hoy']);
     assert.equal(await page.$$eval('article[data-pendiente]', els => els.length), 2);
+    // Dos avisos de Franco el mismo día van juntos y plegados.
+    assert.match(await page.$eval('details summary', e => e.textContent), /Franco Pizarro.*2 avisos.*1 Descuento de vehículo · 1 Cierre de turno/);
+    await page.evaluate(() => { document.querySelector('details').open = true; });
     await page.screenshot({ path: path.join(output, 'avisos-desktop.png'), fullPage: true });
 
     // Tocar el texto del aviso (no un botón) lo marca como leído.
     await page.evaluate(() => [...document.querySelectorAll('article p')].find(p => p.textContent.startsWith('Faltaron')).click());
     await page.waitForFunction(() => window.__leidos.includes('n2'));
     assert.equal(await page.$$eval('article[data-pendiente]', els => els.length), 1);
-    // El resumen es una línea: «1 sin leer · 3 publicados hoy · 24 en la cartelera».
-    assert.match(await page.$eval('section[aria-label="Resumen"]', e => e.textContent), /1 sin leer/);
+    // El resumen: «1 para revisar · 3 publicados hoy · 24 en la cartelera».
+    assert.match(await page.$eval('section[aria-label="Resumen"]', e => e.textContent), /1 para revisar/);
     // Editar un aviso propio no marca nada.
     await page.click('article button[aria-label="Editar aviso"]');
     await page.waitForSelector('[role="dialog"]'); await page.keyboard.press('Escape'); await page.waitForSelector('[role="dialog"]', { hidden: true });
     assert.deepEqual(await page.evaluate(() => window.__leidos), ['n2']);
 
-    await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.startsWith('Sin leer')).click());
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.startsWith('Para revisar')).click());
     await page.waitForFunction(() => window.__pedidos.some(p => p.estado === 'SIN_LEER'));
 
     for (const width of [320, 390, 768, 1024]) { await page.setViewport({ width, height: 850 }); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'desborde en ' + width); }

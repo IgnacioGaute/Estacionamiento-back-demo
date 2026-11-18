@@ -115,6 +115,8 @@ describe('TenantGuard: quién puede llamar a qué', () => {
       await rechaza('TicketsController', 'updateSchedule', { sesion: operador }, 'requiere un administrador');
       await rechaza('TicketsController', 'createPriceBracket', { sesion: operador }, 'requiere un administrador');
       await rechaza('CuentasController', 'anular', { sesion: operador }, 'requiere un administrador');
+      // El contador de deudores del menú es de administración, como los totales de la tabla.
+      await rechaza('CuentasController', 'deudores', { sesion: operador }, 'requiere un administrador');
       await rechaza('MercadoPagoController', 'conectar', { sesion: operador }, 'requiere un administrador');
     });
 

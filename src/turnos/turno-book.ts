@@ -7,6 +7,7 @@ import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import { Turno } from './entities/turno.entity';
 import { TurnoPayment } from './entities/turno-payment.entity';
+import { CashSession } from './entities/cash-session.entity';
 import { tenantContext } from 'src/tenancy/tenant-context';
 import { exigirCobro } from 'src/tenancy/modalidad';
 import { exigirTransferenciaPermitida } from 'src/mercadopago/transferencia-manual';
@@ -82,12 +83,15 @@ export async function rolloverShifts(m: EntityManager, now = new Date()) {
   const repo = m.getRepository(Turno);
   const open = await repo.createQueryBuilder('t').leftJoinAndSelect('t.usuarioApertura', 'u')
     .where("t.estado = 'ABIERTO' AND t.cashSessionId IS NOT NULL AND t.fechaApertura < :today", { today }).getMany();
+  const continua = new Map<string | null, boolean>();
   for (let turno of open) {
     let boundary = dayjs(turno.fechaApertura).tz(SHIFT_TZ).startOf('day').add(1, 'day');
     while (boundary.toDate() <= now) {
       const end = boundary.toDate();
       const vehicles = await occupancyAt(m, end);
       const balance = await physicalCash(m, turno.cashSessionId, end);
+      if (!continua.has(turno.playaId)) continua.set(turno.playaId, await continuaALaMedianoche(m, turno.playaId));
+      if (!continua.get(turno.playaId)) { await cerrarALaMedianoche(m, turno, end, vehicles, balance); break; }
       await repo.update(turno.id, { estado: 'CERRADO', fechaCierre: end, cierreAutomatico: true,
         cierreCaja: false, vehiculosFin: vehicles, saldoAlCorte: balance, salidasRegistradas: await exitCount(m, turno.id) });
       const anterior = turno;
@@ -99,6 +103,29 @@ export async function rolloverShifts(m: EntityManager, now = new Date()) {
       boundary = boundary.add(1, 'day');
     }
   }
+}
+
+// Se lee por la playa del turno y no por el alcance: el corte también corre con alcance de plataforma.
+async function continuaALaMedianoche(m: EntityManager, playaId: string | null) {
+  const [fila] = await m.query(`SELECT "continuarTurnoMedianoche" AS continua FROM ticket_schedule_settings
+    WHERE "playaId" IS NOT DISTINCT FROM $1 ORDER BY "updatedAt" DESC LIMIT 1`, [playaId]);
+  return fila?.continua !== false;
+}
+
+// Con la continuación apagada, a las 00:00 termina la jornada: el turno se cierra como cualquier corte
+// (sin contar ni retirar sueldo) y no se abre otro. El último turno abierto de la caja la cierra con el
+// saldo esperado como lo que queda para el siguiente; ese operador lo cuenta al abrir y la diferencia
+// queda en su apertura. Si otro operador sigue en la caja (abrió después de las 00:00), la caja sigue.
+async function cerrarALaMedianoche(m: EntityManager, turno: Turno, end: Date, vehicles: number, balance: number) {
+  const repo = m.getRepository(Turno);
+  const otros = await repo.createQueryBuilder('t')
+    .where("t.cashSessionId = :sesion AND t.estado = 'ABIERTO' AND t.id <> :id", { sesion: turno.cashSessionId, id: turno.id }).getCount();
+  await repo.update(turno.id, { estado: 'CERRADO', fechaCierre: end, cierreAutomatico: true, cierreCaja: otros === 0,
+    ...(otros ? {} : { efectivoTeorico: balance, efectivoParaSiguiente: balance }),
+    vehiculosFin: vehicles, saldoAlCorte: balance, salidasRegistradas: await exitCount(m, turno.id) });
+  if (otros) return;
+  await m.getRepository(CashSession).update(turno.cashSessionId, { estado: 'CERRADO', fechaCierre: end, cierreAutomatico: true,
+    efectivoTeorico: balance, efectivoParaSiguiente: balance, observaciones: 'Cierre automático a las 00:00: la caja quedó sin contar.' });
 }
 
 // Los cortes automáticos no son arqueos: se completan con hechos ocurridos sin conexión.
@@ -191,5 +218,5 @@ export async function shiftSummary(m: EntityManager, turno: Turno) {
     salidas: exits,
     vehiculosInicio: turno.vehiculosInicio, vehiculosFin: turno.vehiculosFin,
     efectivoParaSiguiente: turno.efectivoParaSiguiente, movimientos: movements,
-    alcanceCaja: turno.cierreCaja ? 'Arqueo de toda la caja compartida' : null };
+    alcanceCaja: turno.cierreCaja ? (turno.cierreAutomatico ? 'Caja cerrada a las 00:00 sin contar' : 'Arqueo de toda la caja compartida') : null };
 }

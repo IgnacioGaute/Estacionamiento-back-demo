@@ -33,6 +33,13 @@ export class CuentasController {
     return this.cuentas.resumen();
   }
 
+  // El contador rojo de deudores del menú. Solo administración (no está en OPERATOR_ENDPOINTS).
+  // Antes que ':customerId', igual que «anulaciones».
+  @Get('deudores')
+  deudores() {
+    return this.cuentas.deudores();
+  }
+
   // Antes que ':customerId', que si no se queda con «anulaciones» y lo rechaza por no ser uuid.
   @Get('anulaciones')
   anulaciones(@Query() query: AnulacionesQueryDto) {

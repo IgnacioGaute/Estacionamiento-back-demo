@@ -96,7 +96,9 @@ export class TurnosService {
     const responsable = entregado?.usuarioCierre;
     const operador = responsable ? [responsable.firstName, responsable.lastName].filter(Boolean).join(' ').trim() || responsable.username : entregado?.nombre;
     return { ...caja, session, pending: last, legacyPending: legacy,
+      // cierreAutomatico: la cerró el sistema a las 00:00 sin contar; lo que «dejó» es el saldo esperado.
       traspaso: { operador: operador && operador !== 'Turno' ? operador : null, fechaCierre: entregado?.fechaCierre ?? last?.fechaCierre ?? null,
+        cierreAutomatico: last?.cierreAutomatico === true,
         vehiculosDejados: entregado?.vehiculosFin ?? null, vehiculosActivos: vehiculosActivos ?? await occupancyAt(manager, operationNow()) },
       movimientos: movements.map(m => ({ id: m.id, amount: m.amount, tipo: m.tipo, motivo: m.motivo, operador: m.usuario ? [m.usuario.firstName, m.usuario.lastName].join(' ').trim() : 'Usuario no disponible' })),
       efectivoDisponible: session ? await this.sessionTotal(session.id, manager) : last?.efectivoParaSiguiente ?? legacy?.efectivoParaSiguiente ?? 0,
@@ -180,7 +182,7 @@ export class TurnosService {
       const own = await operatorShift(manager, usuarioId);
       const movement = await manager.getRepository(CashSessionMovement).save({ ...(operationContext.getStore() ? { createdAt: operationNow() } : {}), sesionId, usuarioId, turnoId: own?.cashSessionId === sesionId ? own.id : null, tipo: dto.tipo, amount: dto.tipo === 'RETIRO' ? -dto.importe : dto.importe, motivo: dto.motivo.trim() });
       const caja = await manager.getRepository(CashRegister).findOneBy({ id: session.cajaId });
-      await publishAutomaticNote(manager, { sourceKey: `caja-movimiento:${movement.id}`, origin: dto.tipo === 'RETIRO' ? 'Retiro de caja' : 'Aporte de caja', sourceType: 'CAJA', sourceId: session.id, usuarioId, description: dto.motivo, context: `${caja?.nombre ?? 'Caja'} · $ ${dto.importe.toLocaleString('es-AR')}` });
+      await publishAutomaticNote(manager, { sourceKey: `caja-movimiento:${movement.id}`, origin: dto.tipo === 'RETIRO' ? 'Retiro de caja' : 'Aporte de caja', sourceType: 'CAJA', sourceId: session.id, usuarioId, paraRevisar: false, description: dto.motivo, context: `${caja?.nombre ?? 'Caja'} · $ ${dto.importe.toLocaleString('es-AR')}` });
       return movement;
     });
   }
@@ -262,7 +264,7 @@ export class TurnosService {
         turnoAnteriorId: ctx.session ? null : dto.turnoAnteriorId ?? ctx.legacyPending?.id ?? null }));
       if (ctx.legacyPending) await repo.update(ctx.legacyPending.id, { recibidoPorTurnoId: turno.id });
       if (dto.turnoAnteriorId && ctx.pending) await repo.update(dto.turnoAnteriorId, { recibidoPorTurnoId: turno.id });
-      if (!ctx.session) await publishAutomaticNote(manager, { sourceKey: `apertura:${session.id}`, origin: 'Apertura de caja', sourceType: 'TURNO', sourceId: turno.id, usuarioId, description: dto.motivoApertura, context: `${caja.nombre} · ${turno.nombre}` });
+      if (!ctx.session) await publishAutomaticNote(manager, { sourceKey: `apertura:${session.id}`, origin: 'Apertura de caja', sourceType: 'TURNO', sourceId: turno.id, usuarioId, paraRevisar: session.diferenciaApertura !== 0, description: dto.motivoApertura, context: `${caja.nombre} · ${turno.nombre}` });
       else if (dto.conteoRelevo !== undefined || !operationContext.getStore()) {
         // Se suma a la caja abierta: cuenta lo que hay. Las aperturas guardadas sin conexión antes de
         // este cambio no lo traen y se sincronizan igual.
@@ -415,7 +417,10 @@ export class TurnosService {
     const corregido = turno.primerConteo != null && turno.efectivoContado != null && turno.primerConteo !== turno.efectivoContado
       ? `Primer conteo: $${turno.primerConteo}; se corrigió a $${turno.efectivoContado} después de ver lo esperado.` : null;
     const description = [turno.observaciones?.trim(), corregido, turno.motivoCierreForzado ? `Cierre por administrador: ${turno.motivoCierreForzado}` : null].filter(Boolean).join('\n');
-    await publishAutomaticNote(manager, { sourceKey: `cierre:${turno.id}`, origin: 'Cierre de turno', sourceType: 'TURNO', sourceId: turno.id, usuarioId, description, context: `${caja ?? 'Caja'} · ${turno.nombre}` });
+    // Una nota con el efectivo que coincide es informativa; una diferencia, un conteo corregido o un
+    // cierre de administración se revisan.
+    const paraRevisar = (turno.diferencia ?? 0) !== 0 || !!corregido || !!turno.motivoCierreForzado;
+    await publishAutomaticNote(manager, { sourceKey: `cierre:${turno.id}`, origin: 'Cierre de turno', sourceType: 'TURNO', sourceId: turno.id, usuarioId, paraRevisar, description, context: `${caja ?? 'Caja'} · ${turno.nombre}` });
   }
 
   // El historial permite buscar por cierre; apertura sigue siendo el valor predeterminado.

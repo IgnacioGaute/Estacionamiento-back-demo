@@ -216,7 +216,7 @@ async removeTicketPrice(id: string) {
 }
 
 
-  private readonly defaultTicketSchedule = { dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, barcodeTicketsEnabled: false, shiftsEnabled: false, multipleShiftsEnabled: false, pricingDayTypeBasis: 'EXIT' as const };
+  private readonly defaultTicketSchedule = { dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, barcodeTicketsEnabled: false, shiftsEnabled: false, multipleShiftsEnabled: false, continuarTurnoMedianoche: true, pricingDayTypeBasis: 'EXIT' as const };
 
   async getSchedule(manager?: EntityManager) {
     const repository = manager ? manager.getRepository(TicketScheduleSettings) : this.ticketScheduleSettingsRepository;
