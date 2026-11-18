@@ -113,10 +113,13 @@ export class CuentasService {
     return playaId as string;
   }
 
-  // Los inquilinos con deuda vencida, para el contador rojo del menú (solo administración). Es un
-  // número aparte de los avisos: no se marca como leído, baja cuando pagan. Se pide seguido, así que
-  // solo lee (resumen() además completa libros viejos). El mismo criterio que la tabla: lo vencido de
-  // los cargos sin pagar, sin pasar del saldo; un inquilino sin libro todavía cuenta sus cargos.
+  // Los inquilinos con deuda vencida, para Avisos → Inquilinos y el número rojo del menú (solo
+  // administración). El número cuenta las que esta persona todavía no vio (`nuevos`); al abrir la
+  // pestaña se marcan solas (marcarDeudasVistas). Una deuda vuelve a ser nueva si cambia: otro
+  // atraso después de pagar o si pasa de 30 o de 60 días. Los que ya debían cuentan desde el
+  // principio, porque nadie los vio todavía. El mismo criterio que la tabla: lo vencido de los
+  // cargos sin pagar, sin pasar del saldo; un inquilino sin libro todavía cuenta sus cargos. Solo
+  // lee (resumen() además completa libros viejos): el menú lo pide seguido.
   // Con la sección apagada no hay contador (null), en vez de un error en cada consulta.
   async deudores() {
     const playaId = tenantContext.getStore()?.playaId;
@@ -124,8 +127,34 @@ export class CuentasService {
     return this.ds.transaction(async (m) => {
       const [playa] = await m.query('SELECT modulos FROM playas WHERE id = $1', [playaId]);
       if (!playa?.modulos?.inquilinos) return null;
-      const hoyStr = hoy();
-      const filas: { vencido: string; desde: string }[] = await m.query(
+      return this.estadoDeudores(m);
+    });
+  }
+
+  // Abrir la pestaña cuenta como ver: no hay que marcar cada una.
+  async marcarDeudasVistas() {
+    const playaId = tenantContext.getStore()?.playaId;
+    const usuarioId = tenantContext.getStore()?.userId;
+    if (!playaId || !usuarioId) return null;
+    return this.ds.transaction(async (m) => {
+      const [playa] = await m.query('SELECT modulos FROM playas WHERE id = $1', [playaId]);
+      if (!playa?.modulos?.inquilinos) return null;
+      const actual = await this.estadoDeudores(m);
+      for (const d of actual.deudores.filter((x) => x.nuevo))
+        await m.query(
+          `INSERT INTO deudas_vistas ("playaId", "usuarioId", "customerId", "vencidoDesde", tramo)
+           VALUES ($1, $2, $3, $4, $5) ON CONFLICT ("usuarioId", "customerId", "vencidoDesde", tramo) DO NOTHING`,
+          [playaId, usuarioId, d.id, d.vencidoDesde, d.tramo],
+        );
+      return { ...actual, nuevos: 0, deudores: actual.deudores.map((d) => ({ ...d, nuevo: false })) };
+    });
+  }
+
+  private async estadoDeudores(m: EntityManager) {
+    const hoyStr = hoy();
+    const usuarioId = tenantContext.getStore()?.userId ?? null;
+    const filas: { id: string; nombre: string | null; apellido: string | null; phone: string | null; baja: boolean; vencido: string; desde: string }[] =
+      await m.query(
         `WITH vencidos AS (
            SELECT r."customerId", SUM(r.price)::bigint AS vencido,
                   MIN(CAST(COALESCE(r.vencimiento, r."startDate", r."dateNow") AS date)) AS desde
@@ -136,17 +165,43 @@ export class CuentasService {
          saldos AS (
            SELECT "customerId", SUM(importe)::bigint AS saldo FROM cuenta_movimientos
            WHERE "customerId" IN (SELECT "customerId" FROM vencidos) GROUP BY "customerId")
-         SELECT LEAST(COALESCE(s.saldo, v.vencido), v.vencido) AS vencido, to_char(v.desde, 'YYYY-MM-DD') AS desde
-         FROM vencidos v LEFT JOIN saldos s ON s."customerId" = v."customerId"
-         WHERE COALESCE(s.saldo, v.vencido) > 0`,
+         SELECT c.id, c."firstName" AS nombre, c."lastName" AS apellido, c.phone, c."deletedAt" IS NOT NULL AS baja,
+                LEAST(COALESCE(s.saldo, v.vencido), v.vencido) AS vencido, to_char(v.desde, 'YYYY-MM-DD') AS desde
+         FROM vencidos v JOIN customers c ON c.id = v."customerId"
+         LEFT JOIN saldos s ON s."customerId" = v."customerId"
+         WHERE COALESCE(s.saldo, v.vencido) > 0
+         ORDER BY v.desde, c."lastName", c."firstName"`,
         [hoyStr],
       );
+    const vistas: { customerId: string; desde: string; tramo: string }[] = usuarioId && filas.length
+      ? await m.query(
+          `SELECT "customerId", to_char("vencidoDesde", 'YYYY-MM-DD') AS desde, tramo FROM deudas_vistas
+           WHERE "usuarioId" = $1 AND "customerId" = ANY($2)`,
+          [usuarioId, filas.map((f) => f.id)],
+        )
+      : [];
+    const vista = new Set(vistas.map((v) => `${v.customerId}|${v.desde}|${v.tramo}`));
+    const deudores = filas.map((f) => {
+      const tramo = tramoDe(f.desde, hoyStr);
       return {
-        cantidad: filas.length,
-        total: filas.reduce((t, f) => t + Number(f.vencido), 0),
-        masDe60: filas.filter((f) => tramoDe(f.desde, hoyStr) === 'VENCIDO_MAS').length,
+        id: f.id,
+        nombre: f.nombre,
+        apellido: f.apellido,
+        whatsapp: telefonoParaWhatsapp(f.phone),
+        baja: f.baja,
+        vencido: Number(f.vencido),
+        vencidoDesde: f.desde,
+        tramo,
+        nuevo: !vista.has(`${f.id}|${f.desde}|${tramo}`),
       };
     });
+    return {
+      cantidad: deudores.length,
+      total: deudores.reduce((t, d) => t + d.vencido, 0),
+      masDe60: deudores.filter((d) => d.tramo === 'VENCIDO_MAS').length,
+      nuevos: deudores.filter((d) => d.nuevo).length,
+      deudores,
+    };
   }
 
   private async inquilino(manager: EntityManager, customerId: string) {

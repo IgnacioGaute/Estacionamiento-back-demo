@@ -166,6 +166,7 @@ before(async () => {
     await new (load('database/migrations/1790000053000-quitar-control-mercadopago-turno', 'QuitarControlMercadoPagoTurno1790000053000'))().up(migrationRunner);
     await new (load('database/migrations/1790000054000-turno-continua-medianoche', 'TurnoContinuaMedianoche1790000054000'))().up(migrationRunner);
     await new (load('database/migrations/1790000055000-avisos-para-revisar', 'AvisosParaRevisar1790000055000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000056000-deudas-vistas', 'DeudasVistas1790000056000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -1702,6 +1703,14 @@ test('deudores: con el rol de la playa cuenta solo los inquilinos de esa playa',
     const enA2 = await scoped(a2, () => cuentas.deudores());
     assert.deepEqual([enA.cantidad - base.a.cantidad, enA.total - base.a.total], [1, 1000]);
     assert.deepEqual([enA2.cantidad - base.a2.cantidad, enA2.total - base.a2.total], [2, 500]);
+    assert.ok(!enA.deudores.some((d) => d.nombre === 'Dos' || d.nombre === 'Tres'));
+    // Con el rol de la playa, verlas guarda la marca en esa playa y no toca la otra.
+    const visto = await scoped(a, () => cuentas.marcarDeudasVistas());
+    assert.equal(visto.nuevos, 0);
+    assert.equal((await scoped(a, () => cuentas.deudores())).nuevos, 0);
+    assert.equal((await scoped(a2, () => cuentas.deudores())).nuevos, enA2.nuevos);
+    const marcas = await ds.query('SELECT DISTINCT "playaId" FROM deudas_vistas WHERE "usuarioId" = $1', [adminA.id]);
+    assert.deepEqual(marcas.map((x) => x.playaId), [a.playaId]);
   } finally {
     for (const p of previos) await ds.query('UPDATE playas SET modulos = $2 WHERE id = $1', [p.id, p.modulos]);
   }

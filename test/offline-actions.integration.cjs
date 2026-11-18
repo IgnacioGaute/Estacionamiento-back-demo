@@ -88,6 +88,7 @@ before(async () => {
       ['1790000053000-quitar-control-mercadopago-turno', 'QuitarControlMercadoPagoTurno1790000053000'],
       ['1790000054000-turno-continua-medianoche', 'TurnoContinuaMedianoche1790000054000'],
       ['1790000055000-avisos-para-revisar', 'AvisosParaRevisar1790000055000'],
+      ['1790000056000-deudas-vistas', 'DeudasVistas1790000056000'],
     ]) await new (load('database/migrations/' + file, name))().up(runner);
   } finally { await runner.release(); }
   installTenantConnections(ds);

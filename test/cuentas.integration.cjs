@@ -425,6 +425,9 @@ test('deudores: el contador del menú coincide con la tabla, incluye los que ya 
   assert.equal(con.masDe60, antes.masDe60 + 1);
   const fila = (await enPlaya(() => cuentas.resumen())).inquilinos.find((i) => i.id === viejo.id);
   assert.equal(fila.whatsapp, '5491155551234', 'el número listo para el recordatorio');
+  const enLista = con.deudores.find((d) => d.id === viejo.id);
+  assert.deepEqual({ ...enLista, vencidoDesde: undefined }, { id: viejo.id, nombre: 'Moroso', apellido: 'Prueba', whatsapp: '5491155551234', baja: false, vencido: 700, vencidoDesde: undefined, tramo: 'VENCIDO_MAS', nuevo: true });
+  assert.ok(!con.deudores.some((d) => d.id === alDia.id));
   // Un pago parcial lo deja en la lista con menos; el total lo saca.
   await enPlaya(() => cuentas.registrarPago(viejo.id, { pagos: [{ metodo: 'CASH', importe: 200 }] }, user.id));
   assert.equal((await coincide()).total, antes.total + 500);
@@ -434,6 +437,38 @@ test('deudores: el contador del menú coincide con la tabla, incluye los que ya 
   await ds.getRepository(Playa).update(playa.id, { modulos: { inquilinos: false } });
   try { assert.equal(await enPlaya(() => cuentas.deudores()), null); }
   finally { await ds.getRepository(Playa).update(playa.id, { modulos: { inquilinos: true } }); }
+});
+
+test('deudas vistas: abrir la pestaña las marca para quien la abre; vuelven a ser nuevas al pasar de tramo', { timeout: 30000 }, async () => {
+  const otro = await ds.getRepository(User).save(ds.getRepository(User).create({ username: 'admin2', firstName: 'Otra', lastName: 'Admin', email: 'admin2@example.test', role: 'ADMIN', empresaId: empresa.id }));
+  const comoOtro = (fn) => tenantContext.run({ empresaId: empresa.id, playaId: playa.id, userId: otro.id, role: 'ADMIN' }, fn);
+  const c = await inquilino('Visto');
+  await enPlaya(() => cuentas.registrarSaldoInicial(c.id, { tipo: 'DEUDA', modo: 'POR_MES', meses: [{ mes: mes(-1), importe: 400 }] }, user.id));
+  const antes = await enPlaya(() => cuentas.deudores());
+  assert.ok(antes.nuevos >= 1);
+  assert.equal(antes.deudores.find((d) => d.id === c.id).nuevo, true);
+  // Abrir la pestaña: todo visto para esta persona, sin marcar uno por uno.
+  const marcado = await enPlaya(() => cuentas.marcarDeudasVistas());
+  assert.equal(marcado.nuevos, 0);
+  const despues = await enPlaya(() => cuentas.deudores());
+  assert.equal(despues.nuevos, 0);
+  assert.equal(despues.cantidad, antes.cantidad, 'la lista sigue en la pestaña');
+  // Marcar dos veces no duplica.
+  await enPlaya(() => cuentas.marcarDeudasVistas());
+  assert.equal(Number((await ds.query('SELECT count(*) FROM deudas_vistas WHERE "customerId" = $1 AND "usuarioId" = $2', [c.id, user.id]))[0].count), 1);
+  // Cada persona tiene lo suyo: la otra administradora todavía no las vio.
+  assert.equal((await comoOtro(() => cuentas.deudores())).nuevos, antes.cantidad);
+  // Si pasa de tramo (por ejemplo, de 30 a más de 60 días) vuelve a avisar.
+  const tramo = despues.deudores.find((d) => d.id === c.id).tramo;
+  await ds.query('UPDATE deudas_vistas SET tramo = $1 WHERE "customerId" = $2 AND "usuarioId" = $3', [tramo === 'VENCIDO_30' ? 'PENDIENTE' : 'VENCIDO_30', c.id, user.id]);
+  const otraVez = await enPlaya(() => cuentas.deudores());
+  assert.equal(otraVez.nuevos, 1);
+  assert.equal(otraVez.deudores.find((d) => d.id === c.id).nuevo, true);
+  // Pagó: sale de la lista y del número.
+  await enPlaya(() => cuentas.registrarPago(c.id, { pagos: [{ metodo: 'CASH', importe: 400 }] }, user.id));
+  const pago = await enPlaya(() => cuentas.deudores());
+  assert.ok(!pago.deudores.some((d) => d.id === c.id));
+  assert.equal(pago.nuevos, 0);
 });
 
 test('devolver plata es una devolución de saldo a favor, con su salida de caja', { timeout: 30000 }, async () => {

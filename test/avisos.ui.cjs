@@ -79,6 +79,8 @@ test('avisos: grupos, lectura tocando el aviso, filtros y móvil', { timeout: 12
     await page.setViewport({ width: 1440, height: 1000 });
     await page.setContent('<html class="dark" style="--font-sans:Arial;--font-display:Arial;--font-mono:monospace"><meta name="viewport" content="width=device-width,initial-scale=1"><style>' + css + '</style><main id="root" class="container mx-auto max-w-7xl px-4 py-6"></main></html>');
     await page.evaluate((l) => { window.__lista = l; }, lista);
+    // next/link lee process.env; en el navegador no existe fuera de Next.
+    await page.addScriptTag({ content: "window.process = { env: { NODE_ENV: 'development' } };" });
     await page.addScriptTag({ path: path.join(output, 'bundle.js') });
     await page.waitForSelector('article', { timeout: 10000 }).catch((e) => { throw new Error(errors.join('\n') || e.message); });
 
@@ -91,7 +93,7 @@ test('avisos: grupos, lectura tocando el aviso, filtros y móvil', { timeout: 12
     await page.screenshot({ path: path.join(output, 'avisos-desktop.png'), fullPage: true });
 
     // Tocar el texto del aviso (no un botón) lo marca como leído.
-    await page.evaluate(() => [...document.querySelectorAll('article p')].find(p => p.textContent.startsWith('Faltaron')).click());
+    await page.evaluate(() => [...document.querySelectorAll('article p')].find(p => p.textContent.includes('Faltaron')).click());
     await page.waitForFunction(() => window.__leidos.includes('n2'));
     assert.equal(await page.$$eval('article[data-pendiente]', els => els.length), 1);
     // El resumen: «1 para revisar · 3 publicados hoy · 24 en la cartelera».
