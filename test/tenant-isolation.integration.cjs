@@ -1684,6 +1684,27 @@ test('medianoche sin continuación: con el rol de la playa cierra turno y caja s
   }
 });
 
+test('cobros en efectivo de un turno: con el rol de la playa se ven los propios y un turno de otra playa no existe', async () => {
+  const Turno = load('turnos/entities/turno.entity', 'Turno');
+  const CashEntry = load('turnos/entities/cash-entry.entity', 'CashEntry');
+  const service = app.get(TurnosService);
+  const caja = await ds.getRepository(Box).save({ playaId: a.playaId, date: '2026-11-19', boxNumber: 9001, totalPrice: 0 });
+  const turno = await ds.getRepository(Turno).save({ playaId: a.playaId, usuarioApertura: { id: adminA.id }, fondoInicial: 0, estado: 'CERRADO', cashVersion: 2 });
+  await ds.getRepository(CashEntry).save({ playaId: a.playaId, boxId: caja.id, turnoId: turno.id, amount: 1500, description: 'Movimiento de efectivo', categoria: 'COBRO' });
+  try {
+    const propio = await scoped(a, () => service.cobrosEfectivo(turno.id));
+    assert.deepEqual(propio.cobros.map((c) => [c.importe, c.sinDetalle]), [[1500, true]]);
+    assert.equal(propio.total, 1500);
+    // Otra playa de la misma empresa y otra empresa: el turno no existe para ellas.
+    await assert.rejects(scoped(a2, () => service.cobrosEfectivo(turno.id)), /Turno no encontrado/);
+    await assert.rejects(scoped(b, () => service.cobrosEfectivo(turno.id)), /Turno no encontrado/);
+  } finally {
+    await ds.query('DELETE FROM cash_entries WHERE "turnoId" = $1', [turno.id]);
+    await ds.query('DELETE FROM turnos WHERE id = $1', [turno.id]);
+    await ds.query('DELETE FROM box_lists WHERE id = $1', [caja.id]);
+  }
+});
+
 test('deudores: con el rol de la playa cuenta solo los inquilinos de esa playa', async () => {
   const cuentas = app.get(load('cuentas/cuentas.service', 'CuentasService'));
   const mesViejo = dayjs().tz('America/Argentina/Buenos_Aires').subtract(2, 'month').format('YYYY-MM');

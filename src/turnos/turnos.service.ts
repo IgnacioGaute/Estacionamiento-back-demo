@@ -21,6 +21,7 @@ import { tenantContext } from 'src/tenancy/tenant-context';
 import dayjs from 'dayjs';
 import { exigirCobro } from 'src/tenancy/modalidad';
 import { conciliacionCaja } from './conciliacion-caja';
+import { cobrosEfectivoTurno } from './cobros-efectivo';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 
@@ -198,6 +199,13 @@ export class TurnosService {
     if (turno.usuarioApertura?.id !== usuarioId && !['ADMIN', 'SUPER_ADMIN'].includes(rol ?? ''))
       throw new ForbiddenException('Solo el responsable del turno o un administrador pueden ver la caja.');
     return conciliacionCaja(this.dataSource.manager, turno);
+  }
+
+  // Los cobros en efectivo que recibió este turno (no toda la caja compartida), para el historial.
+  async cobrosEfectivo(id: string) {
+    const turno = await this.turnoRepository.findOne({ where: { id } });
+    if (!turno) throw new NotFoundException('Turno no encontrado.');
+    return cobrosEfectivoTurno(this.dataSource.manager, turno);
   }
 
   // Conteo de relevo en una caja compartida: no mueve dinero, deja escrito cuánto había. Una

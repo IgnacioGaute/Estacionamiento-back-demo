@@ -489,12 +489,100 @@ test('auditoría: anticipos, descuentos, devoluciones, pagos mixtos, «Se fue an
   // C la parte en efectivo, D y E nada, F la tarifa elegida y G lo recalculado.
   const precio = async (r) => Number((await ds.getRepository(Registration).findOneByOrFail({ id: r.id })).price);
   assert.equal(Number(libro.total), (await precio(a)) + (saldoB - 500) + 700 + primera.precio + (await precio(g)));
-  // 3) Contando exactamente lo esperado, el arqueo cierra sin diferencia.
+  // 3) El detalle del historial: cada peso en efectivo del turno, con su operación cuando se puede
+  // identificar, y nada que no sea efectivo (transferencias, cortesías, descuentos, varios).
+  const detalle = await shifts.cobrosEfectivo(t.id);
+  const resumen = await book().shiftSummary(ds.manager, await ds.getRepository(Turno).findOneByOrFail({ id: t.id }));
+  assert.equal(detalle.total, resumen.efectivoCobrado - resumen.devolucionesEfectivo, 'el total es el efectivo cobrado menos lo devuelto del resumen');
+  assert.equal(detalle.total, Number(libro.total) + abonos, 'estadías del libro de movimientos + pases cobrados');
+  assert.equal(detalle.cantidad, detalle.cobros.length);
+  const de = (patente) => detalle.cobros.filter((c) => c.identificacion === patente).map((c) => [c.concepto, c.importe]);
+  // Anticipo, su reducción y la devolución del sobrante al salir, con su signo.
+  const filasA = de('AUD001');
+  assert.deepEqual(filasA.map(([concepto]) => concepto), ['ANTICIPO', 'DEVOLUCION', 'DEVOLUCION']);
+  assert.equal(filasA.reduce((s, [, importe]) => s + importe, 0), await precio(a));
+  // Pago mixto: solo la parte en efectivo.
+  assert.deepEqual(de('AUD002'), [['SALDO', saldoB - 500]]);
+  // Parte en efectivo y el resto por transferencia: solo los 700.
+  assert.deepEqual(de('AUD003').map(([, importe]) => importe), [700]);
+  // Descuento total y cortesía no son plata.
+  assert.deepEqual(de('AUD004'), []);
+  assert.deepEqual(de('AUD005'), []);
+  assert.deepEqual(de('AUD006'), [['SALDO', primera.precio]]);
+  // El pase cobrado al registrarlo se identifica; no tiene patente y no se inventa una.
+  const pases = detalle.cobros.filter((c) => c.concepto === 'ESTADIA_PERIODO');
+  assert.deepEqual(pases.map((c) => [c.importe, c.identificacion, c.periodo]), [[pase.price, null, 'día']]);
+  // El marcado como pagado después y el creado y eliminado no dejan de qué fue: se muestran como
+  // entradas de caja sin detalle, con su importe (el eliminado entra y sale).
+  assert.deepEqual(detalle.cobros.filter((c) => c.sinDetalle).map((c) => c.importe).sort((x, y) => x - y), [-borrado.price, pendiente.price, borrado.price].sort((x, y) => x - y));
+  assert.equal(detalle.sinDetalle, 3);
+  // Ordenado por hora; los gastos e ingresos de varios no son cobros.
+  assert.deepEqual(detalle.cobros.map((c) => c.fecha), [...detalle.cobros.map((c) => c.fecha)].sort());
+  assert.ok(!detalle.cobros.some((c) => Math.abs(c.importe) === 400 && c.sinDetalle));
+  // Consultarlo no cambia nada.
+  assert.equal((await context()).efectivoDisponible, esperado);
+  // 4) Contando exactamente lo esperado, el arqueo cierra sin diferencia.
   const closed = await shifts.close(t.id, user.id, { efectivoContado: esperado, efectivoEsperado: esperado, efectivoParaSiguiente: 15000, sueldoEsperado: 0, sinSueldo: true });
   assert.equal(closed.diferencia, 0);
   if (precioDia) await ds.getRepository(TicketPrice).delete(precioDia.id);
   // Los pases quedarían «adentro» para las pruebas que cuentan ocupación: se retiran sin tocar la caja.
   await ds.getRepository(RegistrationDay).update([pase.id, pendiente.id], { retired: true });
+});
+
+test('cobros en efectivo por turno: cada uno ve lo que recibió, aunque la estadía siga en otro turno o compartan la caja', async () => {
+  // Sin sueldo durante la prueba; la siguiente usa el que estaba configurado.
+  const previa = await ds.getRepository(Schedule).findOneOrFail({ where: {} });
+  await tickets.updateSchedule({ sueldoAutomatico: false });
+  const cobrosDe = async (turnoId) => (await shifts.cobrosEfectivo(turnoId)).cobros.map((c) => [c.identificacion, c.concepto, c.importe]);
+  const entrar = async (patente, minutos = 90) => age(await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: patente }), minutos);
+  // El anticipo lo cobra un turno y el saldo otro: cada uno tiene lo suyo.
+  const t1 = await openCash(user.id, (await principal()).efectivoDisponible);
+  const x = await entrar('TUR001');
+  await tickets.addAdvancePayment(x.id, { advancePaidAmount: 500, metodo: 'CASH' }, user.id);
+  await closeCash(user.id, (await context()).efectivoDisponible);
+  const t2 = await openCash(second.id, (await principal()).efectivoDisponible);
+  const saldo = (await tickets.getCloseSummary(x.id)).previewBracket.price - 500;
+  await tickets.closeRegistrationByPlate(x.id, await payload(x.id), second.id);
+  assert.deepEqual(await cobrosDe(t1.id), [['TUR001', 'ANTICIPO', 500]]);
+  assert.deepEqual(await cobrosDe(t2.id), [['TUR001', 'SALDO', saldo]]);
+  await closeCash(second.id, (await context(second.id)).efectivoDisponible);
+
+  // Caja compartida: la conciliación mira toda la caja; el detalle de cada turno, solo lo suyo.
+  await tickets.updateSchedule({ multipleShiftsEnabled: true });
+  try {
+    const a = await openCash(user.id, (await principal()).efectivoDisponible);
+    const b = await openCash(second.id, 0);
+    assert.equal(a.cashSessionId, b.cashSessionId);
+    const y = await entrar('TUR002');
+    await tickets.closeRegistrationByPlate(y.id, await payload(y.id), user.id);
+    const z = await entrar('TUR003');
+    await tickets.closeRegistrationByPlate(z.id, await payload(z.id), second.id);
+    assert.deepEqual((await cobrosDe(a.id)).map(([patente]) => patente), ['TUR002']);
+    assert.deepEqual((await cobrosDe(b.id)).map(([patente]) => patente), ['TUR003']);
+    const conciliacion = await shifts.conciliacion(a.id, user.id, 'ADMIN');
+    assert.ok(conciliacion.movimientos.length >= 2, 'la conciliación sí abarca toda la caja');
+
+    // Un pago en efectivo de un inquilino: sin patente, con el nombre y su concepto. Se arma igual
+    // que lo hace la cuenta corriente: el libro y la caja en la misma transacción.
+    const Customer = load('customers/entities/customer.entity', 'Customer');
+    const Cuenta = load('cuentas/entities/cuenta-movimiento.entity', 'CuentaMovimiento');
+    const inquilino = await ds.getRepository(Customer).save({ firstName: 'Lucía', lastName: 'Inquilina', customerType: 'RENTER', numberOfVehicles: 1 });
+    const caja = (await ds.getRepository(CashEntry).findOneByOrFail({ turnoId: a.id })).boxId;
+    await ds.transaction(async (m) => {
+      await m.getRepository(Cuenta).save({ playaId: require('node:crypto').randomUUID(), customerId: inquilino.id, fecha: dayjs().format('YYYY-MM-DD'), tipo: 'PAGO', importe: -4000, concepto: 'Pago', metodo: 'CASH' });
+      await m.getRepository(CashEntry).save({ boxId: caja, amount: 4000, description: 'Movimiento de efectivo', categoria: 'COBRO', turnoId: a.id });
+    });
+    const conInquilino = await shifts.cobrosEfectivo(a.id);
+    assert.deepEqual(conInquilino.cobros.map((c) => [c.identificacion, c.concepto, c.importe, c.sinDetalle]),
+      [['TUR002', 'SALDO', conInquilino.cobros[0].importe, false], ['Inquilina Lucía', 'PAGO_INQUILINO', 4000, false]]);
+    assert.equal(conInquilino.cantidad, 2);
+    await ds.getRepository(CashEntry).delete({ turnoId: a.id, amount: 4000 });
+    await assert.rejects(shifts.cobrosEfectivo(require('node:crypto').randomUUID()), /Turno no encontrado/);
+    await shifts.close(b.id, second.id, { cerrarCaja: false, conteoRelevo: (await context(second.id)).efectivoDisponible });
+    await closeCash(user.id, 15000);
+  } finally {
+    await tickets.updateSchedule({ multipleShiftsEnabled: false, sueldoAutomatico: previa.sueldoAutomatico, sueldosPorUsuario: previa.sueldosPorUsuario });
+  }
 });
 
 test('medianoche: corta una vez, conserva caja y jornada y no retira sueldo', async () => {

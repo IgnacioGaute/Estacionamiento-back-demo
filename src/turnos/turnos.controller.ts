@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { CajaDto, CashSessionMovementDto } from './dto/caja.dto';
 import { TurnosService } from './turnos.service';
 import { OpenTurnoDto } from './dto/open-turno.dto';
@@ -30,6 +30,13 @@ export class TurnosController {
   @Get(':id/conciliacion')
   conciliacion(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.turnosService.conciliacion(id, requireUserId(req), req.user?.role);
+  }
+
+  // El detalle de los cobros en efectivo de un turno, para el historial. Solo administración (no
+  // está en OPERATOR_ENDPOINTS): muestra lo que el operador cuenta a ciegas.
+  @Get(':id/cobros-efectivo')
+  cobrosEfectivo(@Param('id', ParseUUIDPipe) id: string) {
+    return this.turnosService.cobrosEfectivo(id);
   }
 
   @Patch(':id/close')
