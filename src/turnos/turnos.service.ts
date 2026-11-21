@@ -112,9 +112,15 @@ export class TurnosService {
     const net = await manager.getRepository(CashEntry).createQueryBuilder('c').where('c.turnoId = :id', { id: turno.id }).select('COALESCE(SUM(c.amount), 0)', 'sum').getRawOne();
     const caja = turno.cajaId ? await manager.getRepository(CashRegister).findOneBy({ id: turno.cajaId }) : null;
     const disponible = await this.cashTotal(turno, manager);
+    // Con qué fondo se abrió la caja: el cierre se lo recuerda a quien cuenta, para que lo sume a
+    // lo cobrado. Es lo que se confirmó al abrir, no el esperado: no rompe el conteo ciego. Quien se
+    // sumó a una caja compartida tiene fondo 0 en su turno; el que cuenta al final usa el de la caja.
+    const sesion = turno.cashSessionId ? await manager.getRepository(CashSession).findOneBy({ id: turno.cashSessionId }) : null;
+    const primero = turno.cashSessionId ? await manager.getRepository(Turno).findOne({ where: { cashSessionId: turno.cashSessionId }, order: { fechaApertura: 'ASC' }, select: { id: true }, withDeleted: true }) : null;
     // La conciliación no viaja acá: el contexto se pide cada minuto y llegaría al celular antes de
     // contar. Se pide aparte, al cargar el conteo (ver conciliacion()).
-    return { ...turno, resumen: await shiftSummary(manager, turno), fondoObjetivo: caja?.fondoObjetivo ?? 0, sueldoSugerido: salaryWithdrawal(disponible, caja?.fondoObjetivo ?? 0, turno.sueldoPrevisto), efectivoDisponible: disponible, efectivoOperado: Number(net.sum), usuariosEnCaja: others, requiereArqueo: others === 1 };
+    return { ...turno, resumen: await shiftSummary(manager, turno), fondoObjetivo: caja?.fondoObjetivo ?? 0, sueldoSugerido: salaryWithdrawal(disponible, caja?.fondoObjetivo ?? 0, turno.sueldoPrevisto), efectivoDisponible: disponible, efectivoOperado: Number(net.sum), usuariosEnCaja: others, requiereArqueo: others === 1,
+      fondoCaja: sesion ? sesion.fondoInicial : turno.fondoInicial ?? 0, abrioLaCaja: !primero || primero.id === turno.id };
   }
 
   async getCashContext(usuarioId = tenantContext.getStore()?.userId) {

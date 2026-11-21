@@ -161,6 +161,11 @@ test('misma caja: dos usuarios, fondo único, operaciones propias y arqueo del �
   const current = await context();
   assert.equal(current.cajas[0].efectivoDisponible, 14000);
   assert.equal(current.active.efectivoOperado, 5000);
+  // El cierre recuerda con qué fondo se abrió la caja: el que se sumó tiene fondo 0 en su turno,
+  // pero la caja que cuenta arrancó con 2000.
+  assert.deepEqual([current.active.fondoCaja, current.active.abrioLaCaja], [2000, true]);
+  const delSegundo = (await context(second.id)).active;
+  assert.deepEqual([delSegundo.fondoInicial, delSegundo.fondoCaja, delSegundo.abrioLaCaja], [0, 2000, false]);
   // La conciliación no viaja en el contexto (se pide cada minuto, antes de contar): se pide aparte.
   assert.equal(current.active.conciliacion, undefined);
   const detalle = await shifts.conciliacion(a.id, user.id, 'USER');
