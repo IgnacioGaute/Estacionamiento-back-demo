@@ -421,7 +421,7 @@ test('arqueo: guarda el primer conteo, marca estadías para revisar y avisa la p
   assert.match(nota.description, /Primer conteo: \$\d+; se corrigió a \$\d+ después de ver lo esperado\./);
 });
 
-test('arqueo por billetes: obligatorio, total recalculado por el servidor, primer conteo conservado y caja compartida', async () => {
+test('arqueo: total escrito o por billetes (total recalculado por el servidor), primer conteo conservado y caja compartida', async () => {
   const previa = await tickets.getSchedule();
   await tickets.updateSchedule({ multipleShiftsEnabled: true, sueldoAutomatico: false });
   const { billetes } = require('./mostrador.cjs');
@@ -438,12 +438,10 @@ test('arqueo por billetes: obligatorio, total recalculado por el servidor, prime
     const parcial = await shifts.close(a.id, user.id, { cerrarCaja: false, conteoRelevo: esperadoRelevo });
     assert.deepEqual([parcial.efectivoContado, parcial.conteoDesglose], [null, null]);
 
-    // El último cuenta todo el cajón (fondo incluido, una sola vez) por billetes.
+    // El último cuenta todo el cajón (fondo incluido, una sola vez); por billetes es una alternativa.
     const esperado = (await context(second.id)).active.efectivoDisponible;
     assert.equal(esperado, 15000 + 3500 + 1500);
     const cierre = { cerrarCaja: true, efectivoEsperado: esperado, efectivoParaSiguiente: 0 };
-    // Escribir solo el total no alcanza.
-    await assert.rejects(shifts.close(b.id, second.id, { ...cierre, efectivoContado: esperado, desglose: null }), codigo('CONTEO_BILLETES_REQUERIDO'));
     // El total de la pantalla tiene que coincidir con los billetes; el servidor no elige uno.
     await assert.rejects(shifts.close(b.id, second.id, { ...cierre, efectivoContado: esperado, desglose: billetes(esperado - 1000) }), codigo('CONTEO_NO_COINCIDE'));
     await assert.rejects(shifts.close(b.id, second.id, { ...cierre, desglose: [{ denominacion: 300, cantidad: 1 }] }), codigo('CONTEO_BILLETES_INVALIDO'));
@@ -466,6 +464,15 @@ test('arqueo por billetes: obligatorio, total recalculado por el servidor, prime
     const c = await openCash(user.id, 0);
     const vacio = await shifts.close(c.id, user.id, { cerrarCaja: true, efectivoEsperado: 0, efectivoParaSiguiente: 0, desglose: [] });
     assert.deepEqual([vacio.efectivoContado, vacio.conteoDesglose, vacio.diferencia], [0, [], 0]);
+
+    // El total escrito directo, sin billetes: se acepta y queda sin desglose (no se inventa).
+    // Lo que se deja para el próximo turno va aparte del total contado.
+    const d = await openCash(user.id, 2000);
+    await cash(user.id, 1000);
+    const esperadoD = (await context(user.id)).active.efectivoDisponible;
+    await assert.rejects(shifts.close(d.id, user.id, { cerrarCaja: true, efectivoEsperado: esperadoD, efectivoContado: esperadoD, efectivoParaSiguiente: esperadoD + 1 }), /más efectivo del que contaste/);
+    const directo = await shifts.close(d.id, user.id, { cerrarCaja: true, efectivoEsperado: esperadoD, efectivoContado: esperadoD, efectivoParaSiguiente: 2000 });
+    assert.deepEqual([directo.efectivoContado, directo.conteoDesglose, directo.primerConteoDesglose, directo.efectivoParaSiguiente, directo.efectivoRetirado], [esperadoD, null, null, 2000, esperadoD - 2000]);
   } finally {
     await tickets.updateSchedule({ multipleShiftsEnabled: previa.multipleShiftsEnabled, sueldoAutomatico: previa.sueldoAutomatico });
   }

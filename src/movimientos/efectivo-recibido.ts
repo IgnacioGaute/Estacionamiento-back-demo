@@ -1,5 +1,4 @@
 import { BadRequestException } from '@nestjs/common';
-import { operationContext } from 'src/common/operation-context';
 
 // Lo que el operador declaró recibir en billetes por la parte en efectivo de un cobro, y el vuelto
 // que corresponde. Explica el cobro: no es un ingreso ni un egreso del libro. El dinero que entra a
@@ -15,10 +14,10 @@ export type EfectivoDeclarado = { efectivoRecibido: number; vuelto: number };
  * Valida lo recibido contra el efectivo aplicado y calcula el vuelto en el servidor.
  *
  * - Sin efectivo aplicado no corresponde declarar billetes.
- * - Con efectivo es obligatorio, salvo al sincronizar operaciones guardadas sin conexión: las que
- *   guardaron versiones anteriores no lo traen y quedan sin dato (nunca se inventa).
- * - Lo recibido no puede ser menor que lo aplicado: la diferencia no se convierte en descuento ni
- *   en deuda; se corrige el importe o se cobra el resto con otro medio (pago mixto).
+ * - Es opcional: el cobro en efectivo se confirma directo y «Calcular vuelto» es una ayuda. Si no
+ *   se usó, recibido y vuelto quedan sin informar (null): nunca se asume que pagó justo.
+ * - Si se informa, no puede ser menor que lo aplicado: la diferencia no se convierte en descuento
+ *   ni en deuda; se corrige el importe o se cobra el resto con otro medio (pago mixto).
  */
 export function efectivoDeclarado(aplicado: number, recibido: number | null | undefined): EfectivoDeclarado | null {
   const declarado = recibido ?? undefined;
@@ -26,10 +25,7 @@ export function efectivoDeclarado(aplicado: number, recibido: number | null | un
     if (declarado !== undefined) throw new BadRequestException({ code: 'EFECTIVO_RECIBIDO_SIN_EFECTIVO', message: 'Lo que entrega el cliente se indica solo cuando paga en efectivo.' });
     return null;
   }
-  if (declarado === undefined) {
-    if (operationContext.getStore()) return null;
-    throw new BadRequestException({ code: 'EFECTIVO_RECIBIDO_REQUERIDO', message: 'Indicá con cuánto paga el cliente (o «Justo») antes de confirmar el efectivo.' });
-  }
+  if (declarado === undefined) return null;
   if (!Number.isInteger(declarado) || declarado < 0) throw new BadRequestException({ code: 'EFECTIVO_RECIBIDO_INVALIDO', message: 'Lo que entrega el cliente va en pesos enteros.' });
   if (declarado < aplicado) {
     throw new BadRequestException({

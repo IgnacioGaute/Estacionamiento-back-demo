@@ -224,7 +224,7 @@ export class CorreccionesService {
         if (!p.paid || ['TRANSFER', 'MERCADOPAGO'].includes(p.paymentMetodo ?? '')) throw new BadRequestException({ code: 'SIN_EFECTIVO', message: 'Esa estadía no se cobró en efectivo.' });
         const [c] = await m.query(`SELECT despues FROM correcciones WHERE "paseId" = $1 AND tipo = 'RECIBIDO_VUELTO' AND estado = 'APLICADA' ORDER BY "aplicadaEl" DESC LIMIT 1`, [p.id]);
         const antes = c ? { efectivoRecibido: Number(c.despues.efectivoRecibido), vuelto: Number(c.despues.vuelto) } : { efectivoRecibido: p.efectivoRecibido, vuelto: p.vuelto };
-        const nuevo = efectivoDeclarado(p.price, d.efectivoRecibido ?? undefined)!;
+        const nuevo = this.recibidoRequerido(p.price, d.efectivoRecibido);
         if (antes.efectivoRecibido === nuevo.efectivoRecibido) throw new BadRequestException({ code: 'SIN_CAMBIOS', message: 'Es lo mismo que ya figura.' });
         return { ...vacio, registrationId: null, paseId: p.id, identificacion: ident, permiso, antes, despues: { ...nuevo },
           lineas: this.lineasRecibido(ident, p.price, antes, nuevo), revision: permiso.revision };
@@ -291,7 +291,7 @@ export class CorreccionesService {
         const aplicado = mov.monto - await this.corregidoDelCobro(m, mov.id);
         const vigente = await this.recibidoVigente(m, mov);
         const antes = { efectivoRecibido: vigente.efectivoRecibido, vuelto: vigente.vuelto };
-        const nuevo = efectivoDeclarado(aplicado, d.efectivoRecibido ?? undefined)!;
+        const nuevo = this.recibidoRequerido(aplicado, d.efectivoRecibido);
         if (antes.efectivoRecibido === nuevo.efectivoRecibido) throw new BadRequestException({ code: 'SIN_CAMBIOS', message: 'Es lo mismo que ya figura.' });
         return { ...base, movimientoId: mov.id, permiso, antes, despues: { ...nuevo }, lineas: this.lineasRecibido(ident, aplicado, antes, nuevo), revision: permiso.revision };
       }
@@ -323,6 +323,13 @@ export class CorreccionesService {
       default:
         throw new BadRequestException('Elegí qué hay que corregir.');
     }
+  }
+
+  // Al cobrar, lo recibido es opcional; al corregirlo es el dato que se corrige.
+  private recibidoRequerido(aplicado: number, recibido: number | undefined) {
+    const nuevo = efectivoDeclarado(aplicado, recibido ?? undefined);
+    if (!nuevo) throw new BadRequestException({ code: 'RECIBIDO_REQUERIDO', message: 'Indicá con cuánto pagó de verdad.' });
+    return nuevo;
   }
 
   private lineasRecibido(ident: string, aplicado: number, antes: { efectivoRecibido: number | null; vuelto: number | null }, nuevo: { efectivoRecibido: number; vuelto: number }) {

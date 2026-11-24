@@ -29,7 +29,7 @@ reason; excess at checkout requires `refundMetodo`. `MovimientosService.create` 
 where the mandatory-`motivo` rule for `AJUSTE`/`CORTESIA` lives); `Movimiento.sequence` is an incrementing int
 because the reserved `hashAnterior`/`hash` chain needs a definite "previous row".
 
-Cash payments carry what the operator declared the customer handed over: `efectivoRecibido` is required for every new cash charge (close, early exit, partial cash before QR/alias, day/week/month passes) and validated by `efectivoDeclarado` (`src/movimientos/efectivo-recibido.ts`): it must cover the cash part, and the server computes `vuelto`. Both are stored next to the charge (`movimientos.efectivoRecibido/vuelto` on the CASH row, or on `ticket_registration_for_days`) and never summed: the ledger amount and `cash_entries` stay the applied cash. Offline operations from older versions lack it and sync with nulls. Operators can report a mistake in a charge (`reportar-error`), which only publishes a note to review; corrections still go through adjustments. See `docs/caja-turnos.md`.
+Cash payments carry what the operator declared the customer handed over: `efectivoRecibido` is optional («Calcular vuelto»; without it received and change stay null, never assumed exact) for every new cash charge (close, early exit, partial cash before QR/alias, day/week/month passes) and validated by `efectivoDeclarado` (`src/movimientos/efectivo-recibido.ts`): it must cover the cash part, and the server computes `vuelto`. Both are stored next to the charge (`movimientos.efectivoRecibido/vuelto` on the CASH row, or on `ticket_registration_for_days`) and never summed: the ledger amount and `cash_entries` stay the applied cash. Offline operations from older versions lack it and sync with nulls. Operators can report a mistake in a charge (`reportar-error`), which only publishes a note to review; corrections still go through adjustments. See `docs/caja-turnos.md`.
 
 Corrections of already registered operations (plate, payment method, declared cash received/change, wrong
 vehicle, other) go through `src/operaciones/` (`CorreccionesService`, table `correcciones`, see
@@ -45,8 +45,9 @@ turno (`posteriorAlCierre`); `shiftSummary` reports it under `correcciones`.
 physical caja and can share its CashSession without duplicating the opening fund. Session cash equals its
 opening fund plus all participant cash_entries plus signed cash_session_movements. Participants can end their
 shift without counting; the last operator counts and closes the caja. Admin can close any shift in the playa
-with a reason. The final count is entered per denomination (`desglose`, `src/turnos/conteo-billetes.ts`): the server
-recomputes the totals, keeps the first and final breakdowns and rejects a total that does not match. The retained fund follows the physical caja, regardless of the next operator. Legacy shifts
+with a reason. The final count is the total counted including the opening fund; counting per denomination is
+optional (`desglose`, `src/turnos/conteo-billetes.ts`): when sent, the server recomputes the totals, keeps the first
+and final breakdowns and rejects a total that does not match. What is left for the next shift is a separate field. The retained fund follows the physical caja, regardless of the next operator. Legacy shifts
 without cashSessionId retain their historical calculation and must close before new caja openings.
 See `docs/caja-turnos.md` for configuration, migration and API contracts.
 

@@ -24,9 +24,9 @@ describe('efectivoDeclarado', () => {
     expect(codigo(() => efectivoDeclarado(3500, 3000))).toBe('EFECTIVO_INSUFICIENTE');
   });
 
-  test('con efectivo es obligatorio indicar lo recibido', () => {
-    expect(codigo(() => efectivoDeclarado(3500, undefined))).toBe('EFECTIVO_RECIBIDO_REQUERIDO');
-    expect(codigo(() => efectivoDeclarado(3500, null))).toBe('EFECTIVO_RECIBIDO_REQUERIDO');
+  test('sin «Calcular vuelto» el cobro se confirma igual y queda sin informar, sin asumir pago justo', () => {
+    expect(efectivoDeclarado(3500, undefined)).toBeNull();
+    expect(efectivoDeclarado(3500, null)).toBeNull();
   });
 
   test('sin efectivo aplicado no se declaran billetes', () => {

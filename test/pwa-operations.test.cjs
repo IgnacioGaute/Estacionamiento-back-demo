@@ -82,14 +82,15 @@ test('operación completa en navegador sin red, persistencia y pantalla móvil',
     await page.click('dialog[open] button[type=submit]');
     await page.waitForFunction(()=>document.querySelector('#rows').textContent.includes('Rodríguez'));
     await page.reload();await page.waitForFunction(()=>document.querySelector('#rows').textContent.includes('Rodríguez'));
-    // Salida en efectivo sin conexión: no arranca con un medio elegido, exige con cuánto pagó, no
-    // guarda lo que no alcanza y muestra el vuelto como guardado en el equipo, sin confirmar.
+    // Salida en efectivo sin conexión: no arranca con un medio elegido; con cuánto pagó es opcional
+    // (para calcular el vuelto), pero si se indica no guarda lo que no alcanza, y muestra el vuelto
+    // como guardado en el equipo, sin confirmar.
     await page.waitForFunction(()=>!document.querySelector('#sync').disabled);
     await page.evaluate(()=>[...document.querySelectorAll('#rows .row')].find(r=>r.textContent.includes('1001')).querySelector('button:not(.secondary)').click());
     await page.waitForSelector('dialog[open] #operation-method');
     assert.equal(await page.$eval('#operation-method',m=>m.value),'');
     await page.select('#operation-method','CASH');
-    await page.select('#operation-cashMode','OTHER');
+    assert.equal(await page.$eval('#operation-received',i=>i.required),false);
     await page.type('#operation-received','500');
     await page.click('dialog[open] button[type=submit]');
     await page.waitForFunction(()=>document.querySelector('dialog[open] .operation-error')?.textContent.includes('Le falta entregar'));
@@ -103,7 +104,7 @@ test('operación completa en navegador sin red, persistencia y pantalla móvil',
     assert.match(ultimo,/Vuelto: \$\s?1\.000/);
     const guardada=await page.evaluate(async()=>{const vault=await import('/offline-vault.js');const {state}=await vault.openOperations('offline-operations-test-password');return state.pending.at(-1).data;});
     assert.equal(guardada.efectivoRecibido,2000);
-    assert.equal(guardada.cashMode,undefined);
+    assert.equal(guardada.received,undefined);
     await page.screenshot({path:path.resolve('.tmp/offline-ultimo-cobro-390.png'),fullPage:true});
     assert.deepEqual(errors,[]);
   } finally {await browser.close();await new Promise(resolve=>server.close(resolve));}

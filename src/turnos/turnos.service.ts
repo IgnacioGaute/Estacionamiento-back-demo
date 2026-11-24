@@ -400,10 +400,8 @@ export class TurnosService {
         }
       }
       if (dto.efectivoContado === undefined || dto.cerrarCaja === false) throw new ConflictException('Sos el último operador. Contá el efectivo para cerrar la caja.');
-      // El arqueo final se cuenta por billetes, no escribiendo un total. Los cierres guardados sin
-      // conexión por versiones anteriores no lo traen y se sincronizan igual, sin desglose.
-      if (!conteo.desglose && !operationContext.getStore())
-        throw new BadRequestException({ code: 'CONTEO_BILLETES_REQUERIDO', message: 'Contá el efectivo por billetes: cuántos hay de cada uno. Si la pantalla no lo pide, actualizala.' });
+      // El total contado se puede escribir directo; contar por billetes es una alternativa. Si viene
+      // el desglose, el total se recalcula desde ahí (conteoDelArqueo) y se guarda para el historial.
       const paraSiguiente = dto.efectivoParaSiguiente ?? 0;
       if (paraSiguiente + salary > dto.efectivoContado) throw new BadRequestException('No podés entregar más efectivo del que contaste.');
       const teorico = await this.cashTotal(turno, manager);
