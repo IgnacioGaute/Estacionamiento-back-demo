@@ -348,6 +348,22 @@ test('historial: filtros y paginación en el servidor, y el operador ve solo lo 
   const deBeto = await cobrar(beto, {}, 30, 'HISTBETO');
   const todas = await como(admin, () => historial.listar({}, { page: 1, limit: 100 }, actor(admin)));
   assert.ok(todas.meta.totalItems > 10);
+  // El resumen: cuántos de cada tipo suman el total; lo cobrado por medio suma los importes de la lista.
+  assert.equal(todas.resumen.total, todas.meta.totalItems);
+  assert.equal(Object.values(todas.resumen.porTipo).reduce((a, n) => a + n, 0), todas.resumen.total);
+  const porMedio = {};
+  for (const f of todas.data) for (const [m, n] of Object.entries(f.medios ?? {})) porMedio[m] = (porMedio[m] ?? 0) + Number(n);
+  for (const [m, n] of Object.entries(porMedio)) if (n) assert.equal(todas.resumen.cobrado.porMedio[m], n, m);
+  assert.equal(todas.resumen.cobrado.total, Object.values(porMedio).reduce((a, n) => a + n, 0));
+  assert.ok(todas.resumen.pendientes >= 1, 'hay correcciones esperando revisión');
+  // La salida trae la duración y la patente aparte.
+  const salidaBeto = todas.data.find(f => f.registrationId === deBeto.id && f.tipo === 'SALIDA');
+  assert.equal(salidaBeto.patente, 'HISTBETO');
+  assert.ok(salidaBeto.duracion >= 29 && salidaBeto.duracion <= 31, String(salidaBeto.duracion));
+  // Con un tipo elegido, las cantidades por tipo siguen contando todos (son las de los filtros).
+  const soloSalidas = await como(admin, () => historial.listar({ tipo: 'SALIDA' }, { page: 1, limit: 100 }, actor(admin)));
+  assert.deepEqual(soloSalidas.resumen.porTipo, todas.resumen.porTipo);
+  assert.equal(soloSalidas.resumen.total, todas.resumen.porTipo.SALIDA);
   // Una salida y su cobro son un solo renglón.
   assert.equal(todas.data.filter(f => f.registrationId === deBeto.id && f.tipo === 'SALIDA').length, 1);
   assert.equal(todas.data.filter(f => f.registrationId === deBeto.id && f.importe != null).length, 1);

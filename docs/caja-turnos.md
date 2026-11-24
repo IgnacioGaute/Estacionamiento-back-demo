@@ -4,18 +4,18 @@ El turno identifica quién cobra; la caja representa el cajón donde queda el ef
 
 ## Configuración en el frontend
 
-En Administración → Configuración → Operación:
+En Administración → Configuración → Turnos de caja cada pregunta se responde eligiendo una tarjeta (no hay interruptores). La primera vez es un recorrido de cuatro pasos que guarda cada paso al continuar; con los turnos ya activos, las cuatro partes quedan a la vista con un resumen arriba y se guardan juntas con «Guardar cambios» (primero la configuración en una sola llamada y después cada caja cambiada):
 
-1. Activar «Activar turnos de caja» para exigir turno propio al operar.
-2. Elegir «Permitir turnos múltiples» según cómo trabajan y guardar configuración.
-3. Configurar «Sueldo retirado de caja» si corresponde, con el importe por jornada de operador. Apagado por defecto; el importe se guarda al abrir y los cambios se aplican a las nuevas jornadas.
-4. En «Cajas físicas», elegir el fondo objetivo (por defecto $15.000; «Proteger un fondo» apagado lo guarda en $0: sin fondo sugerido y el sueldo solo exige que alcance el efectivo) y nombrar una caja por cada cajón real. En la primera apertura de cada caja se ofrece como «Fondo sugerido»; después lo propone el cierre como «Usar sugerido». Caja principal siempre permanece disponible. Se pueden agregar y desactivar las otras cajas.
+1. «¿Trabajan con turnos?»: «Sí, con turnos» exige turno propio al operar.
+2. «¿Cuántas personas cobran a la vez?»: «Una persona a la vez» o «Varias personas a la vez» (`multipleShiftsEnabled`). Con turnos abiertos las tarjetas quedan bloqueadas. En la misma parte, «¿Qué pasa a las 00:00 con un turno abierto?»: «Sigue trabajando» o «Se cierra todo» (`continuarTurnoMedianoche`).
+3. En «Cajas», nombrar una caja por cada cajón real y elegir el fondo que queda: «Dejar fondo» con su importe (por defecto $15.000) o «Sin fondo», que lo guarda en $0: sin fondo sugerido y el sueldo solo exige que alcance el efectivo.
+4. «¿Se retira sueldo de la caja?»: con «Sí, al terminar la jornada», el importe por jornada de cada usuario; vacío, no retira. El importe se guarda al abrir y los cambios se aplican a las nuevas jornadas. En la primera apertura de cada caja se ofrece como «Fondo sugerido»; después lo propone el cierre como «Usar sugerido». Caja principal siempre permanece disponible. Se pueden agregar y desactivar las otras cajas.
 
-| Caso | Turnos múltiples | Cajas |
+| Caso | ¿Cuántas personas cobran a la vez? | Cajas |
 | --- | --- | --- |
-| Una entrada, operadores por relevos | Apagado | Caja principal, un operador a la vez |
-| Varias entradas con cajones separados | Activado | Una caja por cajón; cada operador elige la suya |
-| Dos personas cobrando del mismo cajón | Activado | Ambos eligen la misma caja |
+| Una entrada, operadores por relevos | Una persona a la vez | Caja principal, un operador a la vez |
+| Varias entradas con cajones separados | Varias personas a la vez | Una caja por cajón; cada operador elige la suya |
+| Dos personas cobrando del mismo cajón | Varias personas a la vez | Ambos eligen la misma caja |
 
 Una puerta no necesariamente equivale a una caja: dos puertas pueden compartir el mismo cajón. El frontend incluye estos tres ejemplos y los pasos posteriores. Para cambiar de modo o desactivar turnos deben cerrarse todos los turnos abiertos. Para desactivar una caja secundaria, debe estar cerrada sin fondo pendiente; se conserva su historial.
 

@@ -244,7 +244,7 @@ export class TurnosService {
       const settings = await manager.getRepository(TicketScheduleSettings).findOne({ where: {} });
       if (!settings?.shiftsEnabled) throw new BadRequestException('Los turnos están desactivados. El administrador puede activarlos en Configuración.');
       if (await repo.exists({ where: { cashSessionId: IsNull(), estado: 'ABIERTO' } })) throw new ConflictException('Cerrá los turnos del esquema anterior antes de abrir una caja nueva.');
-      if (!settings.multipleShiftsEnabled && await repo.exists({ where: { estado: 'ABIERTO' } })) throw new ConflictException('Ya hay un turno abierto. Para trabajar al mismo tiempo, activá Turnos múltiples en Configuración.');
+      if (!settings.multipleShiftsEnabled && await repo.exists({ where: { estado: 'ABIERTO' } })) throw new ConflictException('Ya hay un turno abierto. Para trabajar al mismo tiempo, elegí «Varias personas a la vez» en Configuración → Turnos de caja.');
       const cajas = (await this.ensureCajas(manager)).filter(c => c.activa && (settings.multipleShiftsEnabled || c.principal));
       const caja = dto.cajaId ? cajas.find(c => c.id === dto.cajaId) : cajas.length === 1 ? cajas[0] : null;
       if (!caja) throw new BadRequestException('Elegí una caja habilitada para abrir tu turno.');

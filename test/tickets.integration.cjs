@@ -360,6 +360,30 @@ test('«Se fue antes» y pases por día: la misma regla de lo recibido', async (
   }
 });
 
+test('comprobantes: filtra las que siguen en la playa o salieron, con sus cantidades y horas', async () => {
+  const hoy = dayjs().tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
+  const adentro = await openPlate();
+  const salio = await openPlate();
+  await tickets.closeRegistrationByPlate(salio.id, await payload(salio.id), user.id);
+  const todas = await tickets.receiptHistory({ page: 1, limit: 100 }, hoy, '');
+  assert.equal(todas.conteo.todas, todas.conteo.adentro + todas.conteo.salieron);
+  assert.equal(todas.meta.totalItems, todas.conteo.todas);
+  const enLaPlaya = await tickets.receiptHistory({ page: 1, limit: 100 }, hoy, '', 'ADENTRO');
+  assert.equal(enLaPlaya.meta.totalItems, todas.conteo.adentro);
+  assert.ok(enLaPlaya.data.every(r => !r.departed));
+  assert.ok(enLaPlaya.data.some(r => r.id === adentro.id));
+  const salieron = await tickets.receiptHistory({ page: 1, limit: 100 }, hoy, '', 'SALIO');
+  const fila = salieron.data.find(r => r.id === salio.id);
+  assert.ok(fila && fila.departed);
+  assert.match(fila.entryTime, /^\d{2}:\d{2}$/);
+  assert.match(fila.exitTime, /^\d{2}:\d{2}$/);
+  assert.equal(fila.patente, salio.licensePlateOriginal);
+  // La búsqueda acota también las cantidades.
+  const buscada = await tickets.receiptHistory({ page: 1, limit: 100 }, hoy, salio.licensePlateOriginal);
+  assert.deepEqual(buscada.conteo, { todas: 1, adentro: 0, salieron: 1 });
+  await assert.rejects(tickets.receiptHistory({ page: 1, limit: 10 }, hoy, '', 'OTRO'), /Estado inválido/);
+});
+
 test('se fue antes: ofrece las tarifas que ya pasó y registra la salida con la elegida', async () => {
   const registration = await age(await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'ANTES' + (++counter) }), 5 * 60);
   // Lleva cinco horas ($ 5.000): la primera hora y cada hora extra que ya pasó, con su importe.

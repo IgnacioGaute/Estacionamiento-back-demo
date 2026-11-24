@@ -52,8 +52,6 @@ export class HistorialService {
 
     const inicio = dayjs.tz(`${desde} 00:00:00`, TZ).toDate();
     const fin = dayjs.tz(`${hasta} 00:00:00`, TZ).add(1, 'day').toDate();
-    const params: unknown[] = [inicio, fin];
-    const p = (v: unknown) => { params.push(v); return `$${params.length}`; };
     const rango = (expr: string) => `(${expr}) >= $1 AND (${expr}) < $2`;
 
     const ident = `COALESCE(NULLIF(r."licensePlateOriginal", ''), CASE WHEN r."codeBarTicket" IS NOT NULL THEN 'Ticket ' || r."codeBarTicket" END, NULLIF(r."lastNameCustomer", ''), 'Sin patente')`;
@@ -72,11 +70,13 @@ export class HistorialService {
       // Entradas: evento operativo, sin plata.
       `SELECT 'E:' || r.id AS id, 'ENTRADA' AS tipo, ${entrada} AS fecha, r.id AS "registrationId", NULL::uuid AS "paseId", ${ident} AS identificacion,
          ${busca} AS busca, r."entryOperatorName" AS operador, NULL::uuid AS "usuarioId", NULL::uuid AS "turnoId", NULL::int AS importe, NULL::jsonb AS medios,
-         NULL::int AS recibido, NULL::int AS vuelto, ${estadoDe(`c."registrationId" = r.id OR c."destinoRegistrationId" = r.id`)} AS correccion, NULL::text AS detalle
+         NULL::int AS recibido, NULL::int AS vuelto, ${estadoDe(`c."registrationId" = r.id OR c."destinoRegistrationId" = r.id`)} AS correccion, NULL::text AS detalle,
+         NULL::int AS duracion, NULLIF(r."licensePlateOriginal", '') AS patente, r."vehicleType"::text AS vehiculo
        FROM ticket_registrations r WHERE ${rango(entrada)}`,
       // Salidas, con lo cobrado al salir (vigente).
       `SELECT 'S:' || r.id, 'SALIDA', ${salida}, r.id, NULL::uuid, ${ident}, ${busca}, r."exitOperatorName", NULL::uuid, r."exitTurnoId", pago.importe, pago.medios,
-         rv.recibido, rv.vuelto, ${estadoDe(`c."registrationId" = r.id OR c."destinoRegistrationId" = r.id`)}, NULL::text
+         rv.recibido, rv.vuelto, ${estadoDe(`c."registrationId" = r.id OR c."destinoRegistrationId" = r.id`)}, NULL::text,
+         (EXTRACT(EPOCH FROM (${salida} - ${entrada})) / 60)::int, NULLIF(r."licensePlateOriginal", ''), r."vehicleType"::text
        FROM ticket_registrations r
        LEFT JOIN LATERAL (SELECT SUM(total)::int AS importe, jsonb_object_agg(metodo, total) FILTER (WHERE total <> 0) AS medios FROM (
            SELECT m.metodo::text AS metodo, SUM(m.monto)::int AS total FROM movimientos m
@@ -92,7 +92,7 @@ export class HistorialService {
          r.id, NULL::uuid, ${ident}, ${busca}, COALESCE(${nombreUsuario}, u.username), m."usuarioId", m."turnoId",
          (m.monto + COALESCE(aj.neto, 0))::int, aj.medios,
          CASE WHEN m.metodo = 'CASH' AND m.monto > 0 THEN ${recibidoVigente('m', 'efectivoRecibido')} END, CASE WHEN m.metodo = 'CASH' AND m.monto > 0 THEN ${recibidoVigente('m', 'vuelto')} END,
-         ${estadoDe(`c."movimientoId" = m.id`)}, m.motivo
+         ${estadoDe(`c."movimientoId" = m.id`)}, m.motivo, NULL::int, NULLIF(r."licensePlateOriginal", ''), r."vehicleType"::text
        FROM movimientos m JOIN ticket_registrations r ON r.id = m."ticketRegistrationId" LEFT JOIN users u ON u.id = m."usuarioId"
        LEFT JOIN LATERAL (SELECT SUM(x.total) - m.monto AS neto, jsonb_object_agg(x.metodo, x.total) FILTER (WHERE x.total <> 0) AS medios FROM (
            SELECT metodo, SUM(monto)::int AS total FROM (
@@ -111,29 +111,31 @@ export class HistorialService {
          CASE WHEN d.paid THEN d.price END, CASE WHEN d.paid THEN jsonb_build_object(COALESCE(d."paymentMetodo", 'CASH'), d.price) END,
          CASE WHEN d.paid THEN COALESCE((SELECT (c.despues->>'efectivoRecibido')::int FROM correcciones c WHERE c."paseId" = d.id AND c.tipo = 'RECIBIDO_VUELTO' AND c.estado = 'APLICADA' ORDER BY c."aplicadaEl" DESC LIMIT 1), d."efectivoRecibido") END,
          CASE WHEN d.paid THEN COALESCE((SELECT (c.despues->>'vuelto')::int FROM correcciones c WHERE c."paseId" = d.id AND c.tipo = 'RECIBIDO_VUELTO' AND c.estado = 'APLICADA' ORDER BY c."aplicadaEl" DESC LIMIT 1), d.vuelto) END,
-         ${estadoDe(`c."paseId" = d.id`)}, 'Alta'
+         ${estadoDe(`c."paseId" = d.id`)}, 'Alta', NULL::int, NULLIF(d."vehiclePlateCustomer", ''), d."vehicleType"::text
        FROM ticket_registration_for_days d WHERE ${rango(`d."createdAt" AT TIME ZONE current_setting('TimeZone')`)}`,
       `SELECT 'R:' || d.id, 'PASE', d."retiredAt", NULL::uuid, d.id, COALESCE(NULLIF(d."vehiclePlateCustomer", ''), d."lastNameCustomer", 'Sin patente'),
          CONCAT_WS(' ', d."vehiclePlateCustomer", d."lastNameCustomer"), d."exitOperatorName", NULL::uuid, d."exitTurnoId", NULL::int, NULL::jsonb, NULL::int, NULL::int,
-         ${estadoDe(`c."paseId" = d.id`)}, 'Retiro'
+         ${estadoDe(`c."paseId" = d.id`)}, 'Retiro', NULL::int, NULLIF(d."vehiclePlateCustomer", ''), d."vehicleType"::text
        FROM ticket_registration_for_days d WHERE d.retired = true AND d."retiredAt" IS NOT NULL AND ${rango('d."retiredAt"')}`,
       // Las correcciones, con su propio estado.
       `SELECT 'C:' || c.id, 'CORRECCION', c."createdAt", c."registrationId", c."paseId",
          CASE WHEN r.id IS NOT NULL THEN ${ident} ELSE COALESCE(NULLIF(d."vehiclePlateCustomer", ''), d."lastNameCustomer", 'Sin patente') END,
          CONCAT_WS(' ', r."licensePlateOriginal", r."codeBarTicket", r."lastNameCustomer", d."vehiclePlateCustomer", d."lastNameCustomer"),
          c."usuarioNombre", c."usuarioId", c."turnoId", NULL::int, NULL::jsonb, NULL::int, NULL::int,
-         CASE c.estado WHEN 'APLICADA' THEN 'CORREGIDA' ELSE c.estado END, c.tipo
+         CASE c.estado WHEN 'APLICADA' THEN 'CORREGIDA' ELSE c.estado END, c.tipo,
+         NULL::int, COALESCE(NULLIF(r."licensePlateOriginal", ''), NULLIF(d."vehiclePlateCustomer", '')), COALESCE(r."vehicleType"::text, d."vehicleType"::text)
        FROM correcciones c LEFT JOIN ticket_registrations r ON r.id = c."registrationId" LEFT JOIN ticket_registration_for_days d ON d.id = c."paseId"
        WHERE ${rango('c."createdAt"')}`,
     ];
 
-    const condiciones: string[] = [];
+    type Param = (valor: unknown) => string;
+    const condiciones: { clave: 'usuario' | 'turno' | 'q' | 'medio' | 'tipo' | 'correccion'; sql: (p: Param) => string }[] = [];
     // El operador ve sus operaciones: las que registró (por usuario o por el nombre que guardan
     // entradas y salidas), como en la planilla. Administración, todas.
     const limitarA = async (usuarioId: string) => {
       const [u] = await this.ds.query(`SELECT "firstName", "lastName", username FROM users WHERE id = $1`, [usuarioId]);
       const nombre = u ? (`${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || u.username) : '';
-      condiciones.push(`("usuarioId" = ${p(usuarioId)} OR ("usuarioId" IS NULL AND operador = ${p(nombre)}))`);
+      condiciones.push({ clave: 'usuario', sql: (p) => `("usuarioId" = ${p(usuarioId)} OR ("usuarioId" IS NULL AND operador = ${p(nombre)}))` });
     };
     if (!esAdministracion(actor.rol)) await limitarA(actor.usuarioId);
     if (f.operadorId) await limitarA(f.operadorId);
@@ -146,25 +148,51 @@ export class HistorialService {
         FROM turnos t JOIN turnos j ON j.id = COALESCE(t."jornadaId", t.id) OR j."jornadaId" = COALESCE(t."jornadaId", t.id)
         LEFT JOIN users u ON u.id = t."usuarioAperturaId"
         WHERE t.id = $1`, [f.turnoId]);
-      if (!t?.ids) return { ...listResult([], 0, pagination), filtros: { desde, hasta } };
-      condiciones.push(`("turnoId" = ANY(${p(t.ids)}::uuid[]) OR (tipo = 'ENTRADA' AND operador = ${p(t.nombre)} AND fecha >= ${p(t.apertura)} AND fecha < ${p(t.cierre ?? new Date('9999-01-01'))}))`);
+      if (!t?.ids) return { ...listResult([], 0, pagination), filtros: { desde, hasta }, resumen: { total: 0, porTipo: {}, cobrado: { total: 0, porMedio: {} }, pendientes: 0 } };
+      condiciones.push({ clave: 'turno', sql: (p) => `("turnoId" = ANY(${p(t.ids)}::uuid[]) OR (tipo = 'ENTRADA' AND operador = ${p(t.nombre)} AND fecha >= ${p(t.apertura)} AND fecha < ${p(t.cierre ?? new Date('9999-01-01'))}))` });
     }
-    if (f.q?.trim()) condiciones.push(`regexp_replace(upper(busca), '[^A-Z0-9]', '', 'g') LIKE ${p('%' + f.q.slice(0, 60).toUpperCase().replace(/[^A-Z0-9]/g, '') + '%')}`);
-    if (f.medio) condiciones.push(`medios ? ${p(f.medio)}`);
-    if (f.tipo) condiciones.push(`tipo = ${p(f.tipo as TipoHistorial)}`);
-    if (f.correccion) condiciones.push(f.correccion === 'SIN' ? 'correccion IS NULL' : `correccion = ${p(f.correccion)}`);
+    if (f.q?.trim()) { const q = f.q; condiciones.push({ clave: 'q', sql: (p) => `regexp_replace(upper(busca), '[^A-Z0-9]', '', 'g') LIKE ${p('%' + q.slice(0, 60).toUpperCase().replace(/[^A-Z0-9]/g, '') + '%')}` }); }
+    if (f.medio) { const medio = f.medio; condiciones.push({ clave: 'medio', sql: (p) => `medios ? ${p(medio)}` }); }
+    if (f.tipo) { const tipo = f.tipo as TipoHistorial; condiciones.push({ clave: 'tipo', sql: (p) => `tipo = ${p(tipo)}` }); }
+    if (f.correccion) { const correccion = f.correccion; condiciones.push({ clave: 'correccion', sql: (p) => correccion === 'SIN' ? 'correccion IS NULL' : `correccion = ${p(correccion)}` }); }
 
-    const consulta = `WITH ev AS (${ramas.join('\nUNION ALL\n')}) SELECT * FROM ev ${condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : ''}`;
-    const [{ total }] = await this.ds.query(`SELECT COUNT(*)::int AS total FROM (${consulta}) x`, params);
-    const filas = await this.ds.query(`${consulta} ORDER BY fecha DESC, id DESC LIMIT ${p(pagination.limit)} OFFSET ${p((pagination.page - 1) * pagination.limit)}`, params);
+    // La consulta con las condiciones (menos las excluidas) y sus parámetros: $1 y $2 son el rango.
+    const armar = (excluir: string[] = []) => {
+      const params: unknown[] = [inicio, fin];
+      const p: Param = (valor) => { params.push(valor); return `$${params.length}`; };
+      const where = condiciones.filter((c) => !excluir.includes(c.clave)).map((c) => c.sql(p));
+      return { sql: `WITH ev AS (${ramas.join('\nUNION ALL\n')}) SELECT * FROM ev ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`, params, p };
+    };
+    const lista = armar();
+    const [{ total }] = await this.ds.query(`SELECT COUNT(*)::int AS total FROM (${lista.sql}) x`, lista.params);
+    const filas = await this.ds.query(`${lista.sql} ORDER BY fecha DESC, id DESC LIMIT ${lista.p(pagination.limit)} OFFSET ${lista.p((pagination.page - 1) * pagination.limit)}`, lista.params);
+
+    // El resumen del período: cuántos hay de cada tipo (sin el filtro de tipo, para los filtros de la
+    // pantalla), lo cobrado por medio con todos los filtros, y las correcciones esperando revisión.
+    const sinTipo = armar(['tipo']);
+    const porTipo: Record<string, number> = Object.fromEntries((await this.ds.query(`SELECT tipo, COUNT(*)::int AS n FROM (${sinTipo.sql}) x GROUP BY tipo`, sinTipo.params))
+      .map((r: { tipo: string; n: number }) => [r.tipo, Number(r.n)]));
+    const todo = armar();
+    const porMedio: Record<string, number> = Object.fromEntries((await this.ds.query(`SELECT m.key AS medio, SUM(m.value::numeric)::int AS total
+        FROM (${todo.sql}) x, jsonb_each_text(x.medios) m GROUP BY m.key`, todo.params))
+      .map((r: { medio: string; total: number }) => [r.medio, Number(r.total)]).filter(([, n]: [string, number]) => n !== 0));
+    const revisar = armar(['tipo', 'medio', 'correccion']);
+    const [{ n: pendientes }] = await this.ds.query(`SELECT COUNT(*)::int AS n FROM (${revisar.sql}) x WHERE tipo = 'CORRECCION' AND correccion = 'PENDIENTE'`, revisar.params);
+
     return {
       ...listResult(filas.map((f: Record<string, any>) => ({
         id: f.id, tipo: f.tipo, fecha: new Date(f.fecha).toISOString(), registrationId: f.registrationId, paseId: f.paseId,
         identificacion: f.identificacion, operador: f.operador, turnoId: f.turnoId, importe: f.importe == null ? null : Number(f.importe),
         medios: f.medios ?? null, recibido: f.recibido == null ? null : Number(f.recibido), vuelto: f.vuelto == null ? null : Number(f.vuelto),
         correccion: f.correccion ?? null, detalle: f.detalle ?? null,
+        duracion: f.duracion == null ? null : Number(f.duracion), patente: f.patente ?? null, vehiculo: f.vehiculo ?? null,
       })), Number(total), pagination),
       filtros: { desde, hasta },
+      resumen: {
+        total: Number(total), porTipo,
+        cobrado: { total: Object.values(porMedio).reduce((a, n) => a + n, 0), porMedio },
+        pendientes: Number(pendientes),
+      },
     };
   }
 }

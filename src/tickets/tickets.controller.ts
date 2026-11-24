@@ -216,8 +216,8 @@ export class TicketsController {
   }
 
   @Get('receipt-history')
-  receiptHistory(@Query('page') page?: string, @Query('limit') limit?: string, @Query('date') date?: string, @Query('search') search?: string) {
-    return this.ticketsService.receiptHistory(listPagination(page, limit), date ?? '', search);
+  receiptHistory(@Query('page') page?: string, @Query('limit') limit?: string, @Query('date') date?: string, @Query('search') search?: string, @Query('estado') estado?: string) {
+    return this.ticketsService.receiptHistory(listPagination(page, limit), date ?? '', search, estado || undefined);
   }
 
   @Get('registrations')

@@ -10,6 +10,10 @@ Los clientes con teléfono aparecen en frecuentes desde su primer ingreso, aunqu
 
 El QR contiene el mismo enlace público, generado localmente sin servicios externos de QR. Para usarlo desde el celular, el dominio de comprobantes debe ser accesible desde ese dispositivo (localhost apunta al propio celular).
 
+## Historial para reenviar
+
+La pantalla Comprobantes (Entradas y salidas) lista las estadías con entrada o salida en un día, para volver a abrir el comprobante de entrada o de salida sin registrar nada. `GET /tickets/receipt-history` recibe `date`, `search` (patente, ticket o apellido), `estado` (`ADENTRO`: siguen en la playa; `SALIO`; sin él, todas) y la paginación. Cada fila trae, además de los campos de siempre, `patente`, `vehicleType`, `entryTime` y `exitTime` (HH:MM); la respuesta suma `conteo` (`todas`, `adentro`, `salieron`) con la misma fecha y búsqueda, para los filtros. Un pase con `retired` sin dato cuenta como en la playa.
+
 ## Dónde vive la página pública
 
 El comprobante lo sirve una aplicación aparte —`estacionamiento-comprobantes-demo`, un servicio propio con su propio dominio— y no el sistema de gestión. El enlace que recibe el cliente es `<dominio de comprobantes>/c/<token>`, así que un QR o un mensaje de WhatsApp reenviado no revela dónde está la aplicación interna. Esa app no tiene sesión ni pantallas del sistema: pide `GET /public/parking-receipts/:token` desde su servidor y dibuja la respuesta; cualquier otra ruta responde 404. Como consulta desde el servidor, no necesita entrar en `ALLOWED_ORIGINS`, y el navegador del cliente tampoco ve la dirección de la API.

@@ -269,7 +269,7 @@ async removeTicketPrice(id: string) {
           throw new BadRequestException({ code: 'SUELDO_USUARIO_INVALIDO', message: 'Elegí usuarios habilitados para esta playa.' });
         }
       }
-      if (merged.multipleShiftsEnabled && !merged.shiftsEnabled) throw new BadRequestException('Activá Turnos de caja antes de permitir turnos múltiples.');
+      if (merged.multipleShiftsEnabled && !merged.shiftsEnabled) throw new BadRequestException('Activá Turnos de caja antes de elegir que cobren varias personas a la vez.');
       if (merged.multipleShiftsEnabled !== (current?.multipleShiftsEnabled ?? false)) {
         await manager.query('SELECT pg_advisory_xact_lock(718904)');
         const open = await manager.query("SELECT id FROM turnos WHERE estado = 'ABIERTO' LIMIT 1");
@@ -928,29 +928,40 @@ async removePriceBracket(id: string) {
     }
   }
 
-  async receiptHistory(pagination: ListPagination, date: string, search = '') {
+  // `estado`: 'ADENTRO' (sigue en la playa) o 'SALIO'; sin él, todas. `conteo` cuenta las tres con la
+  // misma fecha y búsqueda (para los filtros de la pantalla). `patente`, `vehicleType`, `entryTime` y
+  // `exitTime` (HH:MM) se suman a los campos de siempre, que no cambian.
+  async receiptHistory(pagination: ListPagination, date: string, search = '', estado?: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !dayjs(date).isValid() || dayjs(date).format('YYYY-MM-DD') !== date) throw new BadRequestException('Fecha inválida.');
+    if (estado && !['ADENTRO', 'SALIO'].includes(estado)) throw new BadRequestException('Estado inválido.');
     const union = `
       SELECT id, COALESCE(NULLIF("licensePlateOriginal", ''), NULLIF("vehiclePlateCustomer", ''), NULLIF("codeBarTicket", ''), "lastNameCustomer", 'Sin patente') AS identification,
         CONCAT_WS(' ', "licensePlateOriginal", "vehiclePlateCustomer", "codeBarTicket", "lastNameCustomer") AS search,
         COALESCE("departureDay", "entryDay")::text AS date,
         COALESCE("departureTime"::text, "entryTime"::text, '') AS time,
         ("departureTime" IS NOT NULL OR "departureDay" IS NOT NULL) AS departed, 'Por hora' AS type,
-        "entryOperatorName", "exitOperatorName"
+        "entryOperatorName", "exitOperatorName",
+        NULLIF("licensePlateOriginal", '') AS patente, "vehicleType"::text AS "vehicleType",
+        left("entryTime"::text, 5) AS "entryTime", left("departureTime"::text, 5) AS "exitTime"
       FROM ticket_registrations WHERE "entryDay" = $1 OR "departureDay" = $1
       UNION ALL
       SELECT id, COALESCE(NULLIF("vehiclePlateCustomer", ''), "lastNameCustomer", 'Sin patente'),
         CONCAT_WS(' ', "vehiclePlateCustomer", "lastNameCustomer"),
         COALESCE(to_char("retiredAt" AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD'), "dateNow"::text),
-        COALESCE(to_char("retiredAt" AT TIME ZONE 'America/Argentina/Buenos_Aires', 'HH24:MI:SS'), ''), retired, 'Día / semana / mes',
-        "entryOperatorName", "exitOperatorName"
+        COALESCE(to_char("retiredAt" AT TIME ZONE 'America/Argentina/Buenos_Aires', 'HH24:MI:SS'), ''), COALESCE(retired, false), 'Día / semana / mes',
+        "entryOperatorName", "exitOperatorName",
+        NULLIF("vehiclePlateCustomer", ''), "vehicleType"::text,
+        to_char("createdAt" AT TIME ZONE 'America/Argentina/Buenos_Aires', 'HH24:MI'), to_char("retiredAt" AT TIME ZONE 'America/Argentina/Buenos_Aires', 'HH24:MI')
       FROM ticket_registration_for_days WHERE "dateNow" = $1 OR ("retiredAt" >= ($1::date::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND "retiredAt" < (($1::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires'))`;
-    const filtered = `WITH rows AS (${union}) SELECT * FROM rows WHERE regexp_replace(upper(search), '[^A-Z0-9]', '', 'g') LIKE $2`;
+    const buscadas = `WITH rows AS (${union}) SELECT * FROM rows WHERE regexp_replace(upper(search), '[^A-Z0-9]', '', 'g') LIKE $2`;
+    const filtered = estado ? `SELECT * FROM (${buscadas}) b WHERE departed = ${estado === 'SALIO' ? 'true' : 'false'}` : buscadas;
     const searchKey = search.slice(0, 120).toUpperCase().replace(/[^A-Z0-9]/g, '');
     const params = [date, '%' + searchKey + '%'];
-    const [count] = await this.dataSource.query(`SELECT COUNT(*) AS total FROM (${filtered}) filtered`, params);
+    const [conteo] = await this.dataSource.query(`SELECT COUNT(*)::int AS todas, COUNT(*) FILTER (WHERE NOT departed)::int AS adentro,
+      COUNT(*) FILTER (WHERE departed)::int AS salieron FROM (${buscadas}) b`, params);
+    const total = estado === 'SALIO' ? conteo.salieron : estado === 'ADENTRO' ? conteo.adentro : conteo.todas;
     const data = await this.dataSource.query(`${filtered} ORDER BY date DESC, time DESC, id DESC LIMIT $3 OFFSET $4`, [...params, pagination.limit, (pagination.page - 1) * pagination.limit]);
-    return listResult(data, Number(count.total), pagination);
+    return { ...listResult(data, Number(total), pagination), conteo: { todas: Number(conteo.todas), adentro: Number(conteo.adentro), salieron: Number(conteo.salieron) } };
   }
 
   async getTicketRegistrationsSummary(from?: string, to?: string) {
