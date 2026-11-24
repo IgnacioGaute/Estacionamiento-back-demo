@@ -84,6 +84,22 @@ export class Movimiento {
   @Column('varchar', { length: 255, nullable: true })
   motivo: string | null;
 
+  // Solo en el movimiento en efectivo de un cobro: lo que el operador declaró recibir en billetes y
+  // el vuelto que calculó el servidor (ver efectivo-recibido.ts). Explican el cobro; no son plata
+  // del libro y nunca se suman: lo cobrado es `monto`. null en los cobros anteriores a este dato y
+  // en los guardados sin conexión por versiones que no lo pedían.
+  @Column('int', { nullable: true })
+  efectivoRecibido: number | null;
+
+  @Column('int', { nullable: true })
+  vuelto: number | null;
+
+  // Los ajustes que generó una corrección de registro (src/operaciones): el original queda igual y
+  // estos movimientos lo compensan. null en todo lo demás.
+  @Index()
+  @Column('uuid', { nullable: true })
+  correccionId: string | null;
+
   // Columnas listas para la cadena de hash (registro inmutable) — la lógica se arma después.
   @Column('varchar', { nullable: true })
   hashAnterior: string | null;

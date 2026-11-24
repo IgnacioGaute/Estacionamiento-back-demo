@@ -62,6 +62,7 @@ before(async () => {
   movements = new MovimientosService(repo(Movimiento), shifts);
   boxes = new BoxListsService(repo(Box), repo(Other), ds);
   tickets = new TicketsService(repo(Ticket), repo(TicketPrice), repo(Bracket), repo(Registration), repo(RegistrationDay), repo(Schedule), boxes, { emitNewRegistration() {} }, movements, ds);
+  require('./mostrador.cjs').comoMostrador({ tickets, shifts });
   scanner = new ScannerService(tickets, { getBarcodeReceipt: async () => null }, ds);
   user = await repo(User).save(repo(User).create({ username: 'test', firstName: 'Test', lastName: 'Operator', email: 'test@example.test', role: 'ADMIN' }));
   await tickets.updateSchedule({ dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, pricingDayTypeBasis: 'ENTRY', barcodeTicketsEnabled: true, shiftsEnabled: true, multipleShiftsEnabled: true });
@@ -257,6 +258,96 @@ test('importe desactualizado exige volver a confirmar sin cobrar', async () => {
   await age(registration, 80);
   await assert.rejects(tickets.closeRegistrationByPlate(registration.id, dto, user.id));
   assert.equal(await movements.sumByRegistration(registration.id), 0);
+});
+
+// Las llamadas de abajo mandan efectivoRecibido: null para saltear el ayudante del mostrador
+// (mostrador.cjs), que si falta toca «Justo».
+const codigo = (code) => (e) => e.response?.code === code;
+
+test('efectivo recibido: obligatorio, no admite lo que no alcanza, calcula el vuelto y un reintento no duplica', async () => {
+  const r = await openPlate();
+  const base = await payload(r.id);
+  const antes = await totalBox();
+  await assert.rejects(tickets.closeRegistrationByPlate(r.id, { ...base, efectivoRecibido: null }, user.id), codigo('EFECTIVO_RECIBIDO_REQUERIDO'));
+  await assert.rejects(tickets.closeRegistrationByPlate(r.id, { ...base, efectivoRecibido: 500 }, user.id), codigo('EFECTIVO_INSUFICIENTE'));
+  assert.equal(await totalBox(), antes, 'un intento rechazado no toca la caja');
+  assert.equal(await movements.sumByRegistration(r.id), 0);
+  assert.equal((await ds.getRepository(Registration).findOneBy({ id: r.id })).departureTime, null);
+  const cerrado = await tickets.closeRegistrationByPlate(r.id, { ...base, efectivoRecibido: 2000 }, user.id);
+  assert.deepEqual(cerrado.cobroEfectivo, { importe: 1000, efectivoRecibido: 2000, vuelto: 1000 });
+  // La respuesta se perdió y la pantalla reintenta: no cobra de nuevo y devuelve el mismo vuelto.
+  const reintento = await tickets.closeRegistrationByPlate(r.id, { ...base, efectivoRecibido: 2000 }, user.id);
+  assert.deepEqual(reintento.cobroEfectivo, { importe: 1000, efectivoRecibido: 2000, vuelto: 1000 });
+  // Lo recibido y el vuelto explican el cobro: a la caja y al libro entra solo lo cobrado.
+  assert.equal(await totalBox(), antes + 1000);
+  assert.equal(await movements.sumByRegistration(r.id), 1000);
+  const movs = await ds.getRepository(Movimiento).find({ where: { ticketRegistration: { id: r.id } } });
+  assert.deepEqual(movs.map(m => [m.metodo, m.monto, m.efectivoRecibido, m.vuelto]), [['CASH', 1000, 2000, 1000]]);
+
+  // «Justo»: lo recibido es el importe, sin vuelto.
+  const justo = await openPlate();
+  const cobrado = await tickets.closeRegistrationByPlate(justo.id, await payload(justo.id, { efectivoRecibido: 1000 }), user.id);
+  assert.deepEqual(cobrado.cobroEfectivo, { importe: 1000, efectivoRecibido: 1000, vuelto: 0 });
+
+  // Transferencia: no hay billetes que declarar.
+  const transferencia = await openPlate();
+  await assert.rejects(tickets.closeRegistrationByPlate(transferencia.id, await payload(transferencia.id, { metodo: 'TRANSFER', efectivoRecibido: 1000 }), user.id), codigo('EFECTIVO_RECIBIDO_SIN_EFECTIVO'));
+  const porTransferencia = await tickets.closeRegistrationByPlate(transferencia.id, await payload(transferencia.id, { metodo: 'TRANSFER' }), user.id);
+  assert.equal(porTransferencia.cobroEfectivo, null);
+});
+
+test('pago mixto: el vuelto es contra la parte en efectivo y a la caja entra solo esa parte', async () => {
+  const r = await age(await openPlate(), 90);
+  const base = await payload(r.id, { metodo: undefined, pagos: [{ metodo: 'CASH', importe: 500 }, { metodo: 'TRANSFER', importe: 1500 }] });
+  assert.equal(base.expectedPrice, 2000);
+  const antes = await totalBox();
+  // Entregó $400 para $500 en efectivo: se corrige el importe o se cambia el reparto, no se descuenta.
+  await assert.rejects(tickets.closeRegistrationByPlate(r.id, { ...base, efectivoRecibido: 400 }, user.id), codigo('EFECTIVO_INSUFICIENTE'));
+  const cerrado = await tickets.closeRegistrationByPlate(r.id, { ...base, efectivoRecibido: 2000 }, user.id);
+  assert.deepEqual(cerrado.cobroEfectivo, { importe: 500, efectivoRecibido: 2000, vuelto: 1500 });
+  assert.equal(await totalBox(), antes + 500);
+  const movs = await ds.getRepository(Movimiento).find({ where: { ticketRegistration: { id: r.id } }, order: { sequence: 'ASC' } });
+  assert.deepEqual(movs.map(m => [m.metodo, m.monto, m.efectivoRecibido, m.vuelto]), [['CASH', 500, 2000, 1500], ['TRANSFER', 1500, null, null]]);
+});
+
+test('parte en efectivo antes del QR o el alias: exige lo recibido y devuelve el vuelto confirmado', async () => {
+  const r = await openPlate();
+  const s = await tickets.getCloseSummary(r.id);
+  const dto = { importe: 300, expectedPrice: s.previewBracket.price, expectedCollected: 0 };
+  await assert.rejects(tickets.cobrarParteEnEfectivo(r.id, { ...dto, efectivoRecibido: null }, user.id), codigo('EFECTIVO_RECIBIDO_REQUERIDO'));
+  await assert.rejects(tickets.cobrarParteEnEfectivo(r.id, { ...dto, efectivoRecibido: 200 }, user.id), codigo('EFECTIVO_INSUFICIENTE'));
+  const parcial = await tickets.cobrarParteEnEfectivo(r.id, { ...dto, efectivoRecibido: 1000 }, user.id);
+  assert.deepEqual(parcial.cobroEfectivo, { importe: 300, efectivoRecibido: 1000, vuelto: 700 });
+  assert.equal(parcial.saldoACobrar, 700);
+});
+
+test('«Se fue antes» y pases por día: la misma regla de lo recibido', async () => {
+  const r = await age(await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'ANTES' + (++counter) }), 3 * 60);
+  const [primera] = (await tickets.opcionesSalidaAnterior(r.id)).opciones;
+  const dto = { closeType: 'PAYMENT', metodo: 'CASH', expectedPrice: primera.precio, expectedCollected: 0, salidaEn: primera.salidaEn };
+  await assert.rejects(tickets.registrarSalidaAnterior(r.id, { ...dto, efectivoRecibido: null }, user.id), codigo('EFECTIVO_RECIBIDO_REQUERIDO'));
+  await assert.rejects(tickets.registrarSalidaAnterior(r.id, { ...dto, efectivoRecibido: primera.precio - 1 }, user.id), codigo('EFECTIVO_INSUFICIENTE'));
+  const salida = await tickets.registrarSalidaAnterior(r.id, { ...dto, efectivoRecibido: 5000 }, user.id);
+  assert.deepEqual(salida.cobroEfectivo, { importe: primera.precio, efectivoRecibido: 5000, vuelto: 5000 - primera.precio });
+
+  // Una tarifa por día propia de esta prueba (otra prueba carga la suya más adelante).
+  const tarifaDia = await ds.getRepository(TicketPrice).save({ ticketTimeType: 'DIA', vehicleType: 'AUTO', ticketTimePrice: 2000 });
+  const precioDia = tarifaDia.ticketTimePrice;
+  try {
+  const alta = { ticketTimeType: 'DIA', vehicleType: 'AUTO', days: 1, vehiclePlateCustomer: 'PASE' + (++counter), paid: true, paymentMetodo: 'CASH' };
+  await assert.rejects(tickets.createRegistrationForDay({ ...alta }, user.id), codigo('EFECTIVO_RECIBIDO_REQUERIDO'));
+  await assert.rejects(tickets.createRegistrationForDay({ ...alta, efectivoRecibido: precioDia - 1 }, user.id), codigo('EFECTIVO_INSUFICIENTE'));
+  const pase = await tickets.createRegistrationForDay({ ...alta, efectivoRecibido: precioDia + 500 }, user.id);
+  assert.deepEqual([pase.efectivoRecibido, pase.vuelto], [precioDia + 500, 500]);
+  // Pendiente y cobrado después: el cobro nuevo lo pide; un pase sin cobro en efectivo queda sin dato.
+  const pendiente = await tickets.createRegistrationForDay({ ...alta, vehiclePlateCustomer: 'PASE' + (++counter), paid: false, paymentMetodo: undefined }, user.id);
+  assert.deepEqual([pendiente.efectivoRecibido, pendiente.vuelto], [null, null]);
+  await assert.rejects(tickets.updateTicketStatus(pendiente.id, { paid: true, paymentMetodo: 'CASH' }, user.id), codigo('EFECTIVO_RECIBIDO_REQUERIDO'));
+  const cobrado = await tickets.updateTicketStatus(pendiente.id, { paid: true, paymentMetodo: 'CASH', efectivoRecibido: precioDia }, user.id);
+  assert.deepEqual([cobrado.efectivoRecibido, cobrado.vuelto], [precioDia, 0]);
+  } finally {
+    await ds.getRepository(TicketPrice).delete({ id: tarifaDia.id });
+  }
 });
 
 test('se fue antes: ofrece las tarifas que ya pasó y registra la salida con la elegida', async () => {

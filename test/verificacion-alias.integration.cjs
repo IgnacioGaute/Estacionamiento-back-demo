@@ -73,6 +73,7 @@ before(async () => {
   const movements = new MovimientosService(repo(Movimiento), shifts);
   const boxes = new BoxListsService(repo(Box), repo(Other), ds);
   tickets = new TicketsService(repo(Ticket), repo(TicketPrice), repo(Bracket), repo(Registration), repo(RegistrationDay), repo(Schedule), boxes, { emitNewRegistration() {} }, movements, ds);
+  require('./mostrador.cjs').comoMostrador({ tickets, shifts });
   alias = new VerificacionAliasService(repo(Cuenta), repo(Intento), repo(Transferencia), repo(Adicional), { tokenDeEmpresa: async () => 'token-de-prueba' }, tickets, ds);
   await tickets.updateSchedule({ dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, pricingDayTypeBasis: 'ENTRY', barcodeTicketsEnabled: false });
   // Hasta una hora $1000, después $1000 por hora.

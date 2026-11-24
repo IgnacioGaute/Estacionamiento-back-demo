@@ -44,6 +44,7 @@ import { CuentasModule } from 'src/cuentas/cuentas.module';
     VerificacionAliasService,
     CajasQrService,
   ],
-  exports: [MercadoPagoService],
+  // La verificación de transferencias también respalda las correcciones de cobros (src/operaciones).
+  exports: [MercadoPagoService, VerificacionAliasService],
 })
 export class MercadoPagoModule {}

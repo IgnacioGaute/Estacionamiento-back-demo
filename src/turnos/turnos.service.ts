@@ -22,6 +22,7 @@ import dayjs from 'dayjs';
 import { exigirCobro } from 'src/tenancy/modalidad';
 import { conciliacionCaja } from './conciliacion-caja';
 import { cobrosEfectivoTurno } from './cobros-efectivo';
+import { cambiosDeDesglose, conteoDelArqueo } from './conteo-billetes';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 
@@ -349,6 +350,8 @@ export class TurnosService {
         });
       }
       if (turno.estado === 'CERRADO') throw new BadRequestException('Este turno ya está cerrado.');
+      // Los billetes contados mandan: completa efectivoContado y primerConteo con sus totales.
+      const conteo = conteoDelArqueo(dto);
       const caja = turno.cajaId ? await manager.getRepository(CashRegister).findOneBy({ id: turno.cajaId }) : null;
       const available = dto.efectivoContado ?? await this.cashTotal(turno, manager);
       // Con arqueo el operador elige cuánto deja (el fondo es una referencia: puede dejar más, menos
@@ -397,6 +400,10 @@ export class TurnosService {
         }
       }
       if (dto.efectivoContado === undefined || dto.cerrarCaja === false) throw new ConflictException('Sos el último operador. Contá el efectivo para cerrar la caja.');
+      // El arqueo final se cuenta por billetes, no escribiendo un total. Los cierres guardados sin
+      // conexión por versiones anteriores no lo traen y se sincronizan igual, sin desglose.
+      if (!conteo.desglose && !operationContext.getStore())
+        throw new BadRequestException({ code: 'CONTEO_BILLETES_REQUERIDO', message: 'Contá el efectivo por billetes: cuántos hay de cada uno. Si la pantalla no lo pide, actualizala.' });
       const paraSiguiente = dto.efectivoParaSiguiente ?? 0;
       if (paraSiguiente + salary > dto.efectivoContado) throw new BadRequestException('No podés entregar más efectivo del que contaste.');
       const teorico = await this.cashTotal(turno, manager);
@@ -410,15 +417,21 @@ export class TurnosService {
           message: 'Escribí el motivo de la diferencia entre lo contado y lo esperado.',
         });
       }
+      // Cuánto queda para el próximo turno lo elige quien cierra: no se toma $0 por omisión. Los
+      // cierres guardados sin conexión por versiones anteriores no lo exigían y se sincronizan igual.
+      if (dto.efectivoParaSiguiente === undefined && !operationContext.getStore())
+        throw new BadRequestException({ code: 'EFECTIVO_PARA_SIGUIENTE_REQUERIDO', message: 'Elegí cuánto dejás en caja para el próximo turno.' });
       Object.assign(turno, { usuarioCierre: { id: usuarioId }, fechaCierre: operationNow(), efectivoContado: dto.efectivoContado,
-        primerConteo: dto.primerConteo ?? null, efectivoTeorico: teorico, diferencia: teorico - dto.efectivoContado, efectivoParaSiguiente: paraSiguiente,
+        primerConteo: dto.primerConteo ?? null, conteoDesglose: conteo.desglose, primerConteoDesglose: conteo.primerDesglose,
+        efectivoTeorico: teorico, diferencia: teorico - dto.efectivoContado, efectivoParaSiguiente: paraSiguiente,
         efectivoRetirado: dto.efectivoContado - paraSiguiente, observaciones: dto.observaciones ?? null, estado: 'CERRADO',
         cierreForzado: forzado, motivoCierreForzado: forzado ? dto.motivoCierreForzado.trim() : null });
       if (salary && turno.cashSessionId) await manager.getRepository(CashSessionMovement).save({ ...(operationContext.getStore() ? { createdAt: operationNow() } : {}), sesionId: turno.cashSessionId, turnoId: turno.id, usuarioId, tipo: 'SUELDO', amount: -salary, motivo: 'Sueldo al finalizar la jornada' });
       if (turno.cashSessionId) {
         turno.cierreCaja = true;
         await manager.getRepository(CashSession).update(turno.cashSessionId, { estado: 'CERRADO', fechaCierre: turno.fechaCierre, usuarioCierreId: usuarioId,
-          efectivoTeorico: teorico, efectivoContado: dto.efectivoContado, primerConteo: dto.primerConteo ?? null, diferencia: teorico - dto.efectivoContado,
+          efectivoTeorico: teorico, efectivoContado: dto.efectivoContado, primerConteo: dto.primerConteo ?? null,
+          conteoDesglose: conteo.desglose, primerConteoDesglose: conteo.primerDesglose, diferencia: teorico - dto.efectivoContado,
           efectivoParaSiguiente: paraSiguiente, efectivoRetirado: dto.efectivoContado - paraSiguiente, observaciones: dto.observaciones ?? null });
       }
       await this.publishClosingNote(manager, turno, usuarioId, caja?.nombre);
@@ -429,7 +442,7 @@ export class TurnosService {
   private async publishClosingNote(manager: EntityManager, turno: Turno, usuarioId: string, caja?: string) {
     // Si el operador cambió el conteo después de ver lo esperado, queda la diferencia original.
     const corregido = turno.primerConteo != null && turno.efectivoContado != null && turno.primerConteo !== turno.efectivoContado
-      ? `Primer conteo: $${turno.primerConteo}; se corrigió a $${turno.efectivoContado} después de ver lo esperado.` : null;
+      ? [`Primer conteo: $${turno.primerConteo}; se corrigió a $${turno.efectivoContado} después de ver lo esperado.`, cambiosDeDesglose(turno.primerConteoDesglose, turno.conteoDesglose)].filter(Boolean).join(' ') : null;
     const description = [turno.observaciones?.trim(), corregido, turno.motivoCierreForzado ? `Cierre por administrador: ${turno.motivoCierreForzado}` : null].filter(Boolean).join('\n');
     // Una nota con el efectivo que coincide es informativa; una diferencia, un conteo corregido o un
     // cierre de administración se revisan.

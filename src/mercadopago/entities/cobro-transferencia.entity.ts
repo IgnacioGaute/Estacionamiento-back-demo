@@ -28,7 +28,8 @@ export type EstadoCobroTransferencia =
 
 // Cómo se asoció la transferencia. AUTOMATICO_COINCIDENCIA_UNICA no identifica al pagador: es la
 // regla «una sola transferencia de ese importe y un solo cobro esperándola en toda la cuenta».
-export type ModoAsociacion = 'AUTOMATICO_COINCIDENCIA_UNICA' | 'MANUAL';
+// CORRECCION: respalda la corrección de un cobro registrado como efectivo (src/operaciones).
+export type ModoAsociacion = 'AUTOMATICO_COINCIDENCIA_UNICA' | 'MANUAL' | 'CORRECCION';
 
 // Un intento de cobrar una estadía por transferencia al alias. Mientras está abierto, el cobro y
 // la salida NO están registrados: se registran recién al asociar una transferencia.

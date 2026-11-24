@@ -22,8 +22,13 @@ import { Turno } from './entities/turno.entity';
 // operaciones; si no (un pase marcado como pagado después, uno eliminado, un ajuste a mano de la
 // caja), se muestra la entrada de caja tal cual, con su hora e importe, marcada «sin detalle». Así
 // el total siempre es el efectivo registrado del turno y nunca se inventa una patente.
+//
+// `recibido` y `vuelto`: lo que el operador declaró que le entregaron y el vuelto que calculó el
+// servidor, en los cobros de estadías y pases que lo guardan (ver movimientos/efectivo-recibido.ts).
+// Son datos declarados que explican el cobro, no plata: no entran en ningún total. null cuando no se
+// guardó (cobros anteriores, pendientes sin conexión viejos, inquilinos, ajustes): no se inventan.
 export type ConceptoCobroEfectivo = 'ANTICIPO' | 'SALDO' | 'AJUSTE' | 'DEVOLUCION' | 'PAGO_INQUILINO' | 'DEVOLUCION_INQUILINO'
-  | 'ANULACION_INQUILINO' | 'ESTADIA_PERIODO' | 'DEVOLUCION_ANTICIPO' | 'AJUSTE_CAJA' | 'COBRO';
+  | 'ANULACION_INQUILINO' | 'ESTADIA_PERIODO' | 'DEVOLUCION_ANTICIPO' | 'AJUSTE_CAJA' | 'COBRO' | 'CORRECCION';
 
 export type CobroEfectivo = {
   id: string;
@@ -33,6 +38,8 @@ export type CobroEfectivo = {
   identificacion: string | null;
   importe: number;
   sinDetalle: boolean;
+  recibido: number | null;
+  vuelto: number | null;
 };
 
 const PERIODOS: Record<string, string> = { DIA: 'día', SEMANA: 'semana', SEMANA_Y_DIA: 'semana y día', MES: 'mes', MES_Y_DIA: 'mes y día' };
@@ -44,31 +51,31 @@ export async function cobrosEfectivoTurno(manager: EntityManager, turno: Turno) 
   const entradas: { id: string; amount: number; categoria: string; description: string; clave: string; fecha: Date }[] = await manager.query(`
     SELECT c.id, c.amount, c.categoria, c.description, ${clave('c."createdAt"')} AS clave, c."createdAt" AS fecha
     FROM cash_entries c
-    WHERE c."turnoId" = $1 AND c.categoria IN ('COBRO', 'DEVOLUCION_ANTICIPO') AND c.amount <> 0
+    WHERE c."turnoId" = $1 AND c.categoria IN ('COBRO', 'DEVOLUCION_ANTICIPO', 'CORRECCION') AND c.amount <> 0
     ORDER BY c."createdAt", c.id`, [turno.id]);
   if (!entradas.length) return resultado([]);
   const momentos = [...new Set(entradas.map((e) => e.clave))];
 
-  const fuentes: (Omit<CobroEfectivo, 'sinDetalle' | 'importe' | 'fecha'> & { importe: string | number; clave: string; fecha: Date; extra: string | null })[] = await manager.query(`
+  const fuentes: (Omit<CobroEfectivo, 'sinDetalle' | 'importe' | 'fecha' | 'recibido' | 'vuelto'> & { importe: string | number; clave: string; fecha: Date; extra: string | null; recibido: number | string | null; vuelto: number | string | null })[] = await manager.query(`
     WITH momentos AS (SELECT unnest($2::text[]) AS clave)
     SELECT m.id::text AS id, ${clave('m."fechaHora"')} AS clave, m."fechaHora" AS fecha, m.monto AS importe,
-      CASE WHEN m.tipo = 'AJUSTE' AND m.monto < 0 THEN 'DEVOLUCION' ELSE m.tipo::text END AS concepto,
+      CASE WHEN m."correccionId" IS NOT NULL THEN 'CORRECCION' WHEN m.tipo = 'AJUSTE' AND m.monto < 0 THEN 'DEVOLUCION' ELSE m.tipo::text END AS concepto,
       COALESCE(NULLIF(r."licensePlateOriginal", ''), CASE WHEN r."codeBarTicket" IS NOT NULL THEN 'Ticket ' || r."codeBarTicket" END) AS identificacion,
-      NULL AS extra
+      NULL AS extra, m."efectivoRecibido" AS recibido, m.vuelto AS vuelto
     FROM movimientos m LEFT JOIN ticket_registrations r ON r.id = m."ticketRegistrationId"
     WHERE m."turnoId" = $1 AND m.metodo = 'CASH' AND m.tipo IN ('ANTICIPO', 'SALDO', 'AJUSTE')
       AND ${clave('m."fechaHora"')} IN (SELECT clave FROM momentos)
     UNION ALL
     SELECT k.id::text, ${clave('k."createdAt"')}, k."createdAt", -k.importe,
       CASE k.tipo WHEN 'PAGO' THEN 'PAGO_INQUILINO' WHEN 'DEVOLUCION' THEN 'DEVOLUCION_INQUILINO' ELSE 'ANULACION_INQUILINO' END,
-      NULLIF(trim(concat(c."lastName", ' ', c."firstName")), ''), o.tipo
+      NULLIF(trim(concat(c."lastName", ' ', c."firstName")), ''), o.tipo, NULL::int, NULL::int
     FROM cuenta_movimientos k JOIN customers c ON c.id = k."customerId"
     LEFT JOIN cuenta_movimientos o ON o.id = k."anulaId"
     WHERE k.metodo = 'CASH' AND k.tipo IN ('PAGO', 'DEVOLUCION', 'ANULACION')
       AND ${clave('k."createdAt"')} IN (SELECT clave FROM momentos)
     UNION ALL
     SELECT d.id::text, ${clave(`(d."createdAt" AT TIME ZONE current_setting('TimeZone'))`)}, d."createdAt" AT TIME ZONE current_setting('TimeZone'), d.price,
-      'ESTADIA_PERIODO', NULLIF(d."vehiclePlateCustomer", ''), d."ticketTimeType"::text
+      'ESTADIA_PERIODO', NULLIF(d."vehiclePlateCustomer", ''), d."ticketTimeType"::text, d."efectivoRecibido", d.vuelto
     FROM ticket_registration_for_days d
     WHERE d.paid = true AND COALESCE(d."paymentMetodo", 'CASH') NOT IN ('TRANSFER', 'MERCADOPAGO') AND d.price > 0
       AND ${clave(`(d."createdAt" AT TIME ZONE current_setting('TimeZone'))`)} IN (SELECT clave FROM momentos)`,
@@ -82,12 +89,12 @@ export async function cobrosEfectivoTurno(manager: EntityManager, turno: Turno) 
     if (encontradas.length && encontradas.reduce((s, f) => s + Number(f.importe), 0) === enCaja) {
       for (const f of encontradas)
         filas.push({ id: f.id, fecha: new Date(f.fecha).toISOString(), concepto: f.concepto, importe: Number(f.importe), sinDetalle: false,
-          identificacion: f.identificacion ?? null });
+          identificacion: f.identificacion ?? null, recibido: f.recibido == null ? null : Number(f.recibido), vuelto: f.vuelto == null ? null : Number(f.vuelto) });
       continue;
     }
     for (const e of deCaja)
-      filas.push({ id: e.id, fecha: new Date(e.fecha).toISOString(), identificacion: null, importe: Number(e.amount), sinDetalle: true,
-        concepto: e.categoria === 'DEVOLUCION_ANTICIPO' ? 'DEVOLUCION_ANTICIPO' : e.description === 'Ajuste de efectivo' ? 'AJUSTE_CAJA' : 'COBRO' });
+      filas.push({ id: e.id, fecha: new Date(e.fecha).toISOString(), identificacion: null, importe: Number(e.amount), sinDetalle: true, recibido: null, vuelto: null,
+        concepto: e.categoria === 'DEVOLUCION_ANTICIPO' ? 'DEVOLUCION_ANTICIPO' : e.categoria === 'CORRECCION' ? 'CORRECCION' : e.description === 'Ajuste de efectivo' ? 'AJUSTE_CAJA' : 'COBRO' });
   }
   // La anulación dice qué deshizo y el pase, de qué período era: van en el concepto que arma la
   // pantalla, sin otra consulta.

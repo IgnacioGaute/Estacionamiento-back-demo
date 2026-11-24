@@ -89,6 +89,9 @@ before(async () => {
       ['1790000054000-turno-continua-medianoche', 'TurnoContinuaMedianoche1790000054000'],
       ['1790000055000-avisos-para-revisar', 'AvisosParaRevisar1790000055000'],
       ['1790000056000-deudas-vistas', 'DeudasVistas1790000056000'],
+      ['1790000057000-efectivo-recibido-y-billetes', 'EfectivoRecibidoYBilletes1790000057000'],
+      // El resumen del turno lee las correcciones (rol parking_scoped).
+      ['1790000058000-correcciones', 'Correcciones1790000058000'],
     ]) await new (load('database/migrations/' + file, name))().up(runner);
   } finally { await runner.release(); }
   installTenantConnections(ds);
@@ -117,6 +120,7 @@ before(async () => {
   app = module.createNestApplication();
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   await app.listen(0, '127.0.0.1');
+  require('./mostrador.cjs').comoMostrador({ tickets: app.get(load('tickets/tickets.service', 'TicketsService')), shifts: app.get(load('turnos/turnos.service', 'TurnosService')) });
 });
 
 after(async () => {

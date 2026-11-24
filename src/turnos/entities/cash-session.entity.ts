@@ -1,6 +1,7 @@
 import { Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { Playa } from 'src/tenancy/entities/playa.entity';
 import { CashRegister } from './cash-register.entity';
+import type { ConteoBillete } from '../conteo-billetes';
 
 @Entity({ name: 'cash_sessions' })
 @Index('cash_session_abierta', ['cajaId'], { unique: true, where: "estado = 'ABIERTO'" })
@@ -23,6 +24,9 @@ export class CashSession {
   @Column('int', { nullable: true }) efectivoContado: number | null;
   // Ver Turno.primerConteo.
   @Column('int', { nullable: true }) primerConteo: number | null;
+  // Ver Turno.conteoDesglose.
+  @Column('jsonb', { nullable: true }) conteoDesglose: ConteoBillete[] | null;
+  @Column('jsonb', { nullable: true }) primerConteoDesglose: ConteoBillete[] | null;
   @Column('int', { nullable: true }) efectivoParaSiguiente: number | null;
   @Column('int', { nullable: true }) efectivoRetirado: number | null;
   @Column('int', { nullable: true }) diferencia: number | null;

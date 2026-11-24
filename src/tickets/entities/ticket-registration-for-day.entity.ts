@@ -75,6 +75,12 @@ export class TicketRegistrationForDay {
 
   @Column('varchar', { length: 255, nullable: true }) paymentOperatorName: string | null;
 
+  // Cobrada en efectivo: lo que el operador declaró recibir y el vuelto que calculó el servidor (ver
+  // src/movimientos/efectivo-recibido.ts). Explican el cobro, no suman a la caja. null si no se cobró
+  // en efectivo o si es anterior a este dato.
+  @Column('int', { nullable: true }) efectivoRecibido: number | null;
+  @Column('int', { nullable: true }) vuelto: number | null;
+
   // Con qué se cobró el abono por día/semana/mes. Se completa al marcarlo pagado (o al crearlo
   // ya pagado); queda en null mientras siga pendiente de cobro.
   @Column('varchar', { length: 20, nullable: true })

@@ -50,6 +50,12 @@ test('operación completa en navegador sin red, persistencia y pantalla móvil',
       let failed=false;try{apply('DISCOUNT',card,{monto:2000,motivo:'Error',expectedPrice:1000,expectedCollected:0});}catch{failed=true;}
       assert(failed && JSON.stringify(s)===before,'Una operación inválida modificó el estado');
       assert(summary(s,s.vehicles.find(v=>v.id===card)).price===1000,'Tarifa incorrecta');
+      // Lo que entregó el cliente: si la operación lo trae tiene que alcanzar y ser efectivo. Las
+      // operaciones de versiones anteriores (arriba) no lo traen y se aplican igual.
+      const sinCambios=JSON.stringify(s);let insuficiente=false,sinEfectivo=false;
+      try{apply('CLOSE',card,{closeType:'PAYMENT',metodo:'CASH',expectedPrice:1000,expectedCollected:0,efectivoRecibido:500});}catch{insuficiente=true;}
+      try{apply('CLOSE',card,{closeType:'PAYMENT',metodo:'TRANSFER',expectedPrice:1000,expectedCollected:0,efectivoRecibido:1000});}catch{sinEfectivo=true;}
+      assert(insuficiente && sinEfectivo && JSON.stringify(s)===sinCambios,'Aceptó un efectivo recibido inválido');
       const vault=await import('/offline-vault.js');
       await vault.saveOperations(s,'offline-operations-test-password');await vault.rememberDeviceAccess('offline-operations-test-password');
       window.fixture=s;
@@ -76,6 +82,29 @@ test('operación completa en navegador sin red, persistencia y pantalla móvil',
     await page.click('dialog[open] button[type=submit]');
     await page.waitForFunction(()=>document.querySelector('#rows').textContent.includes('Rodríguez'));
     await page.reload();await page.waitForFunction(()=>document.querySelector('#rows').textContent.includes('Rodríguez'));
+    // Salida en efectivo sin conexión: no arranca con un medio elegido, exige con cuánto pagó, no
+    // guarda lo que no alcanza y muestra el vuelto como guardado en el equipo, sin confirmar.
+    await page.waitForFunction(()=>!document.querySelector('#sync').disabled);
+    await page.evaluate(()=>[...document.querySelectorAll('#rows .row')].find(r=>r.textContent.includes('1001')).querySelector('button:not(.secondary)').click());
+    await page.waitForSelector('dialog[open] #operation-method');
+    assert.equal(await page.$eval('#operation-method',m=>m.value),'');
+    await page.select('#operation-method','CASH');
+    await page.select('#operation-cashMode','OTHER');
+    await page.type('#operation-received','500');
+    await page.click('dialog[open] button[type=submit]');
+    await page.waitForFunction(()=>document.querySelector('dialog[open] .operation-error')?.textContent.includes('Le falta entregar'));
+    await page.$eval('#operation-received',i=>{i.value='';});
+    await page.type('#operation-received','2000');
+    await page.click('dialog[open] button[type=submit]');
+    await page.waitForFunction(()=>!document.querySelector('#offline-last-cash').hidden);
+    const ultimo=await page.$eval('#offline-last-cash',e=>e.textContent);
+    assert.match(ultimo,/pendiente de sincronizar/);
+    assert.match(ultimo,/entregó \$\s?2\.000/);
+    assert.match(ultimo,/Vuelto: \$\s?1\.000/);
+    const guardada=await page.evaluate(async()=>{const vault=await import('/offline-vault.js');const {state}=await vault.openOperations('offline-operations-test-password');return state.pending.at(-1).data;});
+    assert.equal(guardada.efectivoRecibido,2000);
+    assert.equal(guardada.cashMode,undefined);
+    await page.screenshot({path:path.resolve('.tmp/offline-ultimo-cobro-390.png'),fullPage:true});
     assert.deepEqual(errors,[]);
   } finally {await browser.close();await new Promise(resolve=>server.close(resolve));}
 });

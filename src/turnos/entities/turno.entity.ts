@@ -7,6 +7,7 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import type { ConteoBillete } from '../conteo-billetes';
 import { Playa } from 'src/tenancy/entities/playa.entity';
 import { CashSession } from './cash-session.entity';
 import { CashRegister } from './cash-register.entity';
@@ -81,6 +82,15 @@ export class Turno {
   // lo cambió, queda la diferencia original a la vista. Null en cierres anteriores a 11/2026.
   @Column('int', { nullable: true })
   primerConteo: number | null;
+
+  // Arqueo final por billetes: cuántos de cada denominación (ver conteo-billetes.ts), el final y el
+  // del primer conteo. [] es «No hay efectivo». Null en cierres sin desglose (anteriores a 11/2026,
+  // pendientes sin conexión viejos y cierres que no cuentan la caja): no se inventan.
+  @Column('jsonb', { nullable: true })
+  conteoDesglose: ConteoBillete[] | null;
+
+  @Column('jsonb', { nullable: true })
+  primerConteoDesglose: ConteoBillete[] | null;
 
   // Cierre hecho por un admin sobre el turno de otro operador (se fue sin cerrar, se enfermó).
   // Sin esto la caja quedaba trabada: nadie más podía cerrar ese turno ni abrir el siguiente.

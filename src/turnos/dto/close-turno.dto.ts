@@ -1,4 +1,12 @@
-import { IsBoolean, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { DENOMINACIONES } from '../conteo-billetes';
+
+// Cuántos billetes o monedas de una denominación se contaron (ver conteo-billetes.ts).
+export class ConteoBilleteDto {
+  @IsIn(DENOMINACIONES as unknown as number[], { message: 'Esa denominación no está admitida.' }) denominacion: number;
+  @IsInt({ message: 'Las cantidades de billetes son números enteros.' }) @Min(0) @Max(100_000) cantidad: number;
+}
 
 export class CloseTurnoDto {
   @IsOptional() @IsInt() @Min(0) sueldoEsperado?: number;
@@ -22,6 +30,12 @@ export class CloseTurnoDto {
 
   // Arqueo final: el primer importe que el operador confirmó, antes de ver lo esperado.
   @IsInt() @Min(0) @IsOptional() primerConteo?: number;
+
+  // Arqueo final por billetes: el conteo final y el primero que se comparó. El servidor recalcula
+  // efectivoContado y primerConteo con ellos. Obligatorio para el arqueo final, salvo al
+  // sincronizar cierres guardados sin conexión por versiones anteriores.
+  @IsOptional() @IsArray() @ArrayMaxSize(DENOMINACIONES.length) @ValidateNested({ each: true }) @Type(() => ConteoBilleteDto) desglose?: ConteoBilleteDto[];
+  @IsOptional() @IsArray() @ArrayMaxSize(DENOMINACIONES.length) @ValidateNested({ each: true }) @Type(() => ConteoBilleteDto) primerConteoDesglose?: ConteoBilleteDto[];
 
   // Deja una caja compartida que sigue abierta: cuenta el cajón (conteo de relevo). Una
   // diferencia exige motivoConteoRelevo.

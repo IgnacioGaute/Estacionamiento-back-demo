@@ -187,10 +187,12 @@ export async function shiftSummary(m: EntityManager, turno: Turno) {
   // No inventar detalles de retiros o vehículos que el esquema anterior no registraba.
   if (!turno.fechaOperativa) return null;
   // Lo devuelto en efectivo de un anticipo se descuenta de lo cobrado: es el mismo cobro que
-  // terminó siendo menor, no un retiro. Las demás devoluciones siguen aparte.
+  // terminó siendo menor, no un retiro. Las demás devoluciones siguen aparte. Las correcciones de
+  // medio de pago (CORRECCION) también cambian lo cobrado en efectivo: un efectivo que era
+  // transferencia baja, y su transferencia aparece con los demás medios (movimientos del turno).
   const [cash] = await m.query(`SELECT COALESCE(SUM(amount),0) AS neto,
     COALESCE(SUM(GREATEST(amount,0)) FILTER (WHERE categoria = 'COBRO'),0)
-      + COALESCE(SUM(amount) FILTER (WHERE categoria = 'DEVOLUCION_ANTICIPO'),0) AS cobros,
+      + COALESCE(SUM(amount) FILTER (WHERE categoria IN ('DEVOLUCION_ANTICIPO', 'CORRECCION')),0) AS cobros,
     COALESCE(-SUM(amount) FILTER (WHERE categoria = 'GASTO'),0) AS gastos,
     COALESCE(SUM(amount) FILTER (WHERE categoria = 'INGRESO'),0) AS ingresos,
     COALESCE(-SUM(amount) FILTER (WHERE categoria = 'COBRO' AND amount < 0),0) AS devoluciones
@@ -209,6 +211,15 @@ export async function shiftSummary(m: EntityManager, turno: Turno) {
     WHERE v."turnoId"=$1 OR (v."turnoId" IS NULL AND v."sesionId"=$2 AND $3)
     ORDER BY v."createdAt"`, [turno.id, turno.cashSessionId, turno.cierreCaja]);
   const withdrawals = movements.filter(v => v.tipo === 'RETIRO').reduce((n, v) => n - v.amount, 0);
+  // Correcciones de este turno: las aplicadas dentro de su caja ya están en los totales de arriba;
+  // las aplicadas después de contar y cerrar la caja no tocan su arqueo (contado, esperado y
+  // diferencia quedan como estaban) y se informan aparte, vinculadas a este cierre.
+  const [corr] = await m.query(`SELECT COUNT(*) FILTER (WHERE estado = 'APLICADA')::int AS aplicadas,
+      COUNT(*) FILTER (WHERE estado = 'PENDIENTE')::int AS pendientes,
+      COUNT(*) FILTER (WHERE estado = 'APLICADA' AND "posteriorAlCierre")::int AS posteriores,
+      COALESCE(SUM((efecto->>'efectivo')::int) FILTER (WHERE estado = 'APLICADA' AND "posteriorAlCierre"), 0)::int AS efectivo,
+      COALESCE(SUM((efecto->>'digital')::int) FILTER (WHERE estado = 'APLICADA' AND "posteriorAlCierre"), 0)::int AS digital
+    FROM correcciones WHERE "turnoId" = $1 OR "imputadaTurnoId" = $1`, [turno.id]);
   const endWithdrawal = turno.cierreCaja ? Math.max(0, (turno.efectivoRetirado ?? 0) - turno.sueldoRetirado) : 0;
   return { efectivoCobrado: Number(cash.cobros), efectivoNeto: Number(cash.neto),
     ingresosVarios: Number(cash.ingresos), gastosEfectivo: Number(cash.gastos), devolucionesEfectivo: Number(cash.devoluciones),
@@ -218,5 +229,7 @@ export async function shiftSummary(m: EntityManager, turno: Turno) {
     salidas: exits,
     vehiculosInicio: turno.vehiculosInicio, vehiculosFin: turno.vehiculosFin,
     efectivoParaSiguiente: turno.efectivoParaSiguiente, movimientos: movements,
+    correcciones: { aplicadas: corr.aplicadas, pendientes: corr.pendientes,
+      posterioresAlCierre: corr.posteriores ? { cantidad: corr.posteriores, efectivo: corr.efectivo, digital: corr.digital } : null },
     alcanceCaja: turno.cierreCaja ? (turno.cierreAutomatico ? 'Caja cerrada a las 00:00 sin contar' : 'Arqueo de toda la caja compartida') : null };
 }

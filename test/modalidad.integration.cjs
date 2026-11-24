@@ -127,6 +127,7 @@ before(async () => {
   app = module.createNestApplication();
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   await app.listen(0, '127.0.0.1');
+  require('./mostrador.cjs').comoMostrador({ tickets: app.get(load('tickets/tickets.service', 'TicketsService')), shifts: app.get(load('turnos/turnos.service', 'TurnosService')) });
 });
 
 after(async () => {

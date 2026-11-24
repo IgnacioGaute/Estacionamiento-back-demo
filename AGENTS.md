@@ -70,6 +70,7 @@ Leer solo las filas relevantes; estas rutas no se importan automáticamente.
 | Configuración, arranque, variables, CI | docs/desarrollo.md |
 | Permisos, empresa/playa, sockets | docs/architecture/tenancy.md; docs/administracion-plataforma.md |
 | Cobros, cierre, caja, turnos | docs/architecture/caja.md; docs/caja-turnos.md; docs/comisiones-caja.md |
+| Correcciones de registros e historial de movimientos | docs/correcciones.md; docs/architecture/caja.md |
 | Tarifas y snapshots | docs/architecture/tarifas.md; docs/tickets-tarifas.md |
 | Inquilinos, cargos, pagos y anulaciones | docs/architecture/cuentas.md |
 | MercadoPago, QR y alias | docs/desarrollo.md; docs/verificacion-transferencias.md |

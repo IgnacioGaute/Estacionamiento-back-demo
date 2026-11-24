@@ -167,6 +167,8 @@ before(async () => {
     await new (load('database/migrations/1790000054000-turno-continua-medianoche', 'TurnoContinuaMedianoche1790000054000'))().up(migrationRunner);
     await new (load('database/migrations/1790000055000-avisos-para-revisar', 'AvisosParaRevisar1790000055000'))().up(migrationRunner);
     await new (load('database/migrations/1790000056000-deudas-vistas', 'DeudasVistas1790000056000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000057000-efectivo-recibido-y-billetes', 'EfectivoRecibidoYBilletes1790000057000'))().up(migrationRunner);
+    await new (load('database/migrations/1790000058000-correcciones', 'Correcciones1790000058000'))().up(migrationRunner);
   } finally {
     await migrationRunner.release();
   }
@@ -225,6 +227,7 @@ before(async () => {
     }),
   );
   await app.listen(0, '127.0.0.1');
+  require('./mostrador.cjs').comoMostrador({ tickets: app.get(TicketsService), shifts: app.get(TurnosService) });
   const repo = ds.getRepository(User);
   superUser = await repo.save({
     username: 'root-test',
@@ -1320,7 +1323,7 @@ test('alias en abonos: coincidencia única cobra y sale; duplicados se eligen y 
     const manual = await crear(3300);
     pagos = [];
     const i3 = await scoped(scope, () => service.iniciar(manual.id, 'ABONO'));
-    await scoped(scope, () => app.get(TicketsService).updateTicketStatus(manual.id, { paid: true, paymentMetodo: 'CASH', retired: true }, a.userId));
+    await scoped(scope, () => app.get(TicketsService).updateTicketStatus(manual.id, { paid: true, paymentMetodo: 'CASH', retired: true, efectivoRecibido: 3300 }, a.userId));
     pagos = [pago('abono-tardio', 3300)];
     assert.equal((await scoped(scope, () => service.consultar(i3.id))).estado, 'PAGADO_OTRO_MEDIO');
     assert.equal(await ds.getRepository(Transferencia).countBy({ operacionId: 'abono-tardio', estado: 'USADA' }), 0);
@@ -1503,6 +1506,33 @@ test('avisos automáticos: creación, búsqueda y lectura quedan aisladas por pl
     await assert.rejects(service.markRead(note.id, b.userId), /not found/);
     assert.ok(!(await service.unread(b.userId)).includes(note.id));
   });
+});
+
+test('correcciones: cada playa ve y corrige solo lo suyo, y no referencia estadías de otra', async () => {
+  const Correccion = load('operaciones/entities/correccion.entity', 'Correccion');
+  const { HistorialService } = require('../dist/operaciones/historial.service');
+  const estadia = await scoped(a, () => ds.getRepository(Registration).save({ description: 'Corregida', price: 0,
+    licensePlateOriginal: 'COR123', vehicleType: 'AUTO', entryDay: '2026-11-23', entryTime: '10:00:00' }));
+  const fila = (extra) => ({ solicitudId: require('node:crypto').randomUUID(), tipo: 'OTRO', estado: 'PENDIENTE', registrationId: estadia.id,
+    usuarioId: adminA.id, motivo: 'Otro error', detalle: 'Tarifa equivocada', ...extra });
+  const propia = await scoped(a, () => ds.getRepository(Correccion).save(fila({})));
+  const hoy = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' });
+  assert.equal(propia.playaId, a.playaId);
+  await scoped(b, async () => {
+    assert.equal(await ds.getRepository(Correccion).findOneBy({ id: propia.id }), null);
+    assert.equal((await ds.query('SELECT count(*)::int AS n FROM correcciones WHERE id = $1', [propia.id]))[0].n, 0);
+    // No puede colgar una corrección de una estadía de otra empresa ni tocar la ajena.
+    await assert.rejects(ds.getRepository(Correccion).save(fila({ usuarioId: adminB.id })));
+    const r = await ds.getRepository(Correccion).update(propia.id, { estado: 'RECHAZADA' });
+    assert.equal(r.affected, 0);
+    // El historial de la otra empresa no la muestra.
+    const historial = await new HistorialService(ds).listar({ desde: hoy, tipo: 'CORRECCION' }, { page: 1, limit: 50 }, { usuarioId: adminB.id, rol: 'ADMIN' });
+    assert.equal(historial.data.length, 0);
+  });
+  const suyo = await scoped(a, () => new HistorialService(ds).listar({ desde: hoy, tipo: 'CORRECCION' }, { page: 1, limit: 50 }, { usuarioId: adminA.id, rol: 'ADMIN' }));
+  assert.deepEqual(suyo.data.map((x) => x.id), ['C:' + propia.id]);
+  // Sin permiso para borrar: una corrección es constancia.
+  await assert.rejects(scoped(a, () => ds.query('DELETE FROM correcciones WHERE id = $1', [propia.id])), /permission denied/);
 });
 
 test('avisos: filtros por estado, origen, período y autor, con conteos por estado', async () => {

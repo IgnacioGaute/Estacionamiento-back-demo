@@ -43,6 +43,7 @@ import { DiscountRegistrationDto } from './dto/discount-registration.dto';
 import { PagoParcialDto } from './dto/pago-parcial.dto';
 import { Movimiento } from 'src/movimientos/entities/movimiento.entity';
 import { CloseRegistrationDto } from './dto/close-registration.dto';
+import { efectivoDeclarado } from 'src/movimientos/efectivo-recibido';
 import { SalidaAnteriorDto } from './dto/salida-anterior.dto';
 import { normalizePlate, patentesParecidas, toSearchKey } from './utils/license-plate.util';
 import { Brackets } from 'typeorm';
@@ -602,6 +603,10 @@ async createRegistrationForDay(createTicketRegistrationForDayDto: CreateTicketRe
     // La caja solo se toca si el abono se cobra en el momento: si queda pendiente de pago, el
     // registro existe pero no suma nada a la planilla del día hasta que se marque pagado.
     const cash = createTicketRegistrationForDayDto.paid && this.esEfectivoDeAbono(createTicketRegistrationForDayDto.paymentMetodo) ? ticket.price : 0;
+    // Los billetes que entregó y el vuelto, si se cobra ahora en efectivo (ver efectivo-recibido.ts).
+    const efectivo = efectivoDeclarado(cash, createTicketRegistrationForDayDto.efectivoRecibido);
+    ticket.efectivoRecibido = efectivo?.efectivoRecibido ?? null;
+    ticket.vuelto = efectivo?.vuelto ?? null;
     const boxList = await this.boxListsService.applyTicketPayment(now, cash, manager, undefined, userId);
 
     ticket.boxList = { id: boxList.id } as BoxList;
@@ -648,6 +653,13 @@ async updateTicketStatus(id: string, dto: Omit<UpdateTicketStatusDto, 'paymentMe
       const paid = dto.paid ?? ticket.paid;
       const method = dto.paymentMetodo ?? ticket.paymentMetodo;
       const after = paid && this.esEfectivoDeAbono(method) ? ticket.price : 0;
+      // Se cobra ahora en efectivo: lo que entregó y el vuelto. Una corrección de medio de un pase
+      // ya pagado no lo exige (no es un cobro nuevo), pero si viene se valida igual.
+      const cobroNuevo = !ticket.paid && after > 0;
+      if (cobroNuevo || dto.efectivoRecibido !== undefined) {
+        const efectivo = efectivoDeclarado(after > before ? after - before : 0, dto.efectivoRecibido);
+        if (efectivo || cobroNuevo) { ticket.efectivoRecibido = efectivo?.efectivoRecibido ?? null; ticket.vuelto = efectivo?.vuelto ?? null; }
+      }
       if (before !== after || paid !== ticket.paid) {
         const date = dayjs(operationNow()).tz('America/Argentina/Buenos_Aires').format('YYYY-MM-DD');
         const box = await this.boxListsService.applyTicketPayment(date, after - before, manager);
@@ -1371,10 +1383,13 @@ async removePriceBracket(id: string) {
         UNION ALL SELECT 1 FROM cobros_transferencia WHERE "registrationId"=$1 AND tipo='HORA' AND estado IN ('ESPERANDO','REVISION')
       ) AS present`, [id]);
       if (pending.present) throw new ConflictException('Ya hay un QR o una transferencia esperando el pago de esta estadía.');
-      await this.movimientosService.create({ ticketRegistrationId: id, monto: dto.importe, metodo: 'CASH', tipo: 'SALDO', usuarioId }, manager);
+      const efectivo = efectivoDeclarado(dto.importe, dto.efectivoRecibido);
+      await this.movimientosService.create({ ticketRegistrationId: id, monto: dto.importe, metodo: 'CASH', tipo: 'SALDO', usuarioId, efectivo }, manager);
       await this.linkToTodaysBoxList(registration, dto.importe, manager, usuarioId);
       await repo.save(registration);
-      return this.getCloseSummary(id, manager);
+      // El cobro en efectivo confirmado, para que el mostrador muestre el vuelto (no se vuelve a
+      // calcular en la pantalla).
+      return { ...(await this.getCloseSummary(id, manager)), cobroEfectivo: { importe: dto.importe, efectivoRecibido: efectivo?.efectivoRecibido ?? null, vuelto: efectivo?.vuelto ?? null } };
     });
     this.ticketGateway.emitNewRegistration(result.registration);
     return result;
@@ -1557,10 +1572,27 @@ async removePriceBracket(id: string) {
   }
 
   // Ambas identificaciones usan una operación atómica; reintentar un cierre no vuelve a cobrar.
+  // La respuesta suma `cobroEfectivo` (ver cobroEfectivoDe) para que el mostrador muestre el vuelto
+  // confirmado por el servidor, también cuando un reintento encuentra la salida ya registrada.
   async closeRegistrationByPlate(id: string, dto: CloseRegistrationDto, usuarioId: string) {
-    const saved = await operationTransaction(this.dataSource, manager => this.cerrarEnTransaccion(manager, id, dto, usuarioId));
+    const { saved, cobroEfectivo } = await operationTransaction(this.dataSource, async manager => {
+      const saved = await this.cerrarEnTransaccion(manager, id, dto, usuarioId);
+      return { saved, cobroEfectivo: await this.cobroEfectivoDe(manager, id) };
+    });
     this.ticketGateway.emitNewRegistration(saved);
-    return saved;
+    return { ...saved, cobroEfectivo };
+  }
+
+  /**
+   * El último cobro en efectivo del saldo de una estadía: el importe que entró a la caja y lo que el
+   * operador declaró recibir y de vuelto (null si no se guardó: cobros anteriores o sin conexión).
+   * Es el del cierre recién hecho o, en un reintento de un cierre ya registrado, el que se hizo.
+   */
+  private async cobroEfectivoDe(manager: EntityManager, id: string) {
+    const [fila] = await manager.query(
+      `SELECT monto, "efectivoRecibido", vuelto FROM movimientos
+        WHERE "ticketRegistrationId" = $1 AND tipo = 'SALDO' AND metodo = 'CASH' ORDER BY sequence DESC LIMIT 1`, [id]);
+    return fila ? { importe: Number(fila.monto), efectivoRecibido: fila.efectivoRecibido == null ? null : Number(fila.efectivoRecibido), vuelto: fila.vuelto == null ? null : Number(fila.vuelto) } : null;
   }
 
   /**
@@ -1688,6 +1720,7 @@ async removePriceBracket(id: string) {
       const saved = await this.cerrarEnTransaccion(manager, id, dto, usuarioId, salidaEn);
       return {
         registration: saved,
+        cobroEfectivo: await this.cobroEfectivoDe(manager, id),
         patente: saved.licensePlateOriginal || saved.codeBarTicket || saved.lastNameCustomer || null,
         entrada: `${saved.entryDay} ${saved.entryTime?.slice(0, 5)}`,
         salida: `${saved.departureDay} ${saved.departureTime?.slice(0, 5)}`,
@@ -1872,6 +1905,23 @@ async removePriceBracket(id: string) {
     return eliminada;
   }
 
+  /** Lo que costaba una estadía a una hora dada, con sus tarifas guardadas (corrección de vehículo equivocado). */
+  precioAl(registration: TicketRegistration, salida: Date, manager: EntityManager) {
+    return this.priceRegistration(registration, manager, salida);
+  }
+
+  /**
+   * Registra la salida de una estadía que ya quedó paga, dentro de la transacción de una corrección
+   * de vehículo equivocado: el mismo cierre de siempre (sin cobro), a la hora en que de verdad salió
+   * y a nombre del turno y el operador que registraron la salida original.
+   */
+  async cerrarPorCorreccion(manager: EntityManager, id: string, esperado: { precio: number; cobrado: number }, usuarioId: string, salidaEn: Date, original: { turnoId: string | null; operador: string | null }) {
+    const saved = await this.cerrarEnTransaccion(manager, id, { closeType: 'NO_CHARGE', expectedPrice: esperado.precio, expectedCollected: esperado.cobrado } as CloseRegistrationDto, usuarioId, salidaEn);
+    saved.exitTurnoId = original.turnoId;
+    saved.exitOperatorName = original.operador;
+    return manager.getRepository(TicketRegistration).save(saved);
+  }
+
   /** Avisa a las pantallas que una estadía cambió (lo que hacen los cierres al terminar). */
   emitirRegistro(registration: TicketRegistration) {
     this.ticketGateway.emitNewRegistration(registration);
@@ -1901,10 +1951,14 @@ async removePriceBracket(id: string) {
         if (!pagos) throw new BadRequestException('Elegí el medio de pago.');
         if (new Set(pagos.map(p => p.metodo)).size !== pagos.length) throw new BadRequestException('Cada medio de pago va una sola vez.');
         if (pagos.reduce((s, p) => s + p.importe, 0) !== saldo) throw new BadRequestException(`Los importes tienen que sumar lo que falta cobrar: ${saldo}.`);
-        for (const p of pagos) await this.movimientosService.create({ ticketRegistrationId: id, monto: p.importe, metodo: p.metodo, tipo: 'SALDO', referencia: dto.referencia, usuarioId }, manager);
         cashDelta = pagos.filter(p => p.metodo === 'CASH').reduce((s, p) => s + p.importe, 0);
+        // Los billetes que entregó por la parte en efectivo y su vuelto: se validan antes de escribir
+        // nada y quedan en el movimiento en efectivo, sin cambiar lo que entra a la caja.
+        const efectivo = efectivoDeclarado(cashDelta, dto.efectivoRecibido);
+        for (const p of pagos) await this.movimientosService.create({ ticketRegistrationId: id, monto: p.importe, metodo: p.metodo, tipo: 'SALDO', referencia: dto.referencia, usuarioId, efectivo: p.metodo === 'CASH' ? efectivo : null }, manager);
       } else if (dto.closeType === 'NO_CHARGE') {
         if (saldo > 0) throw new BadRequestException('Todavía queda saldo por cobrar.');
+        efectivoDeclarado(0, dto.efectivoRecibido);
       } else if (dto.closeType === 'COURTESY') {
         if (!dto.motivo?.trim()) throw new BadRequestException('El motivo es obligatorio para una cortesía.');
         if (saldo > 0) await this.movimientosService.create({ ticketRegistrationId: id, monto: saldo, metodo: dto.metodo ?? 'CASH', tipo: 'CORTESIA', motivo: dto.motivo, usuarioId }, manager);

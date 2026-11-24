@@ -45,6 +45,10 @@ export const OPERATOR_ENDPOINTS: Record<string, readonly string[]> = {
     'findOne',
   ],
   ScannerController: ['startScanner'],
+  // El historial de movimientos y las correcciones de registros: todos los que operan las piden;
+  // el servicio decide si se aplican o quedan para revisión. Resolver las pendientes
+  // (resolverCorreccion) es de administración.
+  OperacionesController: ['historialMovimientos', 'detalleEstadia', 'detallePase', 'transferenciasParaCorreccion', 'previsualizarCorreccion', 'corregir'],
   // detectarTipo: el tipo y el modelo sugeridos para una entrada, a partir de la foto del escaneo.
   PlateRecognitionController: ['scan', 'detectarTipo'],
   CustomersController: [
@@ -167,6 +171,8 @@ export const SUSPENDED_ENDPOINTS: Record<string, readonly string[]> = {
   ],
   TurnosController:['open', 'close', 'getCashContext', 'getMyOpenTurno', 'estadiasAbiertas', 'conciliacion'],
   BoxListsController: ['findOne', 'findBoxByDate'],
+  // El historial y las correcciones de lo que ya pasó: no abren estadías ni cambian la configuración.
+  OperacionesController: ['historialMovimientos', 'detalleEstadia', 'detallePase', 'transferenciasParaCorreccion', 'previsualizarCorreccion', 'corregir', 'resolverCorreccion'],
 };
 
 // Lo que una playa en modalidad gratuita no puede hacer, cualquiera sea el rol (ver
@@ -204,6 +210,8 @@ export const FREE_MODE_BLOCKED: Record<string, readonly string[]> = {
     'issueParkingReceipt',
   ],
   TurnosController: ['open', 'close', 'createCaja', 'updateCaja', 'addCashMovement', 'conciliacion'],
+  // Sin cobros no hay medios ni efectivo que corregir ni transferencias que buscar.
+  OperacionesController: ['transferenciasParaCorreccion'],
   BoxListsController: [
     'configurarComisiones',
     'createBox',

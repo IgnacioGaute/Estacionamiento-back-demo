@@ -61,6 +61,7 @@ before(async () => {
   movements = new MovimientosService(repo(Movimiento), shifts);
   boxes = new BoxListsService(repo(Box), repo(Other), ds);
   tickets = new TicketsService(repo(Ticket), repo(TicketPrice), repo(Bracket), repo(Registration), repo(RegistrationDay), repo(Schedule), boxes, { emitNewRegistration() {} }, movements, ds);
+  require('./mostrador.cjs').comoMostrador({ tickets, shifts });
   scanner = new ScannerService(tickets, { getBarcodeReceipt: async () => null }, ds);
   user = await repo(User).save(repo(User).create({ username: 'test', firstName: 'Test', lastName: 'Operator', email: 'test@example.test', role: 'ADMIN' }));
   await tickets.updateSchedule({ dayStartHour: 8, dayEndHour: 20, graceMinutes: 5, pricingDayTypeBasis: 'ENTRY', barcodeTicketsEnabled: true, shiftsEnabled: true, multipleShiftsEnabled: false });
@@ -420,6 +421,80 @@ test('arqueo: guarda el primer conteo, marca estadías para revisar y avisa la p
   assert.match(nota.description, /Primer conteo: \$\d+; se corrigió a \$\d+ después de ver lo esperado\./);
 });
 
+test('arqueo por billetes: obligatorio, total recalculado por el servidor, primer conteo conservado y caja compartida', async () => {
+  const previa = await tickets.getSchedule();
+  await tickets.updateSchedule({ multipleShiftsEnabled: true, sueldoAutomatico: false });
+  const { billetes } = require('./mostrador.cjs');
+  const codigo = (code) => (e) => e.response?.code === code;
+  try {
+    const a = await openCash(user.id, 15000);
+    const b = await openCash(second.id, 0);
+    assert.equal(b.cashSessionId, a.cashSessionId);
+    await cash(user.id, 3500);
+    await cash(second.id, 1500);
+    // Quien deja la caja compartida no hace el arqueo final: cuenta el relevo, sin billetes.
+    const esperadoRelevo = (await context(user.id)).active.efectivoDisponible;
+    await assert.rejects(shifts.close(a.id, user.id, { cerrarCaja: false, conteoRelevo: esperadoRelevo, desglose: billetes(esperadoRelevo) }), /Hay otros operadores/);
+    const parcial = await shifts.close(a.id, user.id, { cerrarCaja: false, conteoRelevo: esperadoRelevo });
+    assert.deepEqual([parcial.efectivoContado, parcial.conteoDesglose], [null, null]);
+
+    // El último cuenta todo el cajón (fondo incluido, una sola vez) por billetes.
+    const esperado = (await context(second.id)).active.efectivoDisponible;
+    assert.equal(esperado, 15000 + 3500 + 1500);
+    const cierre = { cerrarCaja: true, efectivoEsperado: esperado, efectivoParaSiguiente: 0 };
+    // Escribir solo el total no alcanza.
+    await assert.rejects(shifts.close(b.id, second.id, { ...cierre, efectivoContado: esperado, desglose: null }), codigo('CONTEO_BILLETES_REQUERIDO'));
+    // El total de la pantalla tiene que coincidir con los billetes; el servidor no elige uno.
+    await assert.rejects(shifts.close(b.id, second.id, { ...cierre, efectivoContado: esperado, desglose: billetes(esperado - 1000) }), codigo('CONTEO_NO_COINCIDE'));
+    await assert.rejects(shifts.close(b.id, second.id, { ...cierre, desglose: [{ denominacion: 300, cantidad: 1 }] }), codigo('CONTEO_BILLETES_INVALIDO'));
+    await assert.rejects(shifts.close(b.id, second.id, { ...cierre, desglose: [{ denominacion: 1000, cantidad: -2 }] }), codigo('CONTEO_BILLETES_INVALIDO'));
+    // Contó $1.000 menos, vio lo esperado y volvió a contar: quedan los dos conteos y la corrección.
+    const primero = [{ denominacion: 10000, cantidad: 1 }, { denominacion: 2000, cantidad: 4 }, { denominacion: 1000, cantidad: 1 }];
+    const final = [{ denominacion: 10000, cantidad: 1 }, { denominacion: 2000, cantidad: 4 }, { denominacion: 1000, cantidad: 2 }];
+    const cerrado = await shifts.close(b.id, second.id, { ...cierre, desglose: final, primerConteoDesglose: primero });
+    assert.deepEqual([cerrado.efectivoContado, cerrado.primerConteo, cerrado.diferencia, cerrado.efectivoRetirado], [20000, 19000, 0, 20000]);
+    assert.deepEqual(cerrado.conteoDesglose, [{ denominacion: 10000, cantidad: 1 }, { denominacion: 2000, cantidad: 4 }, { denominacion: 1000, cantidad: 2 }]);
+    assert.deepEqual(cerrado.primerConteoDesglose, primero);
+    const sesion = await ds.getRepository(Session).findOneByOrFail({ id: a.cashSessionId });
+    assert.deepEqual([sesion.efectivoContado, sesion.primerConteo, sesion.conteoDesglose, sesion.primerConteoDesglose], [20000, 19000, cerrado.conteoDesglose, primero]);
+    const [nota] = await ds.query(`SELECT description FROM notes WHERE "sourceKey" = $1`, ['cierre:' + b.id]);
+    assert.match(nota.description, /Primer conteo: \$19000; se corrigió a \$20000 después de ver lo esperado\. Billetes corregidos: \$1\.000: de 1 a 2\./);
+    // Los conteos no mueven dinero: queda lo que se deja para el siguiente turno.
+    assert.equal((await principal()).efectivoDisponible, 0);
+
+    // «No hay efectivo»: un desglose vacío es un conteo de $0.
+    const c = await openCash(user.id, 0);
+    const vacio = await shifts.close(c.id, user.id, { cerrarCaja: true, efectivoEsperado: 0, efectivoParaSiguiente: 0, desglose: [] });
+    assert.deepEqual([vacio.efectivoContado, vacio.conteoDesglose, vacio.diferencia], [0, [], 0]);
+  } finally {
+    await tickets.updateSchedule({ multipleShiftsEnabled: previa.multipleShiftsEnabled, sueldoAutomatico: previa.sueldoAutomatico });
+  }
+});
+
+test('historial de cobros en efectivo: muestra lo declarado recibido y el vuelto, y los anteriores quedan sin dato', async () => {
+  const previa = await tickets.getSchedule();
+  await tickets.updateSchedule({ sueldoAutomatico: false });
+  const t = await openCash(user.id, 15000);
+  try {
+    const conVuelto = await age(await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'VTO' + (++counter) }));
+    await tickets.closeRegistrationByPlate(conVuelto.id, await payload(conVuelto.id, { efectivoRecibido: 10000 }), user.id);
+    const anterior = await age(await tickets.createRegistrationByPlate({ vehicleType: 'AUTO', licensePlate: 'ANT' + (++counter) }));
+    await tickets.closeRegistrationByPlate(anterior.id, await payload(anterior.id), user.id);
+    // Un cobro guardado antes de este dato.
+    await ds.query(`UPDATE movimientos SET "efectivoRecibido" = NULL, vuelto = NULL WHERE "ticketRegistrationId" = $1`, [anterior.id]);
+    const detalle = await shifts.cobrosEfectivo(t.id);
+    const fila = (patente) => detalle.cobros.find(c => c.identificacion === patente);
+    const precio = (await ds.getRepository(Registration).findOneByOrFail({ id: conVuelto.id })).price;
+    assert.deepEqual([fila(conVuelto.licensePlateOriginal).importe, fila(conVuelto.licensePlateOriginal).recibido, fila(conVuelto.licensePlateOriginal).vuelto], [precio, 10000, 10000 - precio]);
+    assert.deepEqual([fila(anterior.licensePlateOriginal).recibido, fila(anterior.licensePlateOriginal).vuelto], [null, null]);
+    // Lo declarado no suma: el total sigue siendo lo que entró a la caja.
+    assert.equal(detalle.total, detalle.cobros.reduce((s, c) => s + c.importe, 0));
+  } finally {
+    await closeCash(user.id, 15000);
+    await tickets.updateSchedule({ sueldoAutomatico: previa.sueldoAutomatico });
+  }
+});
+
 test('auditoría: anticipos, descuentos, devoluciones, pagos mixtos, «Se fue antes», entrada olvidada, abonos y gastos cierran exacto', async () => {
   // Faltantes de caja sin explicar (11/2026): se comprueba que cada peso en efectivo que registra
   // una operación llega a la caja, y que cada estadía queda saldada. Dos fuentes independientes:
@@ -466,10 +541,10 @@ test('auditoría: anticipos, descuentos, devoluciones, pagos mixtos, «Se fue an
   // El precio del día lo carga más adelante otra prueba: acá se crea solo si falta.
   const precioDia = (await ds.getRepository(TicketPrice).findOneBy({ ticketTimeType: 'DIA', vehicleType: 'AUTO' }))
     ? null : await ds.getRepository(TicketPrice).save({ ticketTimeType: 'DIA', vehicleType: 'AUTO', ticketTimePrice: 2000 });
-  const pase = await tickets.createRegistrationForDay({ ticketTimeType: 'DIA', vehicleType: 'AUTO', days: 1, paid: true, paymentMetodo: 'CASH' }, user.id);
+  const pase = await tickets.createRegistrationForDay({ ticketTimeType: 'DIA', vehicleType: 'AUTO', days: 1, paid: true, paymentMetodo: 'CASH', efectivoRecibido: 2000 }, user.id);
   const pendiente = await tickets.createRegistrationForDay({ ticketTimeType: 'DIA', vehicleType: 'AUTO', days: 1, paid: false }, user.id);
-  await tickets.updateTicketStatus(pendiente.id, { paid: true, paymentMetodo: 'CASH' }, user.id);
-  const borrado = await tickets.createRegistrationForDay({ ticketTimeType: 'DIA', vehicleType: 'AUTO', days: 1, paid: true, paymentMetodo: 'CASH' }, user.id);
+  await tickets.updateTicketStatus(pendiente.id, { paid: true, paymentMetodo: 'CASH', efectivoRecibido: 2000 }, user.id);
+  const borrado = await tickets.createRegistrationForDay({ ticketTimeType: 'DIA', vehicleType: 'AUTO', days: 1, paid: true, paymentMetodo: 'CASH', efectivoRecibido: 2000 }, user.id);
   await tickets.removeRegistrationForDay(borrado.id);
   // Varios: un gasto y un ingreso en efectivo.
   await boxes.createOtherPayment({ description: 'Gasto auditoría', price: 700, type: 'EGRESOS', paymentMethod: 'CASH' });

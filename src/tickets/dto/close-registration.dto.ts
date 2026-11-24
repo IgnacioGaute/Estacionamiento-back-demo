@@ -48,6 +48,15 @@ export class CloseRegistrationDto {
   @Type(() => PagoSalidaDto)
   pagos?: PagoSalidaDto[];
 
+  // Con efectivo: lo que entregó el cliente en billetes por la parte en efectivo (con «Justo», el
+  // mismo importe). Obligatorio salvo al sincronizar operaciones sin conexión anteriores; el
+  // servidor calcula el vuelto y rechaza lo que no alcanza (ver efectivo-recibido.ts).
+  @IsOptional()
+  @IsInt({ message: 'Lo que entrega el cliente va en pesos enteros.' })
+  @Min(0)
+  @Max(1_000_000_000)
+  efectivoRecibido?: number;
+
   @IsString()
   @IsOptional()
   referencia?: string;

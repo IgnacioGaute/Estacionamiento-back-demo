@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Matches } from "class-validator";
+import { IsBoolean, IsEnum, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Matches, Max, Min } from "class-validator";
 import { TICKET_TIME_TYPE, TicketTimeType } from "../entities/ticket-price.entity";
 import { TicketType } from "../entities/ticket.entity";
 
@@ -46,6 +46,13 @@ export class CreateTicketRegistrationForDayDto {
     @IsOptional()
     paymentMetodo?: 'CASH' | 'TRANSFER';
 
+    // Cobrada en efectivo al registrarla: lo que entregó el cliente (ver efectivo-recibido.ts).
+    @IsOptional()
+    @IsInt({ message: 'Lo que entrega el cliente va en pesos enteros.' })
+    @Min(0)
+    @Max(1_000_000_000)
+    efectivoRecibido?: number;
+
 }
 
 
@@ -61,4 +68,11 @@ export class UpdateTicketStatusDto {
   @IsOptional()
   @IsIn(['CASH', 'TRANSFER'])
   paymentMetodo?: 'CASH' | 'TRANSFER';
+
+  // Se cobra ahora en efectivo: lo que entregó el cliente (ver efectivo-recibido.ts).
+  @IsOptional()
+  @IsInt({ message: 'Lo que entrega el cliente va en pesos enteros.' })
+  @Min(0)
+  @Max(1_000_000_000)
+  efectivoRecibido?: number;
 }

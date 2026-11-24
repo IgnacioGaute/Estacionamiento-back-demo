@@ -52,6 +52,8 @@ const REUSO_MS = 4_000;
 // La búsqueda trae de a 100; más de esto en el período es una consulta que no se puede completar.
 const MAXIMO_PAGOS = 500;
 const ABIERTOS = ['ESPERANDO', 'REVISION'] as const;
+// Cuánto antes o después del cobro puede haberse hecho la transferencia que lo corrige.
+const VENTANA_CORRECCION_MS = 60 * 60 * 1000;
 
 type Lectura =
   | { ok: true; pagos: any[]; consultadoEl: Date }
@@ -572,6 +574,78 @@ export class VerificacionAliasService {
    * intentan usar la misma operación a la vez se ordenen: la segunda la encuentra USADA. Los
    * índices únicos (cuenta + operación, en las dos tablas) son la red de la base.
    */
+  /**
+   * Las transferencias que pueden respaldar la corrección de un cobro registrado como efectivo
+   * («era una transferencia»): ingresos reales a la cuenta de MercadoPago de la empresa, por el
+   * importe exacto, hechos dentro de la hora alrededor del cobro, que no respaldan ya otro cobro.
+   * La cuenta puede ser compartida (otro negocio, movimientos personales), así que no se elige sola
+   * ninguna, ni aunque haya una: se muestran con el nombre y el documento de quien pagó y el
+   * operador elige la del cliente. Sin la verificación por alias activa no hay de dónde verificar:
+   * la corrección queda para revisión de administración.
+   */
+  async candidatasParaCorreccion(importe: number, cobradoEl: Date) {
+    const empresaId = this.empresaActual();
+    const h = await this.habilitacion(empresaId);
+    if (h.ok === false) return { disponible: false as const, motivo: h.message, opciones: [] };
+    const cuenta = h.cuenta;
+    const lectura = await this.leer(cuenta, new Date(cobradoEl.getTime() - VENTANA_CORRECCION_MS));
+    if (lectura.ok === false) return { disponible: false as const, motivo: lectura.error, opciones: [] };
+    const pagos = lectura.pagos.filter((p) => esTransferenciaRecibida(p, cuenta.mpUserId)
+      && Math.abs(Number(p.transaction_amount) - importe) < 0.005
+      && Math.abs(new Date(p.date_created).getTime() - cobradoEl.getTime()) <= VENTANA_CORRECCION_MS);
+    if (pagos.length)
+      await this.transferencias.createQueryBuilder().insert().into(TransferenciaRecibida).values(pagos.map((p) => ({
+        empresaId: cuenta.empresaId, mpUserId: cuenta.mpUserId, operacionId: String(p.id), importe: Number(p.transaction_amount),
+        moneda: String(p.currency_id), estadoMp: String(p.status), paymentTypeId: p.payment_type_id ?? p.payment_method?.type ?? null,
+        fechaOperacion: new Date(p.date_created), fechaAcreditacion: p.date_approved ? new Date(p.date_approved) : null,
+      }))).orIgnore().execute();
+    // Un cobro por alias de ese importe esperando la plata, en cualquier playa de la cuenta: esa
+    // transferencia puede ser suya. No se ofrece para corregir hasta que ese cobro se resuelva.
+    if (pagos.length && await this.cobroPorAliasAbierto(this.dataSource.manager, cuenta.mpUserId, importe))
+      return { disponible: false as const, motivo: 'Hay un cobro por alias esperando una transferencia de ese importe. Esperá a que se resuelva o dejá la corrección para administración.', opciones: [] };
+    // Ni las usadas ni las que quedaron en revisión para un cobro por alias.
+    const usadas = pagos.length
+      ? new Set((await this.transferencias.findBy({ mpUserId: cuenta.mpUserId, operacionId: In(pagos.map((p) => String(p.id))), estado: In(['USADA', 'REVISION']) })).map((t) => t.operacionId))
+      : new Set<string>();
+    const opciones = [];
+    for (const p of pagos.filter((p) => !usadas.has(String(p.id)))) {
+      const pagador = await this.pagador(cuenta, String(p.id), null);
+      opciones.push({ operacionId: String(p.id), importe: Number(p.transaction_amount), fecha: new Date(p.date_created).toISOString(), ...pagador });
+    }
+    return { disponible: true as const, motivo: null, opciones };
+  }
+
+  /**
+   * Usa una transferencia para respaldar una corrección, dentro de la transacción de la corrección:
+   * la bloquea y la marca USADA para siempre. Vuelve a validar todo con la fila bloqueada: que sea
+   * de esta empresa, que nadie la haya usado, el importe y la hora. El índice único de la operación
+   * impide que una misma acreditación respalde dos cobros.
+   */
+  async usarEnCorreccion(m: EntityManager, operacionId: string, datos: { importe: number; cobradoEl: Date; registrationId: string; usuarioId: string }) {
+    const empresaId = this.empresaActual();
+    const h = await this.habilitacion(empresaId);
+    if (h.ok === false) throw new ForbiddenException({ code: h.code, message: h.message });
+    const repo = m.getRepository(TransferenciaRecibida);
+    const t = await repo.findOne({ where: { mpUserId: h.cuenta.mpUserId, operacionId }, lock: { mode: 'pessimistic_write' } });
+    if (!t || t.empresaId !== empresaId)
+      throw new NotFoundException({ code: 'TRANSFERENCIA_NO_ENCONTRADA', message: 'No encontramos esa transferencia. Buscá de nuevo.' });
+    if (t.estado === 'USADA')
+      throw new ConflictException({ code: 'TRANSFERENCIA_USADA', message: 'Esa transferencia ya respalda otro cobro.' });
+    if (t.estado === 'REVISION' || await this.cobroPorAliasAbierto(m, h.cuenta.mpUserId, t.importe))
+      throw new ConflictException({ code: 'TRANSFERENCIA_RESERVADA', message: 'Esa transferencia puede ser de un cobro por alias que todavía espera la plata. Se resuelve primero ese cobro.' });
+    if (Math.abs(t.importe - datos.importe) >= 0.005 || Math.abs(t.fechaOperacion.getTime() - datos.cobradoEl.getTime()) > VENTANA_CORRECCION_MS)
+      throw new BadRequestException({ code: 'TRANSFERENCIA_NO_CORRESPONDE', message: 'Esa transferencia no corresponde a este cobro: el importe o la hora no coinciden.' });
+    await repo.update({ id: t.id }, { estado: 'USADA', registrationId: datos.registrationId, usadaEnPlayaId: tenantContext.getStore()?.playaId ?? null,
+      modo: 'CORRECCION', usadaEl: new Date(), usadaPor: datos.usuarioId });
+    return { transferenciaId: t.id, operacionId: t.operacionId, paymentTypeId: t.paymentTypeId };
+  }
+
+  // ¿Hay un cobro por alias abierto de ese importe en la cuenta? Los intentos se leen a nivel
+  // empresa (todas las playas que cobran con la misma cuenta).
+  private async cobroPorAliasAbierto(m: import('typeorm').EntityManager, mpUserId: string, importe: number) {
+    return m.getRepository(CobroTransferencia).exists({ where: { mpUserId, importe: Math.round(importe), estado: In([...ABIERTOS]) } });
+  }
+
   private async confirmar(
     intentoId: string,
     operacionId: string,

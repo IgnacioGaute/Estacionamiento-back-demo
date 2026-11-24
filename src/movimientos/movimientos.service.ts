@@ -9,6 +9,7 @@ import { CreateMovimientoDto } from './dto/create-movimiento.dto';
 import { TurnosService } from 'src/turnos/turnos.service';
 import { exigirCobro } from 'src/tenancy/modalidad';
 import { exigirTransferenciaPermitida } from 'src/mercadopago/transferencia-manual';
+import { EfectivoDeclarado } from './efectivo-recibido';
 
 @Injectable()
 export class MovimientosService {
@@ -30,7 +31,12 @@ export class MovimientosService {
   // turnosService.getOpenTurno (que tira NO_OPEN_TURNO) en vez de findOpenTurnoOrNull.
   // `nota` reemplaza la nota automática de un movimiento por una de quien la pida: el descuento de
   // una estadía es uno solo aunque se corrija varias veces, así que su nota también.
-  async create(dto: CreateMovimientoDto & { usuarioId: string; nota?: { sourceKey: string; context: string } }, manager?: EntityManager, turnoIdOverride?: string | null, occurredAt?: Date): Promise<Movimiento> {
+  // `efectivo`: lo declarado recibido y el vuelto, solo para el movimiento en efectivo de un cobro
+  // (ver efectivo-recibido.ts). No cambia el monto ni lo que entra a la caja.
+  // `correccionId`: el ajuste es parte de una corrección de registro (src/operaciones). `verificada`:
+  // una transferencia que respalda una acreditación de Mercado Pago vinculada (o la revisión de
+  // administración), no la palabra del operador: no la frena la regla de transferencias manuales.
+  async create(dto: CreateMovimientoDto & { usuarioId: string; nota?: { sourceKey: string; context: string }; efectivo?: EfectivoDeclarado | null; correccionId?: string | null; verificada?: boolean }, manager?: EntityManager, turnoIdOverride?: string | null, occurredAt?: Date): Promise<Movimiento> {
     if (operationContext.getStore()) occurredAt ??= operationNow();
     if ((dto.tipo === 'AJUSTE' || dto.tipo === 'CORTESIA' || dto.tipo === 'DESCUENTO') && !dto.motivo?.trim()) {
       throw new BadRequestException('El motivo es obligatorio para un ajuste o un descuento.');
@@ -42,7 +48,7 @@ export class MovimientosService {
     // Una playa gratuita no registra cobros, anticipos, cortesías, descuentos ni ajustes.
     if (manager) await exigirCobro(manager);
     // Con el alias activo, el operador no registra transferencias sin verificar.
-    await exigirTransferenciaPermitida(manager ?? this.movimientoRepository.manager, dto.metodo, dto.monto, !!externalPayment.getStore());
+    await exigirTransferenciaPermitida(manager ?? this.movimientoRepository.manager, dto.metodo, dto.monto, !!externalPayment.getStore() || !!dto.verificada);
     const turno = turnoIdOverride === undefined ? (manager && externalPayment.getStore() ? await paymentShift(manager, dto.usuarioId) : await this.turnosService.findOpenTurnoOrNull(dto.usuarioId, manager)) : null;
     const repository = manager ? manager.getRepository(Movimiento) : this.movimientoRepository;
 
@@ -58,6 +64,9 @@ export class MovimientosService {
         : (turnoIdOverride ? ({ id: turnoIdOverride } as any) : null),
       referencia: dto.referencia ?? null,
       motivo: dto.motivo ?? null,
+      efectivoRecibido: dto.metodo === 'CASH' ? dto.efectivo?.efectivoRecibido ?? null : null,
+      vuelto: dto.metodo === 'CASH' ? dto.efectivo?.vuelto ?? null : null,
+      correccionId: dto.correccionId ?? null,
     });
 
     const saved = await repository.save(movimiento);

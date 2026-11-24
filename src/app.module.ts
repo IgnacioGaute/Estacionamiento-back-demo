@@ -26,6 +26,7 @@ import { SaasModule } from './saas/saas.module';
 import { AssistantModule } from './assistant/assistant.module';
 import { CuentasModule } from './cuentas/cuentas.module';
 import { MercadoPagoModule } from './mercadopago/mercadopago.module';
+import { OperacionesModule } from './operaciones/operaciones.module';
 
 @Module({
   imports: [ConfigModule.forRoot({
@@ -62,7 +63,8 @@ import { MercadoPagoModule } from './mercadopago/mercadopago.module';
   SaasModule,
   AssistantModule,
   CuentasModule,
-  MercadoPagoModule
+  MercadoPagoModule,
+  OperacionesModule
 ],
   controllers: [SaludController],
   providers: [
