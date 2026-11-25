@@ -4,6 +4,7 @@ import { AuthenticatedRequest } from 'src/types/request';
 import { listPagination } from 'src/utils/list-pagination';
 import { CorreccionesService } from './correcciones.service';
 import { HistorialService } from './historial.service';
+import { PanelService } from './panel.service';
 import { CorreccionDto, ResolverCorreccionDto } from './dto/correccion.dto';
 
 function actor(req: AuthenticatedRequest) {
@@ -18,7 +19,14 @@ function actor(req: AuthenticatedRequest) {
 @Controller('operaciones')
 @UseGuards(AuthOrTokenAuthGuard)
 export class OperacionesController {
-  constructor(private readonly correcciones: CorreccionesService, private readonly historial: HistorialService) {}
+  constructor(private readonly correcciones: CorreccionesService, private readonly historial: HistorialService, private readonly paneles: PanelService) {}
+
+  // El panel de la administración: lo cobrado comparado, las estadías, los autos adentro hoy y los
+  // avisos (docs/panel.md). Solo administración: no está en OPERATOR_ENDPOINTS.
+  @Get('panel')
+  panel(@Query('desde') desde?: string, @Query('hasta') hasta?: string, @Query('comparar') comparar?: string) {
+    return this.paneles.resumen({ desde, hasta, comparar });
+  }
 
   @Get()
   historialMovimientos(@Req() req: AuthenticatedRequest, @Query() q: Record<string, string | undefined>) {

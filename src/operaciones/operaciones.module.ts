@@ -12,6 +12,7 @@ import { VerificacionAliasService } from 'src/mercadopago/verificacion-alias.ser
 import { Correccion } from './entities/correccion.entity';
 import { CorreccionesService } from './correcciones.service';
 import { HistorialService } from './historial.service';
+import { PanelService } from './panel.service';
 import { OperacionesController } from './operaciones.controller';
 
 // Depende de Tickets, Movimientos, Caja y MercadoPago; ninguno depende de este módulo.
@@ -20,6 +21,7 @@ import { OperacionesController } from './operaciones.controller';
   controllers: [OperacionesController],
   providers: [
     HistorialService,
+    PanelService,
     {
       provide: CorreccionesService,
       inject: [DataSource, MovimientosService, BoxListsService, TicketsService, VerificacionAliasService],

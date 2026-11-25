@@ -10,15 +10,94 @@ import { esAdministracion, Actor } from './correcciones.service';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
-const TZ = 'America/Argentina/Buenos_Aires';
+export const TZ = 'America/Argentina/Buenos_Aires';
 
 export type FiltrosHistorial = {
   desde?: string; hasta?: string; turnoId?: string; operadorId?: string; q?: string;
   medio?: string; tipo?: string; correccion?: string;
 };
 
-const fechaValida = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && dayjs(s).isValid() && dayjs(s).format('YYYY-MM-DD') === s;
+export const fechaValida = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && dayjs(s).isValid() && dayjs(s).format('YYYY-MM-DD') === s;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Los eventos de la playa en un rango (cada rama de la unión de abajo); `rango(expr)` filtra cada
+// rama por su fecha con $1 (inicio) y $2 (fin). Lo usan el historial y el panel, así lo cobrado
+// suma igual en las dos pantallas: los medios vigentes, con las correcciones aplicadas.
+export function ramasHistorial(rango: (expr: string) => string): string[] {
+  const ident = `COALESCE(NULLIF(r."licensePlateOriginal", ''), CASE WHEN r."codeBarTicket" IS NOT NULL THEN 'Ticket ' || r."codeBarTicket" END, NULLIF(r."lastNameCustomer", ''), 'Sin patente')`;
+  const busca = `CONCAT_WS(' ', r."licensePlateOriginal", r."codeBarTicket", r."lastNameCustomer")`;
+  const entrada = `((r."entryDay"::date + COALESCE(r."entryTime"::time, '00:00'::time)) AT TIME ZONE '${TZ}')`;
+  const salida = `((r."departureDay"::date + r."departureTime"::time) AT TIME ZONE '${TZ}')`;
+  const nombreUsuario = `NULLIF(trim(concat(u."firstName", ' ', u."lastName")), '')`;
+  // El estado de corrección de una operación: pendiente manda sobre aplicada.
+  const estadoDe = (cond: string) => `(SELECT CASE WHEN bool_or(c.estado = 'PENDIENTE') THEN 'PENDIENTE' WHEN bool_or(c.estado = 'APLICADA') THEN 'CORREGIDA'
+    WHEN bool_or(c.estado = 'RECHAZADA') THEN 'RECHAZADA' END FROM correcciones c WHERE ${cond})`;
+  const recibidoVigente = (mov: string, campo: 'efectivoRecibido' | 'vuelto') => `COALESCE(
+    (SELECT (c.despues->>'${campo}')::int FROM correcciones c WHERE c."movimientoId" = ${mov}.id AND c.tipo = 'RECIBIDO_VUELTO' AND c.estado = 'APLICADA' ORDER BY c."aplicadaEl" DESC LIMIT 1),
+    ${mov}."${campo}")`;
+
+  return [
+    // Entradas: evento operativo, sin plata.
+    `SELECT 'E:' || r.id AS id, 'ENTRADA' AS tipo, ${entrada} AS fecha, r.id AS "registrationId", NULL::uuid AS "paseId", ${ident} AS identificacion,
+       ${busca} AS busca, r."entryOperatorName" AS operador, NULL::uuid AS "usuarioId", NULL::uuid AS "turnoId", NULL::int AS importe, NULL::jsonb AS medios,
+       NULL::int AS recibido, NULL::int AS vuelto, ${estadoDe(`c."registrationId" = r.id OR c."destinoRegistrationId" = r.id`)} AS correccion, NULL::text AS detalle,
+       NULL::int AS duracion, NULLIF(r."licensePlateOriginal", '') AS patente, r."vehicleType"::text AS vehiculo
+     FROM ticket_registrations r WHERE ${rango(entrada)}`,
+    // Salidas, con lo cobrado al salir (vigente).
+    `SELECT 'S:' || r.id, 'SALIDA', ${salida}, r.id, NULL::uuid, ${ident}, ${busca}, r."exitOperatorName", NULL::uuid, r."exitTurnoId", pago.importe, pago.medios,
+       rv.recibido, rv.vuelto, ${estadoDe(`c."registrationId" = r.id OR c."destinoRegistrationId" = r.id`)}, NULL::text,
+       (EXTRACT(EPOCH FROM (${salida} - ${entrada})) / 60)::int, NULLIF(r."licensePlateOriginal", ''), r."vehicleType"::text
+     FROM ticket_registrations r
+     LEFT JOIN LATERAL (SELECT SUM(total)::int AS importe, jsonb_object_agg(metodo, total) FILTER (WHERE total <> 0) AS medios FROM (
+         SELECT m.metodo::text AS metodo, SUM(m.monto)::int AS total FROM movimientos m
+           LEFT JOIN correcciones cc ON cc.id = m."correccionId" LEFT JOIN movimientos o ON o.id = cc."movimientoId"
+          WHERE m."ticketRegistrationId" = r.id AND (m.tipo = 'SALDO' OR (m.tipo = 'AJUSTE' AND (cc.tipo = 'VEHICULO' OR o.tipo = 'SALDO')))
+          GROUP BY m.metodo) x) pago ON true
+     LEFT JOIN LATERAL (SELECT ${recibidoVigente('m', 'efectivoRecibido')} AS recibido, ${recibidoVigente('m', 'vuelto')} AS vuelto FROM movimientos m
+         WHERE m."ticketRegistrationId" = r.id AND m.tipo = 'SALDO' AND m.metodo = 'CASH' AND m.monto > 0 ORDER BY m.sequence DESC LIMIT 1) rv ON true
+     WHERE r."departureTime" IS NOT NULL AND ${rango(salida)}`,
+    // Anticipos, cobros parciales (estadía todavía adentro) y devoluciones: cada movimiento de plata
+    // que no forma parte de una salida. Los medios, con sus correcciones de medio aplicadas.
+    `SELECT 'M:' || m.id, CASE WHEN m.tipo = 'ANTICIPO' THEN 'ANTICIPO' WHEN m.tipo = 'SALDO' THEN 'COBRO_PARCIAL' ELSE 'DEVOLUCION' END, m."fechaHora",
+       r.id, NULL::uuid, ${ident}, ${busca}, COALESCE(${nombreUsuario}, u.username), m."usuarioId", m."turnoId",
+       (m.monto + COALESCE(aj.neto, 0))::int, aj.medios,
+       CASE WHEN m.metodo = 'CASH' AND m.monto > 0 THEN ${recibidoVigente('m', 'efectivoRecibido')} END, CASE WHEN m.metodo = 'CASH' AND m.monto > 0 THEN ${recibidoVigente('m', 'vuelto')} END,
+       ${estadoDe(`c."movimientoId" = m.id`)}, m.motivo, NULL::int, NULLIF(r."licensePlateOriginal", ''), r."vehicleType"::text
+     FROM movimientos m JOIN ticket_registrations r ON r.id = m."ticketRegistrationId" LEFT JOIN users u ON u.id = m."usuarioId"
+     LEFT JOIN LATERAL (SELECT SUM(x.total) - m.monto AS neto, jsonb_object_agg(x.metodo, x.total) FILTER (WHERE x.total <> 0) AS medios FROM (
+         SELECT metodo, SUM(monto)::int AS total FROM (
+           SELECT m.metodo::text AS metodo, m.monto
+           UNION ALL SELECT a.metodo::text, a.monto FROM movimientos a JOIN correcciones c ON c.id = a."correccionId" WHERE c."movimientoId" = m.id AND c.tipo = 'MEDIO_PAGO') y
+         GROUP BY metodo) x) aj ON true
+     WHERE m."correccionId" IS NULL AND m.tipo IN ('ANTICIPO', 'SALDO', 'AJUSTE')
+       AND NOT (m.tipo = 'SALDO' AND r."departureTime" IS NOT NULL)
+       -- El cobro de una salida registrada sobre el vehículo equivocado pasó al que salió: no es un cobro parcial de este.
+       AND NOT (m.tipo = 'SALDO' AND EXISTS (SELECT 1 FROM correcciones v WHERE v.tipo = 'VEHICULO' AND v.estado = 'APLICADA' AND v."registrationId" = r.id AND COALESCE(v."aplicadaEl", v."createdAt") > m."fechaHora"))
+       AND ${rango('m."fechaHora"')}`,
+    // Estadías por día, semana o mes: el alta (con su cobro si se cobró al registrarla) y el retiro.
+    `SELECT 'P:' || d.id, 'PASE', d."createdAt" AT TIME ZONE current_setting('TimeZone'), NULL::uuid, d.id,
+       COALESCE(NULLIF(d."vehiclePlateCustomer", ''), d."lastNameCustomer", 'Sin patente'), CONCAT_WS(' ', d."vehiclePlateCustomer", d."lastNameCustomer"),
+       COALESCE(d."paymentOperatorName", d."entryOperatorName"), NULL::uuid, NULL::uuid,
+       CASE WHEN d.paid THEN d.price END, CASE WHEN d.paid THEN jsonb_build_object(COALESCE(d."paymentMetodo", 'CASH'), d.price) END,
+       CASE WHEN d.paid THEN COALESCE((SELECT (c.despues->>'efectivoRecibido')::int FROM correcciones c WHERE c."paseId" = d.id AND c.tipo = 'RECIBIDO_VUELTO' AND c.estado = 'APLICADA' ORDER BY c."aplicadaEl" DESC LIMIT 1), d."efectivoRecibido") END,
+       CASE WHEN d.paid THEN COALESCE((SELECT (c.despues->>'vuelto')::int FROM correcciones c WHERE c."paseId" = d.id AND c.tipo = 'RECIBIDO_VUELTO' AND c.estado = 'APLICADA' ORDER BY c."aplicadaEl" DESC LIMIT 1), d.vuelto) END,
+       ${estadoDe(`c."paseId" = d.id`)}, 'Alta', NULL::int, NULLIF(d."vehiclePlateCustomer", ''), d."vehicleType"::text
+     FROM ticket_registration_for_days d WHERE ${rango(`d."createdAt" AT TIME ZONE current_setting('TimeZone')`)}`,
+    `SELECT 'R:' || d.id, 'PASE', d."retiredAt", NULL::uuid, d.id, COALESCE(NULLIF(d."vehiclePlateCustomer", ''), d."lastNameCustomer", 'Sin patente'),
+       CONCAT_WS(' ', d."vehiclePlateCustomer", d."lastNameCustomer"), d."exitOperatorName", NULL::uuid, d."exitTurnoId", NULL::int, NULL::jsonb, NULL::int, NULL::int,
+       ${estadoDe(`c."paseId" = d.id`)}, 'Retiro', NULL::int, NULLIF(d."vehiclePlateCustomer", ''), d."vehicleType"::text
+     FROM ticket_registration_for_days d WHERE d.retired = true AND d."retiredAt" IS NOT NULL AND ${rango('d."retiredAt"')}`,
+    // Las correcciones, con su propio estado.
+    `SELECT 'C:' || c.id, 'CORRECCION', c."createdAt", c."registrationId", c."paseId",
+       CASE WHEN r.id IS NOT NULL THEN ${ident} ELSE COALESCE(NULLIF(d."vehiclePlateCustomer", ''), d."lastNameCustomer", 'Sin patente') END,
+       CONCAT_WS(' ', r."licensePlateOriginal", r."codeBarTicket", r."lastNameCustomer", d."vehiclePlateCustomer", d."lastNameCustomer"),
+       c."usuarioNombre", c."usuarioId", c."turnoId", NULL::int, NULL::jsonb, NULL::int, NULL::int,
+       CASE c.estado WHEN 'APLICADA' THEN 'CORREGIDA' ELSE c.estado END, c.tipo,
+       NULL::int, COALESCE(NULLIF(r."licensePlateOriginal", ''), NULLIF(d."vehiclePlateCustomer", '')), COALESCE(r."vehicleType"::text, d."vehicleType"::text)
+     FROM correcciones c LEFT JOIN ticket_registrations r ON r.id = c."registrationId" LEFT JOIN ticket_registration_for_days d ON d.id = c."paseId"
+     WHERE ${rango('c."createdAt"')}`,
+  ];
+}
 
 /**
  * El historial de movimientos de la playa: lo que pasó, persistido en el servidor, con filtros y
@@ -54,79 +133,7 @@ export class HistorialService {
     const fin = dayjs.tz(`${hasta} 00:00:00`, TZ).add(1, 'day').toDate();
     const rango = (expr: string) => `(${expr}) >= $1 AND (${expr}) < $2`;
 
-    const ident = `COALESCE(NULLIF(r."licensePlateOriginal", ''), CASE WHEN r."codeBarTicket" IS NOT NULL THEN 'Ticket ' || r."codeBarTicket" END, NULLIF(r."lastNameCustomer", ''), 'Sin patente')`;
-    const busca = `CONCAT_WS(' ', r."licensePlateOriginal", r."codeBarTicket", r."lastNameCustomer")`;
-    const entrada = `((r."entryDay"::date + COALESCE(r."entryTime"::time, '00:00'::time)) AT TIME ZONE '${TZ}')`;
-    const salida = `((r."departureDay"::date + r."departureTime"::time) AT TIME ZONE '${TZ}')`;
-    const nombreUsuario = `NULLIF(trim(concat(u."firstName", ' ', u."lastName")), '')`;
-    // El estado de corrección de una operación: pendiente manda sobre aplicada.
-    const estadoDe = (cond: string) => `(SELECT CASE WHEN bool_or(c.estado = 'PENDIENTE') THEN 'PENDIENTE' WHEN bool_or(c.estado = 'APLICADA') THEN 'CORREGIDA'
-      WHEN bool_or(c.estado = 'RECHAZADA') THEN 'RECHAZADA' END FROM correcciones c WHERE ${cond})`;
-    const recibidoVigente = (mov: string, campo: 'efectivoRecibido' | 'vuelto') => `COALESCE(
-      (SELECT (c.despues->>'${campo}')::int FROM correcciones c WHERE c."movimientoId" = ${mov}.id AND c.tipo = 'RECIBIDO_VUELTO' AND c.estado = 'APLICADA' ORDER BY c."aplicadaEl" DESC LIMIT 1),
-      ${mov}."${campo}")`;
-
-    const ramas = [
-      // Entradas: evento operativo, sin plata.
-      `SELECT 'E:' || r.id AS id, 'ENTRADA' AS tipo, ${entrada} AS fecha, r.id AS "registrationId", NULL::uuid AS "paseId", ${ident} AS identificacion,
-         ${busca} AS busca, r."entryOperatorName" AS operador, NULL::uuid AS "usuarioId", NULL::uuid AS "turnoId", NULL::int AS importe, NULL::jsonb AS medios,
-         NULL::int AS recibido, NULL::int AS vuelto, ${estadoDe(`c."registrationId" = r.id OR c."destinoRegistrationId" = r.id`)} AS correccion, NULL::text AS detalle,
-         NULL::int AS duracion, NULLIF(r."licensePlateOriginal", '') AS patente, r."vehicleType"::text AS vehiculo
-       FROM ticket_registrations r WHERE ${rango(entrada)}`,
-      // Salidas, con lo cobrado al salir (vigente).
-      `SELECT 'S:' || r.id, 'SALIDA', ${salida}, r.id, NULL::uuid, ${ident}, ${busca}, r."exitOperatorName", NULL::uuid, r."exitTurnoId", pago.importe, pago.medios,
-         rv.recibido, rv.vuelto, ${estadoDe(`c."registrationId" = r.id OR c."destinoRegistrationId" = r.id`)}, NULL::text,
-         (EXTRACT(EPOCH FROM (${salida} - ${entrada})) / 60)::int, NULLIF(r."licensePlateOriginal", ''), r."vehicleType"::text
-       FROM ticket_registrations r
-       LEFT JOIN LATERAL (SELECT SUM(total)::int AS importe, jsonb_object_agg(metodo, total) FILTER (WHERE total <> 0) AS medios FROM (
-           SELECT m.metodo::text AS metodo, SUM(m.monto)::int AS total FROM movimientos m
-             LEFT JOIN correcciones cc ON cc.id = m."correccionId" LEFT JOIN movimientos o ON o.id = cc."movimientoId"
-            WHERE m."ticketRegistrationId" = r.id AND (m.tipo = 'SALDO' OR (m.tipo = 'AJUSTE' AND (cc.tipo = 'VEHICULO' OR o.tipo = 'SALDO')))
-            GROUP BY m.metodo) x) pago ON true
-       LEFT JOIN LATERAL (SELECT ${recibidoVigente('m', 'efectivoRecibido')} AS recibido, ${recibidoVigente('m', 'vuelto')} AS vuelto FROM movimientos m
-           WHERE m."ticketRegistrationId" = r.id AND m.tipo = 'SALDO' AND m.metodo = 'CASH' AND m.monto > 0 ORDER BY m.sequence DESC LIMIT 1) rv ON true
-       WHERE r."departureTime" IS NOT NULL AND ${rango(salida)}`,
-      // Anticipos, cobros parciales (estadía todavía adentro) y devoluciones: cada movimiento de plata
-      // que no forma parte de una salida. Los medios, con sus correcciones de medio aplicadas.
-      `SELECT 'M:' || m.id, CASE WHEN m.tipo = 'ANTICIPO' THEN 'ANTICIPO' WHEN m.tipo = 'SALDO' THEN 'COBRO_PARCIAL' ELSE 'DEVOLUCION' END, m."fechaHora",
-         r.id, NULL::uuid, ${ident}, ${busca}, COALESCE(${nombreUsuario}, u.username), m."usuarioId", m."turnoId",
-         (m.monto + COALESCE(aj.neto, 0))::int, aj.medios,
-         CASE WHEN m.metodo = 'CASH' AND m.monto > 0 THEN ${recibidoVigente('m', 'efectivoRecibido')} END, CASE WHEN m.metodo = 'CASH' AND m.monto > 0 THEN ${recibidoVigente('m', 'vuelto')} END,
-         ${estadoDe(`c."movimientoId" = m.id`)}, m.motivo, NULL::int, NULLIF(r."licensePlateOriginal", ''), r."vehicleType"::text
-       FROM movimientos m JOIN ticket_registrations r ON r.id = m."ticketRegistrationId" LEFT JOIN users u ON u.id = m."usuarioId"
-       LEFT JOIN LATERAL (SELECT SUM(x.total) - m.monto AS neto, jsonb_object_agg(x.metodo, x.total) FILTER (WHERE x.total <> 0) AS medios FROM (
-           SELECT metodo, SUM(monto)::int AS total FROM (
-             SELECT m.metodo::text AS metodo, m.monto
-             UNION ALL SELECT a.metodo::text, a.monto FROM movimientos a JOIN correcciones c ON c.id = a."correccionId" WHERE c."movimientoId" = m.id AND c.tipo = 'MEDIO_PAGO') y
-           GROUP BY metodo) x) aj ON true
-       WHERE m."correccionId" IS NULL AND m.tipo IN ('ANTICIPO', 'SALDO', 'AJUSTE')
-         AND NOT (m.tipo = 'SALDO' AND r."departureTime" IS NOT NULL)
-         -- El cobro de una salida registrada sobre el vehículo equivocado pasó al que salió: no es un cobro parcial de este.
-         AND NOT (m.tipo = 'SALDO' AND EXISTS (SELECT 1 FROM correcciones v WHERE v.tipo = 'VEHICULO' AND v.estado = 'APLICADA' AND v."registrationId" = r.id AND COALESCE(v."aplicadaEl", v."createdAt") > m."fechaHora"))
-         AND ${rango('m."fechaHora"')}`,
-      // Estadías por día, semana o mes: el alta (con su cobro si se cobró al registrarla) y el retiro.
-      `SELECT 'P:' || d.id, 'PASE', d."createdAt" AT TIME ZONE current_setting('TimeZone'), NULL::uuid, d.id,
-         COALESCE(NULLIF(d."vehiclePlateCustomer", ''), d."lastNameCustomer", 'Sin patente'), CONCAT_WS(' ', d."vehiclePlateCustomer", d."lastNameCustomer"),
-         COALESCE(d."paymentOperatorName", d."entryOperatorName"), NULL::uuid, NULL::uuid,
-         CASE WHEN d.paid THEN d.price END, CASE WHEN d.paid THEN jsonb_build_object(COALESCE(d."paymentMetodo", 'CASH'), d.price) END,
-         CASE WHEN d.paid THEN COALESCE((SELECT (c.despues->>'efectivoRecibido')::int FROM correcciones c WHERE c."paseId" = d.id AND c.tipo = 'RECIBIDO_VUELTO' AND c.estado = 'APLICADA' ORDER BY c."aplicadaEl" DESC LIMIT 1), d."efectivoRecibido") END,
-         CASE WHEN d.paid THEN COALESCE((SELECT (c.despues->>'vuelto')::int FROM correcciones c WHERE c."paseId" = d.id AND c.tipo = 'RECIBIDO_VUELTO' AND c.estado = 'APLICADA' ORDER BY c."aplicadaEl" DESC LIMIT 1), d.vuelto) END,
-         ${estadoDe(`c."paseId" = d.id`)}, 'Alta', NULL::int, NULLIF(d."vehiclePlateCustomer", ''), d."vehicleType"::text
-       FROM ticket_registration_for_days d WHERE ${rango(`d."createdAt" AT TIME ZONE current_setting('TimeZone')`)}`,
-      `SELECT 'R:' || d.id, 'PASE', d."retiredAt", NULL::uuid, d.id, COALESCE(NULLIF(d."vehiclePlateCustomer", ''), d."lastNameCustomer", 'Sin patente'),
-         CONCAT_WS(' ', d."vehiclePlateCustomer", d."lastNameCustomer"), d."exitOperatorName", NULL::uuid, d."exitTurnoId", NULL::int, NULL::jsonb, NULL::int, NULL::int,
-         ${estadoDe(`c."paseId" = d.id`)}, 'Retiro', NULL::int, NULLIF(d."vehiclePlateCustomer", ''), d."vehicleType"::text
-       FROM ticket_registration_for_days d WHERE d.retired = true AND d."retiredAt" IS NOT NULL AND ${rango('d."retiredAt"')}`,
-      // Las correcciones, con su propio estado.
-      `SELECT 'C:' || c.id, 'CORRECCION', c."createdAt", c."registrationId", c."paseId",
-         CASE WHEN r.id IS NOT NULL THEN ${ident} ELSE COALESCE(NULLIF(d."vehiclePlateCustomer", ''), d."lastNameCustomer", 'Sin patente') END,
-         CONCAT_WS(' ', r."licensePlateOriginal", r."codeBarTicket", r."lastNameCustomer", d."vehiclePlateCustomer", d."lastNameCustomer"),
-         c."usuarioNombre", c."usuarioId", c."turnoId", NULL::int, NULL::jsonb, NULL::int, NULL::int,
-         CASE c.estado WHEN 'APLICADA' THEN 'CORREGIDA' ELSE c.estado END, c.tipo,
-         NULL::int, COALESCE(NULLIF(r."licensePlateOriginal", ''), NULLIF(d."vehiclePlateCustomer", '')), COALESCE(r."vehicleType"::text, d."vehicleType"::text)
-       FROM correcciones c LEFT JOIN ticket_registrations r ON r.id = c."registrationId" LEFT JOIN ticket_registration_for_days d ON d.id = c."paseId"
-       WHERE ${rango('c."createdAt"')}`,
-    ];
+    const ramas = ramasHistorial(rango);
 
     type Param = (valor: unknown) => string;
     const condiciones: { clave: 'usuario' | 'turno' | 'q' | 'medio' | 'tipo' | 'correccion'; sql: (p: Param) => string }[] = [];

@@ -36,6 +36,7 @@ const MovimientosService = load('movimientos/movimientos.service', 'MovimientosS
 const BoxListsService = load('box-lists/box-lists.service', 'BoxListsService');
 const CorreccionesService = load('operaciones/correcciones.service', 'CorreccionesService');
 const HistorialService = load('operaciones/historial.service', 'HistorialService');
+const PanelService = load('operaciones/panel.service', 'PanelService');
 const VerificacionAliasService = load('mercadopago/verificacion-alias.service', 'VerificacionAliasService');
 const { shiftSummary } = require('../dist/turnos/turno-book');
 const { tenantContext } = require('../dist/tenancy/tenant-context');
@@ -387,6 +388,60 @@ test('historial: filtros y paginación en el servidor, y el operador ve solo lo 
   const delTurno = await como(beto, () => historial.listar({ turnoId: turno.id }, { page: 1, limit: 100 }, actor(beto)));
   assert.ok(delTurno.data.some(f => f.registrationId === deBeto.id && f.tipo === 'SALIDA'));
   await assert.rejects(como(admin, () => historial.listar({ desde: '2026-13-01' }, { page: 1, limit: 10 }, actor(admin))), /fechas/);
+});
+
+test('panel: lo cobrado suma igual que el historial, con el período comparado, los autos adentro y el calendario', async () => {
+  const panel = new PanelService(ds);
+  const { occupancyAt } = require('../dist/turnos/turno-book');
+  const dia = hoy();
+  const r = await como(admin, () => panel.resumen({ desde: dia, hasta: dia }));
+  const h = await como(admin, () => historial.listar({}, { page: 1, limit: 1 }, actor(admin)));
+  // Lo cobrado y sus medios: los mismos que el resumen del historial del día.
+  assert.equal(r.cobrado.total, h.resumen.cobrado.total);
+  for (const [m, n] of Object.entries(h.resumen.cobrado.porMedio)) assert.equal(r.cobrado.porMedio[m], n, m);
+  assert.deepEqual(r.cobrado.porDia.map(d => d.fecha), [dia]);
+  assert.equal(r.cobrado.porDia[0].total, r.cobrado.total);
+  // Un solo día también viene hora por hora, y suma lo mismo.
+  assert.equal(r.cobrado.porHora.length, 24);
+  assert.equal(r.cobrado.porHora.reduce((a, n) => a + n, 0), r.cobrado.total);
+  assert.equal(r.cobrado.anterior.porHora.length, 24);
+  // Comparado con el día anterior (sin datos en esta base).
+  assert.deepEqual(r.comparacion, { modo: 'anterior', desde: dayjs(dia).subtract(1, 'day').format('YYYY-MM-DD'), hasta: dayjs(dia).subtract(1, 'day').format('YYYY-MM-DD') });
+  assert.equal(r.cobrado.anterior.total, 0);
+  // Las estadías: entradas y salidas como el historial; ticket y duración de las que salieron.
+  assert.equal(r.estadias.salidas, (h.resumen.porTipo.SALIDA ?? 0) + 0);
+  assert.equal(r.estadias.entradas, h.resumen.porTipo.ENTRADA ?? 0);
+  assert.ok(r.estadias.ticketPromedio > 0);
+  assert.ok(r.estadias.duracionPromedio >= 25, String(r.estadias.duracionPromedio));
+  // Hoy: los autos adentro, con el mismo criterio que la caja.
+  const ahora = await como(admin, () => occupancyAt(ds.manager, new Date()));
+  assert.equal(r.hoy.adentroAhora, ahora);
+  assert.equal(r.hoy.adentroPorHora.length, r.hoy.horaActual + 1);
+  // El calendario: 20 semanas de lunes a hoy; hoy suma lo cobrado.
+  assert.equal(dayjs(r.calendario[0].fecha).day(), 1);
+  assert.equal(r.calendario.at(-1).fecha, dia);
+  assert.ok(r.calendario.length > 19 * 7 && r.calendario.length <= 20 * 7);
+  assert.equal(r.calendario.at(-1).total, r.cobrado.total);
+  // Avisos: las correcciones esperando revisión.
+  const [{ n }] = await ds.query(`SELECT COUNT(*)::int AS n FROM correcciones WHERE estado = 'PENDIENTE'`);
+  assert.equal(r.avisos.correccionesPendientes, n);
+  assert.equal(typeof r.avisos.faltantes.cantidad, 'number');
+  // Un año atrás y sin comparar; rangos inválidos.
+  const anio = await como(admin, () => panel.resumen({ desde: dia, hasta: dia, comparar: 'anio' }));
+  assert.equal(anio.comparacion.desde, dayjs(dia).subtract(1, 'year').format('YYYY-MM-DD'));
+  const solo = await como(admin, () => panel.resumen({ desde: dia, hasta: dia, comparar: 'no' }));
+  assert.equal(solo.comparacion, null);
+  assert.equal(solo.cobrado.anterior, null);
+  assert.equal(solo.estadias.anterior, null);
+  await assert.rejects(como(admin, () => panel.resumen({ desde: dia, hasta: dayjs(dia).subtract(1, 'day').format('YYYY-MM-DD') })), /fechas/);
+  await assert.rejects(como(admin, () => panel.resumen({ desde: '2024-01-01', hasta: '2025-06-01' })), /un año/);
+  await assert.rejects(como(admin, () => panel.resumen({ comparar: 'siempre' })), /Comparación/);
+  // Un rango de varios días trae todos los días, aunque no haya movimientos.
+  const semana = await como(admin, () => panel.resumen({ desde: dayjs(dia).subtract(6, 'day').format('YYYY-MM-DD'), hasta: dia }));
+  assert.equal(semana.cobrado.porDia.length, 7);
+  assert.equal(semana.estadias.porDia.length, 7);
+  assert.equal(semana.cobrado.porHora, null);
+  assert.equal(semana.cobrado.total, r.cobrado.total);
 });
 
 test('turno cerrado: el operador la manda a revisión; con la caja contada y cerrada, el arqueo queda igual y la corrección se vincula al cierre', async () => {
